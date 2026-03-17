@@ -54,6 +54,7 @@ def init(
     token: str = typer.Option(None, "--token", "-t", help="PAT token"),
     base_url: str = typer.Option("http://localhost:8001", "--url", "-u", help="API base URL"),
     agent_name: str = typer.Option(None, "--agent", "-a", help="Default agent name"),
+    agent_id: str = typer.Option(None, "--agent-id", help="Default agent ID (for agent-bound PATs)"),
     space_id: str = typer.Option(None, "--space-id", "-s", help="Default space ID"),
 ):
     """Set up a project-local .ax/config.toml in the current repo.
@@ -62,7 +63,7 @@ def init(
     Add .ax/ to .gitignore — credentials stay out of version control.
 
     Examples:
-        ax auth init --token axp_u_... --agent protocol --space-id a632f74e-...
+        ax auth init --token axp_u_... --agent orion --agent-id 70c1b445-...
         ax auth init --token axp_u_... --url https://dev.paxai.app --agent canvas
     """
     local = _local_config_dir()
@@ -78,6 +79,8 @@ def init(
         cfg["base_url"] = base_url
     if agent_name:
         cfg["agent_name"] = agent_name
+    if agent_id:
+        cfg["agent_id"] = agent_id
     if space_id:
         cfg["space_id"] = space_id
 
