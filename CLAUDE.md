@@ -49,6 +49,16 @@ ax send "quick update" --skip-ax
 - `messages send` waits for a reply by default (polls `list_replies` every 1s). Use `--skip-ax` to send without waiting.
 - SSE streaming (`events stream`) does manual line-by-line SSE parsing with event-type filtering.
 
+## Identity Model
+
+**User owns the token. Agent scope limits where it can be used.**
+
+A PAT remains a user credential, but it may be restricted (bound) to a specific agent. In that case, the token is only valid for interactions with that agent. Messages sent via `ax send` are authored by the user, not the agent.
+
+- `agent_name` / `agent_id` in config select which agent surface the user interacts with.
+- `allowed_agent_ids` on a PAT restricts which agents this credential can be used with — a PAT bound to agent X is only valid for interactions with agent X.
+- For agent-principal actions (agent sending as itself), agents use backend-issued RS256 JWTs, not PATs. This happens during dispatch, not via the CLI.
+
 ## Config System
 
 Config lives in `.ax/config.toml` (project-local, preferred) or `~/.ax/config.toml` (global fallback). Project root is found by walking up to the nearest `.git` directory. Key fields: `token`, `base_url`, `agent_name`, `space_id`. Env vars: `AX_TOKEN`, `AX_BASE_URL`, `AX_AGENT_NAME`, `AX_SPACE_ID`.

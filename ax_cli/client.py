@@ -13,7 +13,7 @@ import httpx
 
 
 class AxClient:
-    def __init__(self, base_url: str, token: str, *, agent_name: str | None = None):
+    def __init__(self, base_url: str, token: str, *, agent_name: str | None = None, agent_id: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self._headers = {
@@ -22,6 +22,8 @@ class AxClient:
         }
         if agent_name:
             self._headers["X-Agent-Name"] = agent_name
+        if agent_id:
+            self._headers["X-Agent-Id"] = agent_id
         self._http = httpx.Client(
             base_url=self.base_url, headers=self._headers, timeout=30.0,
         )

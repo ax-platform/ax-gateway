@@ -180,6 +180,17 @@ def save_space_id(space_id: str, *, local: bool = False) -> None:
     _save_config(cfg, local=local)
 
 
+def resolve_agent_id() -> str | None:
+    """Resolve agent_id: env > config > auto-detect from scoped PAT."""
+    env = os.environ.get("AX_AGENT_ID")
+    if env:
+        return env
+    cfg = _load_config()
+    if cfg.get("agent_id"):
+        return cfg["agent_id"]
+    return None
+
+
 def get_client() -> AxClient:
     token = resolve_token()
     if not token:
@@ -189,4 +200,5 @@ def get_client() -> AxClient:
         )
         raise typer.Exit(1)
     agent_name = resolve_agent_name()
-    return AxClient(base_url=resolve_base_url(), token=token, agent_name=agent_name)
+    agent_id = resolve_agent_id()
+    return AxClient(base_url=resolve_base_url(), token=token, agent_name=agent_name, agent_id=agent_id)
