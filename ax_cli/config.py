@@ -239,30 +239,16 @@ def save_agent_binding(
     return changed
 
 
-def resolve_agent_id(*, prefer_name: bool = True) -> str | None:
-    """Resolve agent_id: env > config, unless agent_name should own the request."""
-    env_name = os.environ.get("AX_AGENT_NAME")
+def resolve_agent_id() -> str | None:
+    """Resolve agent_id: env > config.
+
+    After bind, agent_id is the canonical identity header.
+    agent_name is kept for display and bootstrap only.
+    """
     env_id = os.environ.get("AX_AGENT_ID")
-    cfg = _load_config()
-    cfg_name = cfg.get("agent_name")
-
-    if prefer_name and env_name:
-        if env_id:
-            typer.echo(
-                "Warning: AX_AGENT_NAME and AX_AGENT_ID are both set; using AX_AGENT_NAME and ignoring AX_AGENT_ID.",
-                err=True,
-            )
-        return None
-
     if env_id:
         return env_id
-
-    if prefer_name and cfg_name:
-        return None
-
-    if cfg.get("agent_id"):
-        return cfg["agent_id"]
-    return None
+    return _load_config().get("agent_id")
 
 
 def get_client() -> AxClient:
@@ -273,6 +259,7 @@ def get_client() -> AxClient:
             err=True,
         )
         raise typer.Exit(1)
-    agent_name = resolve_agent_name()
-    agent_id = resolve_agent_id(prefer_name=bool(agent_name))
+    agent_id = resolve_agent_id()
+    # agent_name is only used when there is no agent_id (bootstrap / interactive).
+    agent_name = resolve_agent_name() if not agent_id else None
     return AxClient(base_url=resolve_base_url(), token=token, agent_name=agent_name, agent_id=agent_id)

@@ -95,16 +95,20 @@ def _wait_for_reply(client, message_id: str, timeout: int = 60) -> dict | None:
 
 
 def _configure_send_identity(client, *, agent_name: str | None, agent_id: str | None) -> None:
-    """`ax messages send` defaults to the user unless agent identity is explicit."""
+    """Override default identity only when an explicit flag is passed.
+
+    No flags → keep whatever get_client() resolved (works for both
+    human PATs and agent-scoped PATs without stripping identity).
+    """
     if agent_name:
         client.set_default_agent(agent_name=agent_name)
         return
 
     if agent_id:
-        client.set_default_agent(agent_name=None, agent_id=None)
+        client.set_default_agent(agent_id=agent_id)
         return
 
-    client.set_default_agent(agent_name=None, agent_id=None)
+    # No explicit override — keep default client identity.
 
 
 @app.command("send")

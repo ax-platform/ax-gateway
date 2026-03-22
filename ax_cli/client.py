@@ -29,13 +29,13 @@ class AxClient:
     def _agent_headers(*, agent_name: str | None = None, agent_id: str | None = None) -> dict[str, str]:
         """Return exactly one agent identity header.
 
-        Name wins over ID for bootstrap and local-config flows. Commands that
-        explicitly target an ID can still override per request.
+        ID is canonical after bind and wins over name.
+        Name is only used during bootstrap (no ID yet) or explicit interactive targeting.
         """
-        if agent_name:
-            return {"X-Agent-Name": agent_name}
         if agent_id:
             return {"X-Agent-Id": agent_id}
+        if agent_name:
+            return {"X-Agent-Name": agent_name}
         return {}
 
     def set_default_agent(self, *, agent_name: str | None = None, agent_id: str | None = None) -> None:
