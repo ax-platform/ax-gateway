@@ -91,3 +91,48 @@ def test_resolve_agent_id_env_wins_over_config(tmp_path, monkeypatch):
     monkeypatch.setenv("AX_AGENT_ID", "env-id")
 
     assert config.resolve_agent_id() == "env-id"
+
+
+def test_env_agent_name_overrides_config_agent_id(tmp_path, monkeypatch):
+    """AX_AGENT_NAME env beats config agent_id — explicit targeting override.
+
+    Regression: 91d6b04 skipped resolve_agent_name() entirely when config
+    had agent_id, making env-level name targeting impossible.
+    """
+    project = tmp_path / "project"
+    ax_dir = project / ".ax"
+    ax_dir.mkdir(parents=True)
+    (ax_dir / "config.toml").write_text(
+        'token = "axp_u_test"\n'
+        'base_url = "https://dev.paxai.app"\n'
+        'agent_id = "config-id"\n'
+    )
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("AX_AGENT_NAME", "env-target")
+    monkeypatch.delenv("AX_TOKEN", raising=False)
+    monkeypatch.delenv("AX_AGENT_ID", raising=False)
+
+    client = config.get_client()
+
+    assert client._headers["X-Agent-Name"] == "env-target"
+    assert "X-Agent-Id" not in client._headers
+
+
+def test_both_env_vars_set_id_wins(tmp_path, monkeypatch):
+    """When both AX_AGENT_NAME and AX_AGENT_ID env vars are set, ID wins."""
+    project = tmp_path / "project"
+    ax_dir = project / ".ax"
+    ax_dir.mkdir(parents=True)
+    (ax_dir / "config.toml").write_text(
+        'token = "axp_u_test"\n'
+        'base_url = "https://dev.paxai.app"\n'
+    )
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("AX_AGENT_NAME", "env-name")
+    monkeypatch.setenv("AX_AGENT_ID", "env-id")
+    monkeypatch.delenv("AX_TOKEN", raising=False)
+
+    client = config.get_client()
+
+    assert client._headers["X-Agent-Id"] == "env-id"
+    assert "X-Agent-Name" not in client._headers

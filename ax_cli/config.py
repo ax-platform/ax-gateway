@@ -260,6 +260,13 @@ def get_client() -> AxClient:
         )
         raise typer.Exit(1)
     agent_id = resolve_agent_id()
-    # agent_name is only used when there is no agent_id (bootstrap / interactive).
+
+    # Explicit env-level name targeting overrides config-level ID.
+    # env ID still wins (both env vars → ID is canonical).
+    env_name = os.environ.get("AX_AGENT_NAME")
+    if env_name and not os.environ.get("AX_AGENT_ID"):
+        return AxClient(base_url=resolve_base_url(), token=token, agent_name=env_name, agent_id=None)
+
+    # Steady state: ID is canonical after bind. Name only for bootstrap.
     agent_name = resolve_agent_name() if not agent_id else None
     return AxClient(base_url=resolve_base_url(), token=token, agent_name=agent_name, agent_id=agent_id)
