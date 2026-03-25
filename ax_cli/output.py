@@ -44,10 +44,20 @@ def is_stale_agent_binding_error(e: httpx.HTTPStatusError) -> bool:
 
 
 def handle_error(e: httpx.HTTPStatusError):
-    try:
-        detail = e.response.json().get("detail", e.response.text)
-    except Exception:
-        detail = e.response.text
+    content_type = e.response.headers.get("content-type", "")
+    if "json" in content_type:
+        try:
+            detail = e.response.json().get("detail", e.response.text)
+        except Exception:
+            detail = e.response.text
+    elif "html" in content_type:
+        detail = (
+            f"Server returned HTML instead of JSON (content-type: {content_type}). "
+            "This usually means the request hit the frontend instead of the API "
+            "— check base_url and agent config."
+        )
+    else:
+        detail = e.response.text[:200] if e.response.text else str(e)
     if is_stale_agent_binding_error(e):
         detail = (
             f"{detail}\n"
