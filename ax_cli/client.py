@@ -93,9 +93,12 @@ class AxClient:
         headers = {k: v for k, v in self._headers.items() if k != "Content-Type"}
 
         with path.open("rb") as fh:
-            with httpx.Client(base_url=self.base_url, headers=headers, timeout=60.0) as upload_http:
+            with httpx.Client(
+                base_url=self.base_url, headers=headers, timeout=60.0,
+                follow_redirects=True,
+            ) as upload_http:
                 r = upload_http.post(
-                    "/api/v1/uploads",
+                    "/api/v1/uploads/",
                     files={"file": (path.name, fh, content_type)},
                 )
         r.raise_for_status()
