@@ -101,12 +101,18 @@ def send(
     timeout: int = typer.Option(60, "--timeout", "-t", help="Max seconds to wait for reply"),
     to: Optional[str] = typer.Option(None, "--to", help="@mention another agent by name (prepends @name to your message)"),
     act_as: Optional[str] = typer.Option(None, "--act-as", help="Impersonate: send as a different agent identity. Requires a token scoped to that agent."),
+    files: Optional[list[str]] = typer.Option(None, "--file", "-f", help="Attach a local file (repeatable)"),
     channel: str = typer.Option("main", "--channel", help="Channel name"),
     parent: Optional[str] = typer.Option(None, "--parent", "--reply-to", "-r", help="Parent message ID (thread reply)"),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
-    """Send a message and wait for aX's response by default. Use --skip-ax to send only."""
+    """Send a message and wait for aX's response by default. Use --skip-ax to send only.
+
+    Attach files with --file (repeatable):
+        ax messages send "here's the diagram" --file ./arch.png
+        ax messages send "two files" -f report.md -f data.csv
+    """
     client = get_client()
     sid = resolve_space_id(client, explicit=space_id)
 
@@ -156,6 +162,28 @@ def send(
         if resolved_agent:
             client._headers["X-Agent-Name"] = resolved_agent
 
+    # --file: upload files and collect attachment metadata
+    attachments = []
+    for file_path in (files or []):
+        try:
+            upload_data = client.upload_file(file_path)
+        except FileNotFoundError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        except httpx.HTTPStatusError as exc:
+            handle_error(exc)
+        # Normalize upload response into attachment reference
+        att = upload_data.get("attachment", upload_data)
+        attachments.append({
+            "id": att.get("id") or att.get("file_id") or upload_data.get("id"),
+            "filename": att.get("original_filename") or att.get("filename") or att.get("name"),
+            "content_type": att.get("content_type"),
+            "size": att.get("size_bytes") or att.get("size"),
+            "url": att.get("url"),
+            "kind": "file",
+        })
+        console.print(f"  [dim]Uploaded: {attachments[-1]['filename']}[/dim]")
+
     # --to: prepend @mention to content for targeting another agent
     final_content = content
     if to:
@@ -165,6 +193,7 @@ def send(
     try:
         data = client.send_message(
             sid, final_content, channel=channel, parent_id=parent,
+            attachments=attachments or None,
         )
     except httpx.HTTPStatusError as e:
         handle_error(e)

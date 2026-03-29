@@ -9,6 +9,9 @@ Usage:
     msg = client.send_message(space_id, "hello")
     client.send_message(space_id, "do this", agent_id="<uuid>")
 """
+import mimetypes
+from pathlib import Path
+
 import httpx
 
 
@@ -62,14 +65,39 @@ class AxClient:
     def send_message(self, space_id: str, content: str, *,
                      agent_id: str | None = None,
                      channel: str = "main",
-                     parent_id: str | None = None) -> dict:
+                     parent_id: str | None = None,
+                     attachments: list[dict] | None = None) -> dict:
         """POST /api/v1/messages — explicit space_id required."""
         body = {"content": content, "space_id": space_id,
                 "channel": channel, "message_type": "text"}
         if parent_id:
             body["parent_id"] = parent_id
+        if attachments:
+            body["attachments"] = attachments
         r = self._http.post("/api/v1/messages", json=body,
                             headers=self._with_agent(agent_id))
+        r.raise_for_status()
+        return r.json()
+
+    def upload_file(self, file_path: str) -> dict:
+        """POST /api/v1/uploads — upload a local file.
+
+        Uses a separate httpx client to avoid sending Content-Type: application/json
+        on the multipart request.
+        """
+        path = Path(file_path).expanduser().resolve()
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        headers = {k: v for k, v in self._headers.items() if k != "Content-Type"}
+
+        with path.open("rb") as fh:
+            with httpx.Client(base_url=self.base_url, headers=headers, timeout=60.0) as upload_http:
+                r = upload_http.post(
+                    "/api/v1/uploads",
+                    files={"file": (path.name, fh, content_type)},
+                )
         r.raise_for_status()
         return r.json()
 
