@@ -158,17 +158,30 @@ def watch(
                 console.print(f"[red]SSE connection failed: {response.status_code}[/red]")
                 raise typer.Exit(2)
 
+            last_heartbeat = time.time()
+            heartbeat_interval = 30  # Print heartbeat every 30s
+
             for event_type, data in _iter_sse(response):
                 # Check timeout
-                if timeout > 0 and (time.time() - start_time) > timeout:
+                elapsed = time.time() - start_time
+                if timeout > 0 and elapsed > timeout:
                     break
+
+                # Heartbeat — show we're still connected
+                now = time.time()
+                if not quiet and (now - last_heartbeat) >= heartbeat_interval:
+                    remaining = max(0, timeout - elapsed) if timeout > 0 else 0
+                    console.print(f"[dim]  ... listening ({int(elapsed)}s elapsed, {int(remaining)}s remaining)[/dim]")
+                    last_heartbeat = now
 
                 # Skip non-dict events
                 if not isinstance(data, dict):
                     continue
 
-                # Skip bootstrap/heartbeat
+                # SSE keepalive events — confirm connection is alive
                 if event_type in ("connected", "bootstrap", "heartbeat", "identity_bootstrap", "ping"):
+                    if event_type == "connected" and not quiet:
+                        console.print("[dim]  SSE connected[/dim]")
                     continue
 
                 if _matches(
