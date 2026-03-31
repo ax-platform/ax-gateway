@@ -19,3 +19,6 @@ ax = "ax_cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["ax_cli*"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
