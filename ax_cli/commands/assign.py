@@ -100,11 +100,11 @@ def run(
     for cycle in range(1, max_cycles + 1):
         console.print(f"\n[cyan]── Cycle {cycle}/{max_cycles} ──[/cyan]")
 
-        # Wait for response from the agent
-        done = _watch_for_agent(client, agent_name, timeout=timeout)
+        # Watch for messages from the agent (shows them live, returns on completion signal or timeout)
+        result = _watch_for_agent(client, agent_name, timeout=timeout)
 
-        if done is None:
-            # Timeout — nudge
+        if result is None:
+            # No messages at all from the agent
             console.print(f"[yellow]No response from @{agent_name} in {timeout}s. Nudging...[/yellow]")
             try:
                 nudge_template = _NUDGES.get(verb, _NUDGES["assign"])
@@ -116,15 +116,13 @@ def run(
                 pass
             continue
 
-        # Got a response — check if it signals completion
-        response_text = done.lower() if isinstance(done, str) else ""
+        # Check if the result contains a completion signal
+        response_text = result.lower()
         completion_signals = ["done", "pushed", "merged", "completed", "finished", "pr ", "pull request", "branch "]
 
         if any(signal in response_text for signal in completion_signals):
-            console.print(f"[green]@{agent_name} signals completion![/green]")
-            console.print(f"[dim]Response: {done[:200]}[/dim]")
+            console.print(f"\n[green]@{agent_name} signals completion![/green]")
 
-            # Update task
             try:
                 client.update_task(task_id, status="completed")
                 console.print(f"[green]Task {tid_short}… marked complete.[/green]")
@@ -137,14 +135,21 @@ def run(
                     "message_id": msg_id,
                     "agent": agent_name,
                     "status": "completed",
-                    "response": done[:500] if isinstance(done, str) else str(done),
+                    "response": result[:500],
                     "cycles": cycle,
                 })
             return
 
-        # Response but not a completion signal — show it and continue watching
-        console.print(f"[dim]@{agent_name}: {done[:200] if isinstance(done, str) else '(responded)'}[/dim]")
-        console.print("[dim]Not a completion signal — continuing to watch...[/dim]")
+        # Agent responded but no completion signal — nudge for completion
+        console.print(f"\n[yellow]@{agent_name} responded but no completion signal. Nudging...[/yellow]")
+        try:
+            nudge_template = _NUDGES.get(verb, _NUDGES["assign"])
+            client.send_message(
+                sid,
+                nudge_template.format(agent=agent_name, instructions=instructions[:80], tid=tid_short),
+            )
+        except Exception:
+            pass
 
     # Exhausted cycles
     console.print(f"\n[yellow]Max cycles reached ({max_cycles}). @{agent_name} has not confirmed completion.[/yellow]")
@@ -161,10 +166,27 @@ def run(
 
 
 def _watch_for_agent(client, agent_name: str, *, timeout: int = 300) -> str | None:
-    """Poll messages for a response from the agent. Returns message content or None."""
+    """Watch SSE + poll messages for responses from the agent.
+
+    Returns the latest message content from the agent, or None on timeout.
+    Collects ALL messages from the agent during the window — doesn't stop
+    at the first "On it." Only returns once the timeout expires or a
+    completion signal is found.
+    """
     deadline = time.time() + timeout
     seen_ids: set[str] = set()
-    poll_interval = 3.0
+    poll_interval = 5.0
+    latest_content: str | None = None
+    completion_signals = ["done", "pushed", "merged", "completed", "finished", "pr ", "pull request", "branch "]
+
+    # Snapshot current message IDs so we only see NEW messages
+    try:
+        data = client.list_messages(limit=15)
+        messages = data if isinstance(data, list) else data.get("messages", data.get("items", []))
+        for msg in messages:
+            seen_ids.add(msg.get("id", ""))
+    except Exception:
+        pass
 
     while time.time() < deadline:
         remaining = int(deadline - time.time())
@@ -172,7 +194,7 @@ def _watch_for_agent(client, agent_name: str, *, timeout: int = 300) -> str | No
             break
 
         try:
-            data = client.list_messages(limit=10)
+            data = client.list_messages(limit=15)
             messages = data if isinstance(data, list) else data.get("messages", data.get("items", []))
 
             for msg in messages:
@@ -191,15 +213,21 @@ def _watch_for_agent(client, agent_name: str, *, timeout: int = 300) -> str | No
                     sender = str(msg.get("agent_name", msg.get("sender", "")))
 
                 if agent_name.lower() in sender.lower():
-                    return msg.get("content", "(no content)")
+                    content = msg.get("content", "(no content)")
+                    latest_content = content
+                    console.print(f"  [dim]@{agent_name}: {content[:120]}[/dim]")
+
+                    # Early exit on completion signal
+                    if any(s in content.lower() for s in completion_signals):
+                        return content
 
         except Exception:
             pass
 
         # Heartbeat
-        if remaining % 30 < poll_interval:
-            console.print(f"  [dim]... waiting ({remaining}s remaining)[/dim]", end="\r")
+        if remaining % 30 < poll_interval + 1:
+            console.print(f"  [dim]... waiting ({remaining}s remaining)[/dim]", end="  \r")
 
         time.sleep(poll_interval)
 
-    return None
+    return latest_content
