@@ -8,7 +8,7 @@ import typer
 from ..config import get_client, resolve_space_id
 from ..output import JSON_OPTION, print_json, handle_error, console
 
-app = typer.Typer(name="assign", help="Assign work to agents and track completion", no_args_is_help=True)
+app = typer.Typer(name="assign", help="Assign work to agents and track completion")
 
 # Prompt templates by verb — each alias has its own tone
 _PROMPTS = {
@@ -35,8 +35,8 @@ def _detect_verb() -> str:
     return "assign"
 
 
-@app.callback(invoke_without_command=True)
-def assign(
+@app.command()
+def run(
     agent: str = typer.Argument(..., help="Agent to assign (@name or name)"),
     instructions: str = typer.Argument(..., help="What the agent should do"),
     watch: bool = typer.Option(True, "--watch/--no-watch", help="Watch for completion (default: yes)"),
