@@ -281,3 +281,54 @@ def delete_ctx(
     except httpx.HTTPStatusError as exc:
         handle_error(exc)
     typer.echo(f"Deleted: {key}")
+
+
+@app.command("download")
+def download_file(
+    key: str = typer.Argument(..., help="Context key to download"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path (default: original filename)"),
+    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
+):
+    """Download a file from context to local disk."""
+    import json as _json
+    client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
+
+    try:
+        data = client.get_context(key)
+    except httpx.HTTPStatusError as e:
+        handle_error(e)
+
+    # Parse the value to find URL and filename
+    raw = data.get("value", data)
+    if isinstance(raw, dict) and "value" in raw:
+        raw = raw["value"]
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw)
+        except Exception:
+            console.print("[red]Context value is not a file upload[/red]")
+            raise typer.Exit(1)
+
+    if not isinstance(raw, dict) or raw.get("type") != "file_upload":
+        console.print("[red]Context key is not a file upload[/red]")
+        raise typer.Exit(1)
+
+    url = raw.get("url", "")
+    filename = output or raw.get("filename", key)
+
+    if not url:
+        console.print("[red]No URL in file upload[/red]")
+        raise typer.Exit(1)
+
+    # Download
+    try:
+        headers = {k: v for k, v in client._headers.items() if k != "Content-Type"}
+        with httpx.Client(headers=headers, timeout=60.0, follow_redirects=True) as http:
+            r = http.get(url)
+            r.raise_for_status()
+            from pathlib import Path
+            Path(filename).write_bytes(r.content)
+            console.print(f"[green]Downloaded:[/green] {filename} ({len(r.content)} bytes)")
+    except httpx.HTTPStatusError as e:
+        handle_error(e)
