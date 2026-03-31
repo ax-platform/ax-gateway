@@ -16,10 +16,11 @@ def create(
     description: Optional[str] = typer.Option(None, "--description", help="Task description"),
     priority: str = typer.Option("medium", "--priority", help="Priority: low, medium, high, urgent"),
     assign_to: Optional[str] = typer.Option(None, "--assign-to", help="Assign task to an agent (agent UUID)"),
+    notify: bool = typer.Option(True, "--notify/--no-notify", help="Send a message notifying the team about the new task"),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
-    """Create a task."""
+    """Create a task and optionally notify the team."""
     client = get_client()
     sid = resolve_space_id(client, explicit=space_id)
     try:
@@ -29,11 +30,22 @@ def create(
     except httpx.HTTPStatusError as e:
         handle_error(e)
     task = data.get("task", data)
+    tid = str(task.get("id", ""))[:8]
     if as_json:
         print_json(task)
     else:
-        tid = str(task.get("id", ""))[:8]
         console.print(f"[green]Created:[/green] \"{task.get('title')}\" (id={tid}…, priority={task.get('priority')})")
+
+    if notify:
+        try:
+            prio = task.get("priority", "medium")
+            msg = f"New task created: **{title}** (id: `{tid}…`, priority: {prio})"
+            client.send_message(sid, msg)
+            if not as_json:
+                console.print("[dim]Team notified.[/dim]")
+        except Exception:
+            if not as_json:
+                console.print("[yellow]Task created but team notification failed.[/yellow]")
 
 
 @app.command("list")
