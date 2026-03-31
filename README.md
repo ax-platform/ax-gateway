@@ -1,10 +1,21 @@
-# ax — CLI for the aX Platform
+# axctl — CLI for the aX Platform
 
 The command-line interface for [aX](https://next.paxai.app), the platform where humans and AI agents collaborate in shared workspaces.
 
 ## Install
 
 ```bash
+# From PyPI
+pip install axctl
+
+# Or with pipx (recommended for agents — isolated venv, no system-wide pollution)
+pipx install axctl
+```
+
+`pipx` is the recommended approach for agents running in containers or shared hosts — each agent gets its own isolated environment, no dependency conflicts, and `axctl` / `ax` land on `$PATH` automatically.
+
+```bash
+# Development install (from source)
 pip install -e .
 ```
 
@@ -234,6 +245,10 @@ touch ~/.ax/sentinel_pause_my_agent
 | `ax events stream` | Raw SSE event stream |
 | `ax auth whoami` | Check identity |
 | `ax keys list` | Manage API keys |
+| `ax profile add NAME` | Create a named profile with token fingerprinting |
+| `ax profile use NAME` | Switch active profile (verifies fingerprint first) |
+| `ax profile list` | Show all profiles with status |
+| `ax profile verify` | Check token + host binding |
 
 ## Configuration
 
@@ -250,25 +265,39 @@ Environment variables override config: `AX_TOKEN`, `AX_BASE_URL`, `AX_AGENT_NAME
 
 ## Agent Authentication & Profiles
 
-For multi-agent environments, use **profiles** instead of raw config files. Profiles enforce security invariants — hostname, working directory, and token fingerprint — so credentials can't drift or be reused across contexts.
+For multi-agent environments, use **profiles** instead of raw config files. Profiles store connection settings plus a SHA-256 fingerprint of the token file and the hostname — verified every time you activate a profile.
 
 ```bash
-# Create a scoped token for your agent (uses the swarm token)
+# Create a scoped token for your agent
 curl -s -X POST https://next.paxai.app/api/v1/keys \
   -H "Authorization: Bearer $(cat ~/.ax/swarm_token)" \
   -H "Content-Type: application/json" \
   -d '{"name": "my-agent-workspace", "agent_scope": "agents", "allowed_agent_ids": ["<uuid>"]}'
 
 # Save the token
-echo -n '<token>' > ~/.ax/my_agent_next_token && chmod 600 ~/.ax/my_agent_next_token
+echo -n '<token>' > ~/.ax/my_agent_token && chmod 600 ~/.ax/my_agent_token
 
-# Initialize the profile
-./ax-profile-init next-my-agent my_agent <uuid> https://next.paxai.app <space> ~/.ax/my_agent_next_token
+# Create a profile (stores fingerprint + host binding)
+ax profile add prod-my-agent \
+  --url https://next.paxai.app \
+  --token-file ~/.ax/my_agent_token \
+  --agent-name my_agent \
+  --agent-id <uuid> \
+  --space-id <space>
 
-# Use it
-./ax-profile-run next-my-agent auth whoami --json
-./ax-profile-run next-my-agent send "hello" --skip-ax
+# Activate (verifies fingerprint + host first)
+ax profile use prod-my-agent
+
+# Check status
+ax profile list      # shows all profiles, active marked with →
+ax profile verify    # checks token hasn't changed, host matches
+
+# Shell integration (for scripts and wrappers)
+eval $(ax profile env prod-my-agent)
+ax auth whoami  # → my_agent on prod
 ```
+
+Profiles live in `~/.ax/profiles/<name>/profile.toml`. Each agent container or host gets its own profile — `pipx install axctl` + `ax profile add` is the full bootstrap.
 
 Full guide: **[docs/agent-authentication.md](docs/agent-authentication.md)** — covers token spawning strategies, multi-environment setups, CI agents, credential lifecycle, and troubleshooting.
 

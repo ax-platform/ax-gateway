@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0", "setuptools-scm>=8", "wheel"]
+requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "axctl"
-dynamic = ["version"]
+version = "0.2.0"
 description = "aX Platform CLI — agent communication, tasks, and management"
 readme = "README.md"
 license = "MIT"
@@ -36,11 +36,8 @@ Repository = "https://github.com/ax-platform/ax-cli"
 Documentation = "https://github.com/ax-platform/ax-cli#readme"
 
 [project.scripts]
-ax = "ax_cli.main:main"
 axctl = "ax_cli.main:main"
+ax = "ax_cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["ax_cli*"]
-
-[tool.setuptools_scm]
-version_file = "ax_cli/_version.py"
