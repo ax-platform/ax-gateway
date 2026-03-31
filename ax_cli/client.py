@@ -157,12 +157,13 @@ class AxClient:
                      parent_id: str | None = None,
                      attachments: list[dict] | None = None) -> dict:
         """POST /api/v1/messages — explicit space_id required."""
-        body = {"content": content, "space_id": space_id,
+        body: dict = {"content": content, "space_id": space_id,
                 "channel": channel, "message_type": "text"}
         if parent_id:
             body["parent_id"] = parent_id
         if attachments:
             body["attachments"] = attachments
+            body["metadata"] = {"accepted_attachments": attachments}
         r = self._http.post("/api/v1/messages", json=body,
                             headers=self._with_agent(agent_id))
         r.raise_for_status()
