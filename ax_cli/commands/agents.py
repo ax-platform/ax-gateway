@@ -184,3 +184,53 @@ def tools(
         print_json(data)
     else:
         print_kv(data)
+
+
+@app.command("avatar")
+def avatar(
+    agent: str = typer.Argument(..., help="Agent name to generate avatar for"),
+    agent_type: str = typer.Option("default", "--type", "-t", help="Agent type for color theme (sentinel, mcp, space_agent, cloud)"),
+    size: int = typer.Option(128, "--size", "-s", help="Avatar size in pixels"),
+    output: str = typer.Option(None, "--output", "-o", help="Save to file (default: print SVG)"),
+    set_avatar: bool = typer.Option(False, "--set", help="Upload and set as the agent's avatar_url"),
+    as_json: bool = JSON_OPTION,
+):
+    """Generate or set an agent's avatar.
+
+    Generate a unique SVG avatar based on agent name:
+        ax agents avatar backend_sentinel
+        ax agents avatar backend_sentinel --type sentinel -o avatar.svg
+
+    Generate and set as the agent's profile picture:
+        ax agents avatar backend_sentinel --set
+    """
+    from ..avatar import generate_avatar, avatar_data_uri
+
+    svg = generate_avatar(agent, agent_type, size)
+
+    if output:
+        with open(output, "w") as f:
+            f.write(svg)
+        console.print(f"[green]Saved:[/green] {output}")
+    elif set_avatar:
+        client = get_client()
+        data_uri = avatar_data_uri(agent, agent_type, size)
+        try:
+            # Find the agent by name
+            agents_data = client.list_agents()
+            agents_list = agents_data if isinstance(agents_data, list) else agents_data.get("agents", [])
+            target = next((a for a in agents_list if a.get("name", "").lower() == agent.lower()), None)
+            if not target:
+                console.print(f"[red]Agent '{agent}' not found[/red]")
+                raise typer.Exit(1)
+            # Update avatar_url
+            r = client._http.patch(f"/api/v1/agents/{target['id']}", json={"avatar_url": data_uri})
+            r.raise_for_status()
+            console.print(f"[green]Avatar set for @{agent}[/green]")
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
+    elif as_json:
+        import json
+        print(json.dumps({"name": agent, "svg": svg, "data_uri": avatar_data_uri(agent, agent_type, size)}))
+    else:
+        print(svg)
