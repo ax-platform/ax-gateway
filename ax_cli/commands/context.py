@@ -59,16 +59,31 @@ def upload_file(
     info = _normalize_upload(upload_data)
     context_key = key or Path(file_path).name
 
-    # Store reference in context
+    # Store reference in context — inline text content so agents can read it
+    content_type = info.get("content_type", "")
+    is_text = content_type and (
+        content_type.startswith("text/")
+        or content_type in ("application/json", "application/xml", "application/yaml")
+    )
+
+    text_content = None
+    if is_text:
+        try:
+            text_content = Path(file_path).read_text(errors="replace")
+        except Exception:
+            pass
+
     context_value = {
         "type": "file_upload",
         "filename": info.get("filename"),
-        "content_type": info.get("content_type"),
+        "content_type": content_type,
         "size": info.get("size"),
         "url": info.get("url"),
         "source": "local",
         "original_path": file_path,
     }
+    if text_content is not None:
+        context_value["content"] = text_content
 
     import json
     try:
