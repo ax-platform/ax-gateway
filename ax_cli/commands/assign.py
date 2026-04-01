@@ -204,18 +204,21 @@ def _watch_for_agent(client, agent_name: str, *, timeout: int = 300) -> str | No
                 seen_ids.add(msg_id)
 
                 # Check if this message is from our target agent
-                # Agents don't always @mention — check all sender fields
-                sender_candidates = []
+                # Messages use display_name for sender identity
+                sender_candidates = [
+                    msg.get("display_name", ""),
+                    msg.get("agent_name", ""),
+                    msg.get("sender", ""),
+                ]
                 author = msg.get("author", {})
                 if isinstance(author, dict):
-                    sender_candidates.append(author.get("username", ""))
-                    sender_candidates.append(author.get("name", ""))
-                    sender_candidates.append(author.get("agent_name", ""))
+                    sender_candidates.extend([
+                        author.get("username", ""),
+                        author.get("name", ""),
+                        author.get("agent_name", ""),
+                    ])
                 elif isinstance(author, str):
                     sender_candidates.append(author)
-                sender_candidates.append(str(msg.get("agent_name", "")))
-                sender_candidates.append(str(msg.get("sender", "")))
-                sender_candidates.append(str(msg.get("sender_type", "")))
 
                 sender_str = " ".join(c for c in sender_candidates if c).lower()
                 if agent_name.lower() in sender_str:
