@@ -97,46 +97,86 @@ def init(
     console.print(f"\n[cyan]Connecting to {base_url}...[/cyan]")
 
     if is_enrollment:
-        # --- Enrollment token flow: register agent + bind ---
+        # --- Agent token flow: register new agent OR connect to already-bound agent ---
         resolved_name = agent_name or agent_id
-        if not resolved_name:
-            console.print("[yellow]This is an enrollment token (axp_a_).[/yellow]")
-            console.print("It will create a new agent and bind to it.")
-            console.print("")
-            resolved_name = typer.prompt("Agent name")
 
-        console.print(f"[cyan]Registering agent '{resolved_name}'...[/cyan]")
+        # First try: exchange with agent_name (enrollment/auto-register)
+        registered = False
+        if resolved_name:
+            console.print(f"[cyan]Registering agent '{resolved_name}'...[/cyan]")
+        else:
+            # No name given — check if token is already bound
+            console.print("[cyan]Checking token...[/cyan]")
+
         try:
+            exchange_body = {
+                "requested_token_class": "agent_access",
+                "scope": "messages tasks context agents spaces search",
+                "audience": "ax-api",
+            }
+            if resolved_name:
+                exchange_body["agent_name"] = resolved_name
             r = httpx.post(
                 f"{base_url}/auth/exchange",
-                json={
-                    "requested_token_class": "agent_access",
-                    "scope": "messages tasks context agents spaces search",
-                    "audience": "ax-api",
-                    "agent_name": resolved_name,
-                },
+                json=exchange_body,
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 timeout=15.0,
             )
             r.raise_for_status()
             data = r.json()
             cfg["agent_id"] = data.get("agent_id", "")
-            cfg["agent_name"] = data.get("agent_name", resolved_name)
-            console.print(f"[green]Agent registered:[/green] {cfg['agent_name']} ({cfg['agent_id'][:12]}...)")
-            console.print(f"[green]Token bound.[/green] Exchange successful.")
+            cfg["agent_name"] = data.get("agent_name", resolved_name or "")
+            registered = True
+            if resolved_name:
+                console.print(f"[green]Agent registered:[/green] {cfg['agent_name']} ({cfg['agent_id'][:12]}...)")
+            else:
+                console.print(f"[green]Connected:[/green] {cfg['agent_name']} ({cfg['agent_id'][:12]}...)")
         except httpx.HTTPStatusError as e:
+            # If already bound, the exchange needs agent_id — discover it via whoami
             try:
                 detail = e.response.json().get("detail", {})
-                msg = detail.get("message", str(detail)) if isinstance(detail, dict) else str(detail)
+                error_code = detail.get("error", "") if isinstance(detail, dict) else ""
             except Exception:
-                msg = str(e)
-            console.print(f"[red]Registration failed:[/red] {msg}")
-            raise typer.Exit(1)
+                error_code = ""
+
+            if error_code in ("agent_not_found", "binding_not_allowed"):
+                # Token may already be bound — try discovering via authenticate
+                console.print("[cyan]Token already bound. Discovering agent...[/cyan]")
+                try:
+                    from ..client import AxClient
+                    client = AxClient(base_url=base_url, token=token)
+                    me = client.whoami()
+                    bound = me.get("bound_agent")
+                    if bound and bound.get("agent_id"):
+                        cfg["agent_id"] = bound["agent_id"]
+                        cfg["agent_name"] = bound.get("agent_name", "")
+                        registered = True
+                        console.print(f"[green]Found bound agent:[/green] {cfg['agent_name']} ({cfg['agent_id'][:12]}...)")
+                    else:
+                        console.print("[red]Token is bound but agent not found in response.[/red]")
+                        raise typer.Exit(1)
+                except typer.Exit:
+                    raise
+                except Exception as ex:
+                    console.print(f"[red]Could not discover bound agent:[/red] {ex}")
+                    raise typer.Exit(1)
+            else:
+                msg = detail.get("message", str(detail)) if isinstance(detail, dict) else str(detail)
+                console.print(f"[red]Registration failed:[/red] {msg}")
+                raise typer.Exit(1)
         except Exception as e:
-            console.print(f"[red]Registration failed:[/red] {e}")
+            console.print(f"[red]Connection failed:[/red] {e}")
             raise typer.Exit(1)
 
-        # Discover space from the JWT we just got
+        if not registered:
+            if not resolved_name:
+                console.print("[yellow]This is an enrollment token. Provide an agent name:[/yellow]")
+                console.print("  ax auth init --token axp_a_... --agent my-agent-name")
+            raise typer.Exit(1)
+
+        console.print(f"[green]Token bound.[/green] Exchange successful.")
+
+        # Discover space
         try:
             from ..client import AxClient
             client = AxClient(base_url=base_url, token=token, agent_id=cfg.get("agent_id"))
