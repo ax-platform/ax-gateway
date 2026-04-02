@@ -53,47 +53,128 @@ def whoami(as_json: bool = JSON_OPTION):
 
 @app.command("init")
 def init(
-    token: str = typer.Option(None, "--token", "-t", help="PAT token"),
-    base_url: str = typer.Option("http://localhost:8001", "--url", "-u", help="API base URL"),
-    agent_name: str = typer.Option(None, "--agent", "-a", help="Default agent name"),
-    space_id: str = typer.Option(None, "--space-id", "-s", help="Default space ID"),
+    token: str = typer.Option(None, "--token", "-t", help="PAT token (axp_u_... or axp_a_...)"),
+    base_url: str = typer.Option("http://localhost:8002", "--url", "-u", help="API base URL"),
+    agent_name: str = typer.Option(None, "--agent", "-a", help="Default agent name (auto-detected if not set)"),
+    agent_id: str = typer.Option(None, "--agent-id", help="Agent ID (auto-detected if not set)"),
+    space_id: str = typer.Option(None, "--space-id", "-s", help="Space ID (auto-detected if not set)"),
 ):
-    """Set up a project-local .ax/config.toml in the current repo.
+    """Set up authentication for this project.
 
-    Stores everything locally — token, URL, agent, space. No flags needed after init.
-    Add .ax/ to .gitignore — credentials stay out of version control.
+    Just provide your PAT — everything else is auto-discovered:
 
-    Examples:
-        ax auth init --token axp_u_... --agent protocol --space-id a632f74e-...
-        ax auth init --token axp_u_... --url https://dev.paxai.app --agent canvas
+    \b
+        ax auth init --token axp_u_...
+        ax auth init --token axp_u_... --url https://next.paxai.app
+
+    The CLI will:
+    1. Verify the token works (exchange it for a JWT)
+    2. Discover your identity, spaces, and agents
+    3. Auto-select defaults if there's only one option
+    4. Save everything to .ax/config.toml
+
+    After init, all commands just work — no flags needed.
     """
-    local = _local_config_dir()
+    from pathlib import Path
+
+    if not token:
+        console.print("[red]Token required.[/red] Get one from Settings > Credentials in the UI.")
+        console.print("  ax auth init --token axp_u_YOUR_TOKEN_HERE")
+        raise typer.Exit(1)
+
+    try:
+        local = _local_config_dir(create=True)
+    except TypeError:
+        local = _local_config_dir()
     if not local:
-        # No .ax/ or .git found — create .ax/ in current directory
         local = Path.cwd() / ".ax"
 
     cfg = _load_local_config()
+    cfg["token"] = token
+    cfg["base_url"] = base_url
 
-    if token:
-        cfg["token"] = token
-    if base_url:
-        cfg["base_url"] = base_url
+    # Step 1: Verify token works by exchanging it
+    console.print(f"\n[cyan]Connecting to {base_url}...[/cyan]")
+    try:
+        from ..token_cache import TokenExchanger
+        exchanger = TokenExchanger(base_url, token)
+        jwt = exchanger.get_token("user_access", scope="messages tasks context agents spaces search")
+        console.print("[green]Token verified.[/green] Exchange successful.")
+    except Exception as e:
+        console.print(f"[red]Token verification failed:[/red] {e}")
+        console.print("Check that the token is valid and the URL is correct.")
+        raise typer.Exit(1)
+
+    # Step 2: Discover identity
+    try:
+        from ..client import AxClient
+        client = AxClient(base_url=base_url, token=token)
+        me = client.whoami()
+        username = me.get("username", "unknown")
+        console.print(f"[green]Identity:[/green] {username} ({me.get('email', '')})")
+
+        # Check for bound agent
+        bound = me.get("bound_agent")
+        if bound:
+            cfg["agent_id"] = bound.get("agent_id", "")
+            cfg["agent_name"] = bound.get("agent_name", "")
+            if bound.get("default_space_id"):
+                cfg["space_id"] = bound["default_space_id"]
+            console.print(f"[green]Bound agent:[/green] {bound.get('agent_name')} ({bound.get('agent_id', '')[:12]}...)")
+    except Exception:
+        pass
+
+    # Step 3: Discover spaces (if not already set)
+    if not cfg.get("space_id") and not space_id:
+        try:
+            spaces = client.list_spaces()
+            space_list = spaces.get("spaces", spaces) if isinstance(spaces, dict) else spaces
+            if isinstance(space_list, list) and len(space_list) == 1:
+                cfg["space_id"] = str(space_list[0].get("id"))
+                console.print(f"[green]Space:[/green] {space_list[0].get('name')} (auto-selected, only one)")
+            elif isinstance(space_list, list) and len(space_list) > 1:
+                console.print(f"\n[yellow]Multiple spaces found ({len(space_list)}):[/yellow]")
+                for i, s in enumerate(space_list):
+                    console.print(f"  {i+1}. {s.get('name')} — {s.get('id')}")
+                console.print("  Use --space-id to select one, or set AX_SPACE_ID.")
+        except Exception:
+            pass
+
+    # Step 4: Discover agents (if not already set)
+    if not cfg.get("agent_id") and not agent_id:
+        try:
+            agents_data = client.list_agents()
+            agent_list = agents_data.get("agents", agents_data) if isinstance(agents_data, dict) else agents_data
+            if isinstance(agent_list, list) and len(agent_list) > 0:
+                console.print(f"\n[cyan]Available agents ({len(agent_list)}):[/cyan]")
+                for a in agent_list[:10]:
+                    status = a.get("status", "?")
+                    console.print(f"  {a.get('name')} — {a.get('id')} [{status}]")
+                if len(agent_list) == 1:
+                    cfg["agent_id"] = str(agent_list[0].get("id"))
+                    cfg["agent_name"] = agent_list[0].get("name", "")
+                    console.print(f"[green]Agent:[/green] {agent_list[0].get('name')} (auto-selected, only one)")
+        except Exception:
+            pass
+
+    # Apply explicit overrides
     if agent_name:
         cfg["agent_name"] = agent_name
+    if agent_id:
+        cfg["agent_id"] = agent_id
     if space_id:
         cfg["space_id"] = space_id
 
-    if not cfg:
-        typer.echo("Error: Provide at least --agent or --space-id.", err=True)
-        raise typer.Exit(1)
-
+    # Save
     _save_config(cfg, local=True)
     config_path = local / "config.toml"
-    console.print(f"[green]Saved:[/green] {config_path}")
+    console.print(f"\n[green]Saved:[/green] {config_path}")
     for k, v in cfg.items():
         if k == "token":
             v = v[:6] + "..." + v[-4:] if len(v) > 10 else "***"
         console.print(f"  {k} = {v}")
+
+    console.print("\n[cyan]You're ready.[/cyan] Try: ax auth whoami")
 
     # Check .gitignore
     root = local.parent
@@ -101,9 +182,9 @@ def init(
     if gitignore.exists():
         content = gitignore.read_text()
         if ".ax/" not in content and ".ax" not in content:
-            console.print(f"\n[yellow]Reminder:[/yellow] Add .ax/ to {gitignore}")
-    else:
-        console.print(f"\n[yellow]Reminder:[/yellow] Add .ax/ to .gitignore")
+            console.print(f"[yellow]Reminder:[/yellow] Add .ax/ to {gitignore}")
+    elif (root / ".git").exists():
+        console.print(f"[yellow]Reminder:[/yellow] Add .ax/ to .gitignore")
 
 
 @app.command("exchange")
