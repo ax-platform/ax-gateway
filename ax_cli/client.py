@@ -260,7 +260,7 @@ class AxClient:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        headers = {k: v for k, v in self._headers.items() if k != "Content-Type"}
+        headers = {k: v for k, v in self._auth_headers().items() if k != "Content-Type"}
 
         with path.open("rb") as fh:
             with httpx.Client(

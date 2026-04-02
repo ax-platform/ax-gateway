@@ -155,12 +155,12 @@ def send(
         except httpx.HTTPStatusError:
             pass  # Let the server enforce
 
-        client._headers["X-Agent-Name"] = act_as
+        client._base_headers["X-Agent-Name"] = act_as
     else:
         # Default: resolve agent from env/config (normal identity)
         resolved_agent = resolve_agent_name(client=client)
         if resolved_agent:
-            client._headers["X-Agent-Name"] = resolved_agent
+            client._base_headers["X-Agent-Name"] = resolved_agent
 
     # --file: upload files and collect attachment metadata
     attachments = []

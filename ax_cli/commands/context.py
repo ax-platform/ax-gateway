@@ -338,7 +338,7 @@ def download_file(
 
     # Download
     try:
-        headers = {k: v for k, v in client._headers.items() if k != "Content-Type"}
+        headers = {k: v for k, v in client._base_headers.items() if k != "Content-Type"}
         with httpx.Client(headers=headers, timeout=60.0, follow_redirects=True) as http:
             r = http.get(url)
             r.raise_for_status()
