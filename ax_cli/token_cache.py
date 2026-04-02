@@ -20,9 +20,29 @@ logger = logging.getLogger(__name__)
 _REFRESH_BUFFER = 30
 
 
+def _project_cache_dir() -> Path | None:
+    """Find project-level .ax/ directory (where config.toml lives).
+
+    Each agent has its own directory and config — cache lives there too.
+    Never falls back to ~/.ax/ since multiple agents share the machine.
+    """
+    cur = Path.cwd()
+    for parent in [cur, *cur.parents]:
+        ax_dir = parent / ".ax"
+        if ax_dir.is_dir() and (ax_dir / "config.toml").exists():
+            cache = ax_dir / "cache"
+            cache.mkdir(exist_ok=True)
+            return cache
+    return None
+
+
 def _cache_dir() -> Path:
-    """~/.ax/cache/ for token cache files."""
-    d = Path.home() / ".ax" / "cache"
+    """Project-level .ax/cache/ — falls back to CWD/.ax/cache/ if no project found."""
+    project = _project_cache_dir()
+    if project:
+        return project
+    # Last resort: create .ax/cache in CWD
+    d = Path.cwd() / ".ax" / "cache"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
