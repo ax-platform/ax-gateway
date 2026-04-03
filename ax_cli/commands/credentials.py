@@ -17,6 +17,7 @@ def issue_agent_pat(
     agent: str = typer.Argument(..., help="Agent name or ID to bind PAT to"),
     name: str = typer.Option(None, "--name", "-n", help="Label for the PAT"),
     expires_days: int = typer.Option(90, "--expires", help="PAT lifetime in days"),
+    audience: str = typer.Option("cli", "--audience", help="Target: cli, mcp, or both"),
     as_json: bool = JSON_OPTION,
 ):
     """Issue an agent-bound PAT (axp_a_). The token is shown once.
@@ -24,7 +25,8 @@ def issue_agent_pat(
     \b
     Examples:
         ax credentials issue-agent-pat my-bot
-        ax credentials issue-agent-pat my-bot --name "prod-key" --expires 30
+        ax credentials issue-agent-pat my-bot --audience mcp
+        ax credentials issue-agent-pat my-bot --name "prod-key" --expires 30 --audience both
     """
     client = get_client()
 
@@ -63,6 +65,7 @@ def issue_agent_pat(
 def issue_enrollment(
     name: str = typer.Option(None, "--name", "-n", help="Label for the token"),
     expires_hours: int = typer.Option(1, "--expires", help="Enrollment window in hours"),
+    audience: str = typer.Option("cli", "--audience", help="Target: cli, mcp, or both"),
     as_json: bool = JSON_OPTION,
 ):
     """Issue an enrollment token that creates + binds an agent on first use.

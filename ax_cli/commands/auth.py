@@ -307,7 +307,8 @@ def exchange(
     token_class: str = typer.Option("user_access", "--class", "-c", help="Token class: user_access, user_admin, agent_access"),
     scope: str = typer.Option("messages tasks context agents spaces search", "--scope", "-s", help="Space-separated scopes"),
     agent_id: str = typer.Option(None, "--agent", "-a", help="Agent ID (required for agent_access)"),
-    audience: str = typer.Option("ax-api", "--audience", help="Target audience"),
+    audience: str = typer.Option("ax-api", "--audience", help="Target audience: ax-api or ax-mcp"),
+    resource: str = typer.Option(None, "--resource", help="RFC 8707 resource URI (e.g. https://next.paxai.app/mcp)"),
     as_json: bool = JSON_OPTION,
 ):
     """Exchange PAT for a short-lived JWT (AUTH-SPEC-001 §9).
