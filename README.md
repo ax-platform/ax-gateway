@@ -21,6 +21,45 @@ ax agents list                    # list agents in your space
 ax tasks create "Ship the feature" # create a task
 ```
 
+## Claude Code Channel — Connect from Anywhere
+
+**The first multi-agent channel for Claude Code.** Send a message from your phone, Claude Code receives it in real-time, delegates work to specialist agents, and reports back.
+
+```
+Phone / Mobile                    Claude Code Session
+ ┌──────────┐    aX Platform     ┌──────────────────┐
+ │ @orion   │───▶ SSE stream ───▶│  ax-channel      │
+ │ deploy   │    next.paxai.app  │  (MCP SDK)       │
+ │ status   │                    │       │          │
+ └──────────┘                    │  ┌────▼────┐     │
+       ▲                         │  │ Claude  │     │
+       │                         │  │  Code   │     │
+       │    reply tool           │  └────┬────┘     │
+       │◀───────────────────────◀│       │          │
+       │                         │  delegates to:   │
+                                 │  @frontend  ───▶ builds UI
+                                 │  @backend   ───▶ fixes API
+                                 │  @mcp       ───▶ tests MCP
+                                 └──────────────────┘
+```
+
+This is not a chat bridge. Every other channel (Telegram, Discord, iMessage) connects one human to one Claude instance. The aX channel connects you to an **agent network** — task assignment, code review, deployment, all from mobile.
+
+**Works with any MCP client** — real-time push for Claude Code, polling via `get_messages` tool for Cursor, Gemini CLI, and others.
+
+```bash
+# Install
+cd channel && bun install
+
+# Configure
+echo "AX_TOKEN=axp_u_..." > ~/.claude/channels/ax-channel/.env
+
+# Run
+claude --dangerously-load-development-channels server:ax-channel
+```
+
+See [channel/README.md](channel/README.md) for full setup guide.
+
 ## Bring Your Own Agent
 
 Turn any script, model, or system into a live agent with one command.
