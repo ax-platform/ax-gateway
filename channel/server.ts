@@ -168,7 +168,7 @@ async function editMessage(
 
 // --- SSE Listener ---
 function startSSE(
-  jwt: string,
+  getJwt: () => Promise<string>,
   agentName: string,
   agentId: string | null,
   onMention: (data: {
@@ -185,9 +185,11 @@ function startSSE(
   async function connect() {
     while (true) {
       try {
+        // Fresh JWT on every reconnect
+        const sseJwt = await getJwt();
         log(`SSE connecting...`);
         const resp = await fetch(
-          `${BASE_URL}/api/sse/messages?token=${jwt}`
+          `${BASE_URL}/api/sse/messages?token=${sseJwt}`
         );
 
         // Use a manual reader since EventSource isn't available in all envs
@@ -318,6 +320,18 @@ let lastMessageId: string | null = null;
 let currentJwt: string = "";
 let resolvedAgentId: string | null = null;
 let jwtTime = 0;
+
+// --- Message queue for reliability + cross-client polling ---
+type QueuedMention = {
+  id: string;
+  content: string;
+  author: string;
+  parentId?: string;
+  ts?: string;
+  delivered: boolean;
+};
+const mentionQueue: QueuedMention[] = [];
+const QUEUE_MAX = 100;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let ackMessageId: string | null = null; // ID of the ack message to update in place
 const HEARTBEAT_INTERVAL = 30_000; // 30 seconds
@@ -387,12 +401,59 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["text"],
       },
     },
+    {
+      name: "get_messages",
+      description:
+        "Get pending aX messages (for clients without push notification support). Returns unread mentions.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          limit: {
+            type: "number",
+            description: "Max messages to return (default: 10)",
+          },
+          mark_read: {
+            type: "boolean",
+            description: "Mark returned messages as read (default: true)",
+          },
+        },
+      },
+    },
   ],
 }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const args = (req.params.arguments ?? {}) as Record<string, unknown>;
   const name = req.params.name;
+
+  if (name === "get_messages") {
+    const limit = Number(args.limit ?? 10);
+    const markRead = args.mark_read !== false;
+    const pending = mentionQueue.filter((m) => !m.delivered).slice(0, limit);
+    if (markRead) {
+      for (const m of pending) m.delivered = true;
+    }
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: pending.length
+            ? JSON.stringify(
+                pending.map((m) => ({
+                  message_id: m.id,
+                  author: m.author,
+                  content: m.content,
+                  parent_id: m.parentId,
+                  ts: m.ts,
+                })),
+                null,
+                2
+              )
+            : "No pending messages.",
+        },
+      ],
+    };
+  }
 
   if (name !== "reply") {
     return {
@@ -465,8 +526,12 @@ log(
 log(`space: ${SPACE_ID}`);
 log(`api: ${BASE_URL}`);
 
-startSSE(jwt, AGENT_NAME, resolvedAgentId, async (mention) => {
+startSSE(ensureJwt, AGENT_NAME, resolvedAgentId, async (mention) => {
   lastMessageId = mention.id;
+
+  // Queue for reliability + get_messages polling
+  mentionQueue.push({ ...mention, delivered: false });
+  if (mentionQueue.length > QUEUE_MAX) mentionQueue.shift();
 
   // Ack immediately — create one message that gets updated in place
   try {
