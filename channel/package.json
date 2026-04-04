@@ -6,6 +6,7 @@
     "start": "bun install --no-summary && bun server.ts"
   },
   "dependencies": {
+    "@mcpjam/sdk": "^0.8.14",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
