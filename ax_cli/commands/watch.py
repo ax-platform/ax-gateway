@@ -234,13 +234,6 @@ def watch(
         return
     space_id = resolve_space_id(client)
 
-    token = client.token
-    base_url = client.base_url
-
-    sse_url = f"{base_url}/api/sse/messages?token={token}"
-    if space_id:
-        sse_url += f"&space_id={space_id}"
-
     start_time = time.time()
     matched: list[dict] = []
 
@@ -259,11 +252,9 @@ def watch(
         console.print(f"[dim]Watching for: {', '.join(conditions)} (timeout: {timeout}s)[/dim]")
 
     try:
-        with httpx.stream(
-            "GET",
-            sse_url,
+        with client.connect_sse(
+            space_id=space_id,
             timeout=httpx.Timeout(connect=10, read=float(timeout) if timeout else None, write=10, pool=10),
-            follow_redirects=True,
         ) as response:
             if response.status_code != 200:
                 console.print(f"[red]SSE connection failed: {response.status_code}[/red]")

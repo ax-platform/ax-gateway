@@ -22,9 +22,6 @@ def stream(
 ):
     """Stream SSE events in real-time. Use --filter routing to see only routing events."""
     client = get_client()
-    url = f"{client.base_url}/api/v1/sse/messages"
-    params = {"token": client.token}
-    headers = {}
 
     filter_types: set[str] | None = None
     if filter == "routing":
@@ -34,12 +31,15 @@ def stream(
     elif filter:
         filter_types = {filter}
 
-    typer.echo(f"Connecting to {url} ...", err=True)
+    typer.echo(f"Connecting to {client.base_url}/api/sse/messages ...", err=True)
     if filter_types:
         typer.echo(f"Filtering: {', '.join(sorted(filter_types))}", err=True)
     count = 0
     try:
-        with httpx.stream("GET", url, params=params, headers=headers, timeout=None) as resp:
+        with client.connect_sse() as resp:
+            if resp.status_code != 200:
+                typer.echo(f"Error {resp.status_code}: {resp.text}", err=True)
+                raise typer.Exit(1)
             event_type = None
             for line in resp.iter_lines():
                 if line.startswith("event:"):
@@ -67,6 +67,6 @@ def stream(
                         return
     except KeyboardInterrupt:
         typer.echo(f"\nStopped after {count} events.", err=True)
-    except httpx.HTTPStatusError as e:
-        typer.echo(f"Error {e.response.status_code}: {e.response.text}", err=True)
+    except httpx.HTTPError as e:
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
