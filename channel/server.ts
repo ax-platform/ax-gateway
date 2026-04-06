@@ -264,7 +264,7 @@ function startSSE(
     ) {
       return;
     }
-    if (type !== "message" && type !== "mention") return;
+    if (type !== "message" && type !== "mention" && type !== "message_updated") return;
 
     let data: Record<string, unknown>;
     try {
@@ -274,7 +274,12 @@ function startSSE(
     }
 
     const id = data.id as string;
-    if (!id || seen.has(id)) return;
+    if (!id) return;
+
+    const isUpdate = type === "message_updated";
+
+    // For new messages, skip if already seen. For updates, allow re-processing.
+    if (!isUpdate && seen.has(id)) return;
 
     const content = (data.content as string) ?? "";
     const parentId = (data.parent_id as string) ?? "";
@@ -312,10 +317,12 @@ function startSSE(
       for (const x of arr.slice(-250)) seen.add(x);
     }
 
-    // Skip short ack/progress messages from agents (e.g. "Working…", "Received")
+    // Skip short ack/progress messages from agents (e.g. "Working…", "Working... (30s)")
     // These are Hermes runtime status signals for the frontend, not real responses.
     const trimmedContent = content.replace(/@\w+\s*/g, "").trim();
-    if (/^(Working|Received|Thinking|Processing)[\s.…]*$/i.test(trimmedContent)) return;
+    if (/^(Working|Received|Thinking|Processing)[\s.…]*(\(\d+s?\))?[\s.…]*$/i.test(trimmedContent)) return;
+    // Also skip "No response after Xm" timeout messages
+    if (/^No response after/i.test(trimmedContent)) return;
 
     // Strip @mention prefix
     const prompt = content
