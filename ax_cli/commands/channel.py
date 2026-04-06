@@ -19,7 +19,7 @@ import typer
 
 from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..output import console
-from .listen import _is_paused, _iter_sse, _should_respond, _strip_mention
+from .listen import _iter_sse, _should_respond, _strip_mention
 
 app = typer.Typer(name="channel", help="Run an aX Claude Code channel over MCP stdio", no_args_is_help=False)
 
@@ -196,7 +196,6 @@ class ChannelBridge:
         try:
             def _send_as_agent():
                 """Send message as agent, adding X-Agent-Id header for user tokens."""
-                import httpx as _httpx
                 body = {"content": text, "space_id": self.space_id,
                         "channel": "main", "message_type": "text",
                         "parent_id": reply_to}
@@ -332,12 +331,12 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                     content_preview = (data.get("content") or "")[:60]
                     bridge.log(f"event {event_type} id={message_id[:12]} content={content_preview!r}")
                     if not message_id or message_id in seen_ids:
-                        bridge.log(f"  -> skip: dup or no id")
+                        bridge.log("  -> skip: dup or no id")
                         continue
                     if not _should_respond(data, bridge.agent_name, bridge.agent_id):
                         bridge.log(f"  -> skip: not for @{bridge.agent_name}")
                         continue
-                    bridge.log(f"  -> MATCH! delivering")
+                    bridge.log("  -> MATCH! delivering")
 
                     prompt = _strip_mention(data.get("content", ""), bridge.agent_name)
                     if not prompt:

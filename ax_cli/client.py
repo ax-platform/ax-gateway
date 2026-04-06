@@ -17,7 +17,6 @@ from pathlib import Path
 
 import httpx
 
-
 _EXT_MIME: dict[str, str] = {
     ".md": "text/markdown", ".markdown": "text/markdown",
     ".csv": "text/csv", ".json": "application/json",

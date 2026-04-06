@@ -1,9 +1,9 @@
 """ax agents — agent listing, creation, and management."""
-import typer
 import httpx
+import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, print_table, print_kv, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="agents", help="Agent management", no_args_is_help=True)
 
@@ -211,7 +211,7 @@ def avatar(
     Generate and set as the agent's profile picture:
         ax agents avatar backend_sentinel --set
     """
-    from ..avatar import generate_avatar, avatar_data_uri
+    from ..avatar import avatar_data_uri, generate_avatar
 
     svg = generate_avatar(agent, agent_type, size)
 

@@ -8,9 +8,9 @@ Each agent should run from its own directory. Config is local to where
 the agent operates — never shared via ~/.ax/ unless explicitly requested.
 """
 import os
+import tomllib  # stdlib 3.11+
 from pathlib import Path
 
-import tomllib  # stdlib 3.11+
 import typer
 
 from .client import AxClient

@@ -285,7 +285,8 @@ def listen(
 
     # Build handler function
     if exec_cmd:
-        handler = lambda prompt: _run_handler(exec_cmd, prompt, workdir=workdir)
+        def handler(prompt):
+            return _run_handler(exec_cmd, prompt, workdir=workdir)
     else:
         handler = _echo_handler
 

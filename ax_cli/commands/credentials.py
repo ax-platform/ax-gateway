@@ -3,11 +3,11 @@
 Requires a user PAT (axp_u_) which exchanges for user_admin JWT.
 All operations are API-first — same as what the UI does.
 """
-import typer
 import httpx
+import typer
 
 from ..config import get_client
-from ..output import JSON_OPTION, print_json, print_table, print_kv, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json
 
 app = typer.Typer(name="credentials", help="Credential management (PATs, enrollment tokens)", no_args_is_help=True)
 
@@ -54,10 +54,10 @@ def issue_agent_pat(
     if as_json:
         print_json(data)
     else:
-        console.print(f"\n[green]Agent PAT created[/green]")
+        console.print("\n[green]Agent PAT created[/green]")
         console.print(f"  Agent: {agent} ({agent_id[:12]}...)")
         console.print(f"  Expires: {data.get('expires_at', '?')[:10]}")
-        console.print(f"\n[bold]Token (save now — shown once):[/bold]")
+        console.print("\n[bold]Token (save now — shown once):[/bold]")
         console.print(f"  {data.get('token', '?')}")
 
 
@@ -85,12 +85,12 @@ def issue_enrollment(
     if as_json:
         print_json(data)
     else:
-        console.print(f"\n[green]Enrollment token created[/green]")
+        console.print("\n[green]Enrollment token created[/green]")
         console.print(f"  Expires: {data.get('expires_at', '?')[:19]}")
         console.print(f"  State: {data.get('lifecycle_state', '?')}")
-        console.print(f"\n[bold]Token (save now — shown once):[/bold]")
+        console.print("\n[bold]Token (save now — shown once):[/bold]")
         console.print(f"  {data.get('token', '?')}")
-        console.print(f"\n[cyan]Give to new agent:[/cyan]")
+        console.print("\n[cyan]Give to new agent:[/cyan]")
         console.print(f"  ax auth init --token {data.get('token', 'TOKEN')[:12]}... --agent AGENT_NAME")
 
 
@@ -107,7 +107,7 @@ def revoke(
 
     client = get_client()
     try:
-        data = client.mgmt_revoke_credential(credential_id)
+        client.mgmt_revoke_credential(credential_id)
     except httpx.HTTPStatusError as e:
         handle_error(e)
     console.print(f"[red]Revoked:[/red] {credential_id}")

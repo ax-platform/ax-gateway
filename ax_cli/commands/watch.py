@@ -19,8 +19,6 @@ Examples in scripts:
 """
 
 import json
-import os
-import sys
 import time
 from typing import Optional
 
@@ -74,7 +72,7 @@ def _matches(
         msg_time = data.get("timestamp") or data.get("created_at") or data.get("server_time") or ""
         if msg_time:
             try:
-                from datetime import datetime, timezone
+                from datetime import datetime
                 if msg_time.endswith("Z"):
                     msg_time = msg_time[:-1] + "+00:00"
                 msg_ts = datetime.fromisoformat(msg_time).timestamp()

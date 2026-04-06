@@ -7,7 +7,7 @@ import httpx
 import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, print_kv, print_table, handle_error
+from ..output import JSON_OPTION, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="context", help="Context & file operations", no_args_is_help=True)
 
@@ -307,7 +307,7 @@ def download_file(
     """Download a file from context to local disk."""
     import json as _json
     client = get_client()
-    sid = resolve_space_id(client, explicit=space_id)
+    resolve_space_id(client, explicit=space_id)
 
     try:
         data = client.get_context(key)
@@ -322,18 +322,18 @@ def download_file(
         try:
             raw = _json.loads(raw)
         except Exception:
-            console.print("[red]Context value is not a file upload[/red]")
+            typer.echo("[red]Context value is not a file upload[/red]")
             raise typer.Exit(1)
 
     if not isinstance(raw, dict) or raw.get("type") != "file_upload":
-        console.print("[red]Context key is not a file upload[/red]")
+        typer.echo("[red]Context key is not a file upload[/red]")
         raise typer.Exit(1)
 
     url = raw.get("url", "")
     filename = output or raw.get("filename", key)
 
     if not url:
-        console.print("[red]No URL in file upload[/red]")
+        typer.echo("[red]No URL in file upload[/red]")
         raise typer.Exit(1)
 
     # Download
@@ -344,6 +344,6 @@ def download_file(
             r.raise_for_status()
             from pathlib import Path
             Path(filename).write_bytes(r.content)
-            console.print(f"[green]Downloaded:[/green] {filename} ({len(r.content)} bytes)")
+            typer.echo(f"[green]Downloaded:[/green] {filename} ({len(r.content)} bytes)")
     except httpx.HTTPStatusError as e:
         handle_error(e)

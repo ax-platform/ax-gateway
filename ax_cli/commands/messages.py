@@ -2,11 +2,11 @@
 import time
 from typing import Optional
 
-import typer
 import httpx
+import typer
 
-from ..config import get_client, resolve_space_id, resolve_agent_name
-from ..output import JSON_OPTION, print_json, print_table, print_kv, handle_error, console
+from ..config import get_client, resolve_agent_name, resolve_space_id
+from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="messages", help="Message operations", no_args_is_help=True)
 
@@ -127,8 +127,8 @@ def send(
 
             if agent_scope == "user":
                 typer.echo(
-                    f"Error: --act-as rejected. Your token has agent_scope='user' — "
-                    f"it cannot send as any agent.",
+                    "Error: --act-as rejected. Your token has agent_scope='user' — "
+                    "it cannot send as any agent.",
                     err=True,
                 )
                 raise typer.Exit(1)

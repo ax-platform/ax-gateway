@@ -7,7 +7,7 @@ import httpx
 import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, print_kv, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json
 
 app = typer.Typer(name="upload", help="Upload files to context", no_args_is_help=True)
 

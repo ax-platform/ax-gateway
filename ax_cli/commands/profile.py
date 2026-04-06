@@ -8,15 +8,13 @@ the token is loaded.
 Storage: ~/.ax/profiles/<name>/profile.toml
 """
 import hashlib
-import os
-import platform
 import socket
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import httpx
-import tomllib
 import typer
 from rich.table import Table
 
@@ -215,7 +213,7 @@ def use(
     if err:
         console.print(f"  [yellow]Backend: {err}[/yellow]")
     elif profile.get("agent_id"):
-        console.print(f"  [dim]Fingerprint registered with backend[/dim]")
+        console.print("  [dim]Fingerprint registered with backend[/dim]")
 
 
 @app.command("list")

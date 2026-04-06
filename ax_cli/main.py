@@ -5,7 +5,23 @@ from typing import Optional
 import httpx
 import typer
 
-from .commands import auth, keys, agents, messages, tasks, events, listen, context, watch, upload, profile, assign, spaces, credentials, channel
+from .commands import (
+    agents,
+    assign,
+    auth,
+    channel,
+    context,
+    credentials,
+    events,
+    keys,
+    listen,
+    messages,
+    profile,
+    spaces,
+    tasks,
+    upload,
+    watch,
+)
 
 app = typer.Typer(name="ax", help="aX Platform CLI", no_args_is_help=True)
 app.add_typer(auth.app, name="auth")

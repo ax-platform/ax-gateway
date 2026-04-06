@@ -5,7 +5,7 @@ import httpx
 import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, print_table, print_kv, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="spaces", help="Space management", no_args_is_help=True)
 

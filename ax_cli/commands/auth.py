@@ -5,10 +5,16 @@ import httpx
 import typer
 
 from ..config import (
-    get_client, save_token, resolve_token, resolve_agent_name,
-    _global_config_dir, _local_config_dir, _save_config, _load_local_config,
+    _global_config_dir,
+    _load_local_config,
+    _local_config_dir,
+    _save_config,
+    get_client,
+    resolve_agent_name,
+    resolve_token,
+    save_token,
 )
-from ..output import JSON_OPTION, print_json, print_kv, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json, print_kv
 
 app = typer.Typer(name="auth", help="Authentication & identity", no_args_is_help=True)
 token_app = typer.Typer(name="token", help="Token management", no_args_is_help=True)
@@ -200,7 +206,7 @@ def init(
                 console.print("  ax auth init --token axp_a_... --agent my-agent-name")
             raise typer.Exit(1)
 
-        console.print(f"[green]Token bound.[/green] Exchange successful.")
+        console.print("[green]Token bound.[/green] Exchange successful.")
 
         # Discover space
         try:
@@ -299,7 +305,7 @@ def init(
         if ".ax/" not in content and ".ax" not in content:
             console.print(f"[yellow]Reminder:[/yellow] Add .ax/ to {gitignore}")
     elif (root / ".git").exists():
-        console.print(f"[yellow]Reminder:[/yellow] Add .ax/ to .gitignore")
+        console.print("[yellow]Reminder:[/yellow] Add .ax/ to .gitignore")
 
 
 @app.command("exchange")
@@ -324,8 +330,8 @@ def exchange(
         console.print("[red]Token is not a PAT (must start with axp_).[/red]")
         raise typer.Exit(1)
 
-    from ..token_cache import TokenExchanger
     from ..config import resolve_base_url
+    from ..token_cache import TokenExchanger
 
     exchanger = TokenExchanger(resolve_base_url(), token)
     try:
@@ -337,7 +343,8 @@ def exchange(
 
     if as_json:
         # Decode claims for display without verification
-        import base64, json as json_mod
+        import base64
+        import json as json_mod
         parts = jwt.split(".")
         if len(parts) == 3:
             payload = parts[1] + "=" * (-len(parts[1]) % 4)
@@ -355,7 +362,7 @@ def exchange(
     else:
         console.print(f"[green]Exchanged:[/green] {token_class}")
         console.print(f"  JWT: {jwt[:20]}...{jwt[-10:]}")
-        console.print(f"  Cached until expiry. Use --json for details.")
+        console.print("  Cached until expiry. Use --json for details.")
 
 
 @token_app.command("set")

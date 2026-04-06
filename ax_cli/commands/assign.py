@@ -6,7 +6,7 @@ import httpx
 import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json
 
 app = typer.Typer(name="assign", help="Assign work to agents and track completion")
 
