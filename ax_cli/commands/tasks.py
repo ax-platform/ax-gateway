@@ -1,4 +1,5 @@
 """ax tasks — create, list, get, update."""
+
 from typing import Optional
 
 import httpx
@@ -16,7 +17,9 @@ def create(
     description: Optional[str] = typer.Option(None, "--description", help="Task description"),
     priority: str = typer.Option("medium", "--priority", help="Priority: low, medium, high, urgent"),
     assign_to: Optional[str] = typer.Option(None, "--assign-to", help="Assign task to an agent (agent UUID)"),
-    notify: bool = typer.Option(True, "--notify/--no-notify", help="Send a message notifying the team about the new task"),
+    notify: bool = typer.Option(
+        True, "--notify/--no-notify", help="Send a message notifying the team about the new task"
+    ),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
@@ -25,7 +28,11 @@ def create(
     sid = resolve_space_id(client, explicit=space_id)
     try:
         data = client.create_task(
-            sid, title, description=description, priority=priority, agent_id=assign_to,
+            sid,
+            title,
+            description=description,
+            priority=priority,
+            agent_id=assign_to,
         )
     except httpx.HTTPStatusError as e:
         handle_error(e)
@@ -34,7 +41,7 @@ def create(
     if as_json:
         print_json(task)
     else:
-        console.print(f"[green]Created:[/green] \"{task.get('title')}\" (id={tid}…, priority={task.get('priority')})")
+        console.print(f'[green]Created:[/green] "{task.get("title")}" (id={tid}…, priority={task.get("priority")})')
 
     if notify:
         try:

@@ -1,4 +1,5 @@
 """ax auth — identity and token management."""
+
 from pathlib import Path
 
 import httpx
@@ -35,6 +36,7 @@ def whoami(as_json: bool = JSON_OPTION):
         data["resolved_space_id"] = bound.get("default_space_id", "none")
     else:
         from ..config import resolve_space_id
+
         try:
             space_id = resolve_space_id(client, explicit=None)
             data["resolved_space_id"] = space_id
@@ -89,7 +91,8 @@ def init(
 
     # --agent accepts both name and UUID
     import re
-    _uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+
+    _uuid_pattern = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
     agent_name = None
     agent_id = None
     if agent and _uuid_pattern.match(agent):
@@ -147,8 +150,10 @@ def init(
             if data.get("access_token") and data.get("expires_in"):
                 try:
                     from ..token_cache import TokenExchanger
+
                     exchanger = TokenExchanger(base_url, token)
                     import time
+
                     exchanger._cache["enrollment"] = {
                         "access_token": data["access_token"],
                         "exp": time.time() + data["expires_in"],
@@ -176,6 +181,7 @@ def init(
                 console.print("[cyan]Token already bound. Discovering agent...[/cyan]")
                 try:
                     from ..client import AxClient
+
                     client = AxClient(base_url=base_url, token=token)
                     me = client.whoami()
                     bound = me.get("bound_agent")
@@ -183,7 +189,9 @@ def init(
                         cfg["agent_id"] = bound["agent_id"]
                         cfg["agent_name"] = bound.get("agent_name", "")
                         registered = True
-                        console.print(f"[green]Found bound agent:[/green] {cfg['agent_name']} ({cfg['agent_id'][:12]}...)")
+                        console.print(
+                            f"[green]Found bound agent:[/green] {cfg['agent_name']} ({cfg['agent_id'][:12]}...)"
+                        )
                     else:
                         console.print("[red]Token is bound but agent not found in response.[/red]")
                         raise typer.Exit(1)
@@ -211,6 +219,7 @@ def init(
         # Discover space
         try:
             from ..client import AxClient
+
             client = AxClient(base_url=base_url, token=token, agent_id=cfg.get("agent_id"))
             me = client.whoami()
             bound = me.get("bound_agent")
@@ -224,6 +233,7 @@ def init(
         # --- User token flow: discover identity + spaces + agents ---
         try:
             from ..token_cache import TokenExchanger
+
             exchanger = TokenExchanger(base_url, token)
             exchanger.get_token("user_access", scope="messages tasks context agents spaces search")
             console.print("[green]Token verified.[/green] Exchange successful.")
@@ -234,6 +244,7 @@ def init(
 
         try:
             from ..client import AxClient
+
             client = AxClient(base_url=base_url, token=token)
             me = client.whoami()
             username = me.get("username", "unknown")
@@ -245,7 +256,9 @@ def init(
                 cfg["agent_name"] = bound.get("agent_name", "")
                 if bound.get("default_space_id"):
                     cfg["space_id"] = bound["default_space_id"]
-                console.print(f"[green]Bound agent:[/green] {bound.get('agent_name')} ({bound.get('agent_id', '')[:12]}...)")
+                console.print(
+                    f"[green]Bound agent:[/green] {bound.get('agent_name')} ({bound.get('agent_id', '')[:12]}...)"
+                )
         except Exception:
             pass
 
@@ -310,8 +323,12 @@ def init(
 
 @app.command("exchange")
 def exchange(
-    token_class: str = typer.Option("user_access", "--class", "-c", help="Token class: user_access, user_admin, agent_access"),
-    scope: str = typer.Option("messages tasks context agents spaces search", "--scope", "-s", help="Space-separated scopes"),
+    token_class: str = typer.Option(
+        "user_access", "--class", "-c", help="Token class: user_access, user_admin, agent_access"
+    ),
+    scope: str = typer.Option(
+        "messages tasks context agents spaces search", "--scope", "-s", help="Space-separated scopes"
+    ),
     agent_id: str = typer.Option(None, "--agent", "-a", help="Agent ID (required for agent_access)"),
     audience: str = typer.Option("ax-api", "--audience", help="Target audience: ax-api or ax-mcp"),
     resource: str = typer.Option(None, "--resource", help="RFC 8707 resource URI (e.g. https://next.paxai.app/mcp)"),
@@ -336,7 +353,10 @@ def exchange(
     exchanger = TokenExchanger(resolve_base_url(), token)
     try:
         jwt = exchanger.get_token(
-            token_class, agent_id=agent_id, audience=audience, scope=scope,
+            token_class,
+            agent_id=agent_id,
+            audience=audience,
+            scope=scope,
         )
     except httpx.HTTPStatusError as e:
         handle_error(e)
@@ -345,18 +365,21 @@ def exchange(
         # Decode claims for display without verification
         import base64
         import json as json_mod
+
         parts = jwt.split(".")
         if len(parts) == 3:
             payload = parts[1] + "=" * (-len(parts[1]) % 4)
             claims = json_mod.loads(base64.urlsafe_b64decode(payload))
-            print_json({
-                "access_token": jwt[:20] + "...",
-                "token_class": claims.get("token_class"),
-                "sub": claims.get("sub"),
-                "scope": claims.get("scope"),
-                "expires_in": claims.get("exp", 0) - claims.get("iat", 0),
-                "agent_id": claims.get("agent_id"),
-            })
+            print_json(
+                {
+                    "access_token": jwt[:20] + "...",
+                    "token_class": claims.get("token_class"),
+                    "sub": claims.get("sub"),
+                    "scope": claims.get("scope"),
+                    "expires_in": claims.get("exp", 0) - claims.get("iat", 0),
+                    "agent_id": claims.get("agent_id"),
+                }
+            )
         else:
             print_json({"access_token": jwt[:20] + "..."})
     else:

@@ -3,6 +3,7 @@
 Requires a user PAT (axp_u_) which exchanges for user_admin JWT.
 All operations are API-first — same as what the UI does.
 """
+
 import httpx
 import typer
 
@@ -32,7 +33,8 @@ def issue_agent_pat(
 
     # Resolve agent name to ID if needed
     import re
-    uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+
+    uuid_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
     if uuid_re.match(agent):
         agent_id = agent
     else:
@@ -134,9 +136,4 @@ def list_credentials(as_json: bool = JSON_OPTION):
             agent = c.get("bound_agent_id") or "none"
             if agent != "none":
                 agent = agent[:12] + "..."
-            console.print(
-                f"  [{color}]{state:<10s}[/{color}] "
-                f"{c['key_id']}  "
-                f"agent={agent:<16s}  "
-                f"{c.get('name', '')}"
-            )
+            console.print(f"  [{color}]{state:<10s}[/{color}] {c['key_id']}  agent={agent:<16s}  {c.get('name', '')}")

@@ -73,6 +73,7 @@ def _matches(
         if msg_time:
             try:
                 from datetime import datetime
+
                 if msg_time.endswith("Z"):
                     msg_time = msg_time[:-1] + "+00:00"
                 msg_ts = datetime.fromisoformat(msg_time).timestamp()
@@ -142,7 +143,9 @@ def _watch_poll(
             conditions.append(f"@{from_agent}")
         else:
             conditions.append("any agent")
-        console.print(f"[dim]Polling for response from {', '.join(conditions)} (timeout: {timeout}s, interval: {interval}s)[/dim]")
+        console.print(
+            f"[dim]Polling for response from {', '.join(conditions)} (timeout: {timeout}s, interval: {interval}s)[/dim]"
+        )
 
     while True:
         elapsed = time.time() - start_time
@@ -294,7 +297,8 @@ def watch(
                     continue
 
                 if _matches(
-                    event_type, data,
+                    event_type,
+                    data,
                     mention=mention,
                     from_agent=from_agent,
                     contains=contains,

@@ -1,4 +1,5 @@
 """ax spaces — list, create, and manage spaces."""
+
 from typing import Optional
 
 import httpx
@@ -49,7 +50,9 @@ def create(
     if as_json:
         print_json(space)
     else:
-        console.print(f"[green]Created:[/green] {space.get('name')} (id={str(space.get('id',''))[:8]}…, visibility={space.get('visibility')})")
+        console.print(
+            f"[green]Created:[/green] {space.get('name')} (id={str(space.get('id', ''))[:8]}…, visibility={space.get('visibility')})"
+        )
 
 
 @app.command("get")

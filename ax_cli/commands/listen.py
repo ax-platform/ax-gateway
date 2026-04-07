@@ -9,6 +9,7 @@ Usage:
     ax listen --dry-run                    # Watch only
     ax listen --agent mybot --exec ./bot   # Named agent
 """
+
 import json
 import os
 import queue
@@ -33,6 +34,7 @@ app = typer.Typer(name="listen", help="Listen for @mentions via SSE", no_args_is
 # ---------------------------------------------------------------------------
 # SSE parsing
 # ---------------------------------------------------------------------------
+
 
 def _iter_sse(response: httpx.Response):
     """Yield (event_type, parsed_data) from an SSE stream."""
@@ -69,7 +71,12 @@ def _should_respond(data: dict, agent_name: str, agent_id: str | None) -> bool:
         sender = author.get("name", "")
         sender_id = author.get("id", "")
     else:
-        sender = data.get("display_name") or data.get("username") or data.get("sender_name") or (author if isinstance(author, str) else "")
+        sender = (
+            data.get("display_name")
+            or data.get("username")
+            or data.get("sender_name")
+            or (author if isinstance(author, str) else "")
+        )
         sender_id = data.get("agent_id") or ""
 
     if sender.lower() == agent_name.lower():
@@ -88,6 +95,7 @@ def _strip_mention(content: str, agent_name: str) -> str:
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
+
 
 def _run_handler(command: str, prompt: str, *, workdir: str | None = None) -> str:
     """Run an external command with the mention content.
@@ -128,6 +136,7 @@ def _echo_handler(prompt: str) -> str:
 # Pause gate (file-based, shared with killswitch.sh)
 # ---------------------------------------------------------------------------
 
+
 def _is_paused(agent_name: str) -> bool:
     pause_all = Path.home() / ".ax" / "sentinel_pause"
     pause_one = Path.home() / ".ax" / f"sentinel_pause_{agent_name}"
@@ -137,6 +146,7 @@ def _is_paused(agent_name: str) -> bool:
 # ---------------------------------------------------------------------------
 # Worker thread
 # ---------------------------------------------------------------------------
+
 
 def _worker(
     mention_queue: queue.Queue,
@@ -161,7 +171,7 @@ def _worker(
         was_paused = False
         while _is_paused(agent_name):
             if not was_paused:
-                console.print(f"[yellow]PAUSED[/yellow] — holding {mention_queue.qsize()+1} messages")
+                console.print(f"[yellow]PAUSED[/yellow] — holding {mention_queue.qsize() + 1} messages")
                 was_paused = True
             time.sleep(2.0)
         if was_paused:
@@ -177,8 +187,7 @@ def _worker(
             continue
 
         console.print(
-            f"[bold cyan]@{author}[/bold cyan] → "
-            f"[dim]{prompt[:100]}{'...' if len(prompt) > 100 else ''}[/dim]"
+            f"[bold cyan]@{author}[/bold cyan] → [dim]{prompt[:100]}{'...' if len(prompt) > 100 else ''}[/dim]"
         )
 
         if dry_run:
@@ -207,34 +216,46 @@ def _worker(
 # Main command
 # ---------------------------------------------------------------------------
 
+
 @app.callback(invoke_without_command=True)
 def listen(
     exec_cmd: Optional[str] = typer.Option(
-        None, "--exec", "-e",
+        None,
+        "--exec",
+        "-e",
         help="Command to run for each mention. Gets content as last arg + AX_MENTION_CONTENT env var.",
     ),
     agent: Optional[str] = typer.Option(
-        None, "--agent", "-a",
+        None,
+        "--agent",
+        "-a",
         help="Agent name to listen as (default: from config)",
     ),
     space_id: Optional[str] = typer.Option(
-        None, "--space-id", "-s",
+        None,
+        "--space-id",
+        "-s",
         help="Space to listen in (default: from config)",
     ),
     workdir: Optional[str] = typer.Option(
-        None, "--workdir", "-w",
+        None,
+        "--workdir",
+        "-w",
         help="Working directory for handler command",
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run",
+        False,
+        "--dry-run",
         help="Watch mentions without responding",
     ),
     queue_size: int = typer.Option(
-        50, "--queue-size",
+        50,
+        "--queue-size",
         help="Max queued mentions before dropping",
     ),
     as_json: bool = typer.Option(
-        False, "--json",
+        False,
+        "--json",
         help="Output events as JSON lines",
     ),
 ):
@@ -272,10 +293,7 @@ def listen(
     agent_id = None
     try:
         agents_data = client.list_agents()
-        agents_list = (
-            agents_data if isinstance(agents_data, list)
-            else agents_data.get("agents", [])
-        )
+        agents_list = agents_data if isinstance(agents_data, list) else agents_data.get("agents", [])
         for a in agents_list:
             if a.get("name", "").lower() == agent_name.lower():
                 agent_id = a["id"]
@@ -285,6 +303,7 @@ def listen(
 
     # Build handler function
     if exec_cmd:
+
         def handler(prompt):
             return _run_handler(exec_cmd, prompt, workdir=workdir)
     else:
@@ -292,8 +311,7 @@ def listen(
 
     # Print banner
     console.print("[bold]ax listen[/bold] — SSE agent listener")
-    console.print(f"  Agent:   @{agent_name}" +
-                  (f" ({agent_id[:12]}...)" if agent_id else ""))
+    console.print(f"  Agent:   @{agent_name}" + (f" ({agent_id[:12]}...)" if agent_id else ""))
     console.print(f"  Space:   {sid[:12]}...")
     console.print(f"  API:     {client.base_url}")
     console.print(f"  Handler: {exec_cmd or 'echo (built-in)'}")
@@ -315,9 +333,7 @@ def listen(
     SEEN_MAX = 500
     backoff = 1
 
-    console.print(
-        f"[green]Listening for @{agent_name} mentions...[/green]  (Ctrl+C to stop)\n"
-    )
+    console.print(f"[green]Listening for @{agent_name} mentions...[/green]  (Ctrl+C to stop)\n")
 
     # SSE loop with auto-reconnect
     while True:
@@ -330,14 +346,12 @@ def listen(
                 for event_type, data in _iter_sse(resp):
                     backoff = 1
 
-                    if event_type in ("bootstrap", "heartbeat", "ping",
-                                      "identity_bootstrap"):
+                    if event_type in ("bootstrap", "heartbeat", "ping", "identity_bootstrap"):
                         continue
 
                     if event_type == "connected":
                         if as_json:
-                            print(json.dumps({"event": "connected",
-                                              "agent": agent_name}))
+                            print(json.dumps({"event": "connected", "agent": agent_name}))
                             sys.stdout.flush()
                         continue
 
@@ -351,28 +365,28 @@ def listen(
                         if _should_respond(data, agent_name, agent_id):
                             seen_ids.add(msg_id)
                             if len(seen_ids) > SEEN_MAX:
-                                seen_ids = set(list(seen_ids)[-SEEN_MAX // 2:])
+                                seen_ids = set(list(seen_ids)[-SEEN_MAX // 2 :])
 
                             if as_json:
-                                print(json.dumps({
-                                    "event": "mention",
-                                    "from": data.get("display_name"),
-                                    "content": data.get("content", "")[:200],
-                                    "id": msg_id,
-                                }))
+                                print(
+                                    json.dumps(
+                                        {
+                                            "event": "mention",
+                                            "from": data.get("display_name"),
+                                            "content": data.get("content", "")[:200],
+                                            "id": msg_id,
+                                        }
+                                    )
+                                )
                                 sys.stdout.flush()
 
                             try:
                                 mention_q.put_nowait(data)
                             except queue.Full:
-                                console.print(
-                                    "[yellow]Queue full — dropping mention[/yellow]"
-                                )
+                                console.print("[yellow]Queue full — dropping mention[/yellow]")
 
         except (httpx.ConnectError, httpx.ReadTimeout):
-            console.print(
-                f"[yellow]Connection lost. Reconnecting in {backoff}s...[/yellow]"
-            )
+            console.print(f"[yellow]Connection lost. Reconnecting in {backoff}s...[/yellow]")
             time.sleep(backoff)
             backoff = min(backoff * 2, 60)
         except KeyboardInterrupt:

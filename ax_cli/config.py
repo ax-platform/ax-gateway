@@ -7,6 +7,7 @@ IMPORTANT: All writes go to the current working directory by default.
 Each agent should run from its own directory. Config is local to where
 the agent operates — never shared via ~/.ax/ unless explicitly requested.
 """
+
 import os
 import tomllib  # stdlib 3.11+
 from pathlib import Path
@@ -99,9 +100,9 @@ def _check_config_permissions() -> None:
                 mode = cf.stat().st_mode & 0o777
                 if mode > 0o600:
                     import sys
+
                     print(
-                        f"WARNING: {cf} has permissions {oct(mode)} — should be 0600. "
-                        f"Run: chmod 600 {cf}",
+                        f"WARNING: {cf} has permissions {oct(mode)} — should be 0600. Run: chmod 600 {cf}",
                         file=sys.stderr,
                     )
         except Exception:
@@ -114,10 +115,7 @@ def resolve_token() -> str | None:
 
 
 def resolve_base_url() -> str:
-    return (
-        os.environ.get("AX_BASE_URL")
-        or _load_config().get("base_url", "http://localhost:8001")
-    )
+    return os.environ.get("AX_BASE_URL") or _load_config().get("base_url", "http://localhost:8001")
 
 
 def resolve_agent_name(*, explicit: str | None = None, client: AxClient | None = None) -> str | None:
@@ -227,6 +225,8 @@ def get_client() -> AxClient:
     agent_name = resolve_agent_name()
     agent_id = resolve_agent_id()
     return AxClient(
-        base_url=resolve_base_url(), token=token,
-        agent_name=agent_name, agent_id=agent_id,
+        base_url=resolve_base_url(),
+        token=token,
+        agent_name=agent_name,
+        agent_id=agent_id,
     )

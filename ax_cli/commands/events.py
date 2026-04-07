@@ -1,4 +1,5 @@
 """ax events — SSE event streaming."""
+
 import json
 import sys
 from typing import Optional

@@ -1,4 +1,5 @@
 """aX Platform CLI — Typer app with subcommand registration."""
+
 import sys
 from typing import Optional
 
@@ -53,7 +54,9 @@ def send_shortcut(
     timeout: int = typer.Option(60, "--timeout", "-t", help="Max seconds to wait"),
     reply_to: Optional[str] = typer.Option(None, "--reply-to", "-r", help="Reply to message ID (thread)"),
     to: Optional[str] = typer.Option(None, "--to", help="@mention another agent by name"),
-    act_as: Optional[str] = typer.Option(None, "--act-as", help="Impersonate: send as a different agent. Requires scoped token."),
+    act_as: Optional[str] = typer.Option(
+        None, "--act-as", help="Impersonate: send as a different agent. Requires scoped token."
+    ),
     files: Optional[list[str]] = typer.Option(None, "--file", "-f", help="Attach a local file (repeatable)"),
     space_id: Optional[str] = typer.Option(None, "--space-id", "-s", help="Override default space"),
     as_json: bool = typer.Option(False, "--json", help="Output as JSON"),

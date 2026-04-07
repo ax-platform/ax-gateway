@@ -9,6 +9,7 @@ Usage:
     msg = client.send_message(space_id, "hello")
     client.send_message(space_id, "do this", agent_id="<uuid>")
 """
+
 import hashlib
 import mimetypes
 import os
@@ -18,12 +19,18 @@ from pathlib import Path
 import httpx
 
 _EXT_MIME: dict[str, str] = {
-    ".md": "text/markdown", ".markdown": "text/markdown",
-    ".csv": "text/csv", ".json": "application/json",
-    ".pdf": "application/pdf", ".png": "image/png",
-    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".gif": "image/gif", ".webp": "image/webp",
-    ".txt": "text/plain", ".doc": "application/msword",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".txt": "text/plain",
+    ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xls": "application/vnd.ms-excel",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -60,17 +67,17 @@ def _build_fingerprint(token: str) -> dict[str, str]:
 # platforms but are actually traps. If anyone uses one, the CLI alerts
 # the aX platform immediately with full fingerprint data.
 HONEYPOT_PREFIXES = {
-    "AKIA":       "aws-iam",       # AWS IAM access key
-    "ASIA":       "aws-sts",       # AWS STS temporary key
-    "ghp_":       "github-pat",    # GitHub personal access token
-    "gho_":       "github-oauth",  # GitHub OAuth token
-    "ghs_":       "github-app",    # GitHub App token
-    "sk-":        "openai",        # OpenAI API key
-    "sk-ant-":    "anthropic",     # Anthropic API key
-    "xoxb-":      "slack-bot",     # Slack bot token
-    "xoxp-":      "slack-user",    # Slack user token
-    "SG.":        "sendgrid",      # SendGrid API key
-    "key-":       "generic",       # Generic API key
+    "AKIA": "aws-iam",  # AWS IAM access key
+    "ASIA": "aws-sts",  # AWS STS temporary key
+    "ghp_": "github-pat",  # GitHub personal access token
+    "gho_": "github-oauth",  # GitHub OAuth token
+    "ghs_": "github-app",  # GitHub App token
+    "sk-": "openai",  # OpenAI API key
+    "sk-ant-": "anthropic",  # Anthropic API key
+    "xoxb-": "slack-bot",  # Slack bot token
+    "xoxp-": "slack-user",  # Slack user token
+    "SG.": "sendgrid",  # SendGrid API key
+    "key-": "generic",  # Generic API key
 }
 
 
@@ -125,8 +132,9 @@ class _RetryOnAuthClient:
             return r
 
         import time as _time
+
         for attempt in range(self._MAX_RETRIES):
-            backoff = self._BACKOFF_BASE * (2 ** attempt)
+            backoff = self._BACKOFF_BASE * (2**attempt)
             _time.sleep(backoff)
             fresh_jwt = self._get_fresh_jwt()
             headers = kwargs.get("headers") or {}
@@ -160,8 +168,7 @@ class _RetryOnAuthClient:
 
 
 class AxClient:
-    def __init__(self, base_url: str, token: str, *, agent_name: str | None = None,
-                 agent_id: str | None = None):
+    def __init__(self, base_url: str, token: str, *, agent_name: str | None = None, agent_id: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.agent_id = agent_id  # Used for exchange parameters, NOT headers (§13)
@@ -176,6 +183,7 @@ class AxClient:
 
         if self._use_exchange:
             from .token_cache import TokenExchanger
+
             self._exchanger = TokenExchanger(base_url, token)
 
         self._base_headers = {
@@ -191,7 +199,9 @@ class AxClient:
             self._base_headers["Authorization"] = f"Bearer {token}"
 
         inner = httpx.Client(
-            base_url=self.base_url, headers=self._base_headers, timeout=30.0,
+            base_url=self.base_url,
+            headers=self._base_headers,
+            timeout=30.0,
             event_hooks={"request": [self._inject_auth]} if self._use_exchange else {},
         )
         # Wrap with 401 retry — on auth failure, force re-exchange and retry with backoff
@@ -209,7 +219,8 @@ class AxClient:
         is_agent_pat = self.token.startswith("axp_a_")
         if self.agent_id and is_agent_pat:
             return self._exchanger.get_token(
-                "agent_access", agent_id=self.agent_id,
+                "agent_access",
+                agent_id=self.agent_id,
                 scope="messages tasks context agents spaces search",
                 force_refresh=force_refresh,
             )
@@ -227,7 +238,6 @@ class AxClient:
         """
         if self._exchanger and "Authorization" not in request.headers:
             request.headers["Authorization"] = f"Bearer {self._get_jwt()}"
-
 
     def _auth_headers(self, *, for_agent: bool = False) -> dict:
         """Get headers with a fresh JWT from exchange, or static token.
@@ -259,8 +269,7 @@ class AxClient:
         content_type = r.headers.get("content-type", "")
         if "text/html" in content_type or r.text.lstrip().startswith("<!"):
             raise httpx.HTTPStatusError(
-                f"Expected JSON but got HTML from {r.url} — "
-                f"the frontend may be catching this API route",
+                f"Expected JSON but got HTML from {r.url} — the frontend may be catching this API route",
                 request=r.request,
                 response=r,
             )
@@ -286,8 +295,7 @@ class AxClient:
         r.raise_for_status()
         return self._parse_json(r)
 
-    def create_space(self, name: str, *, description: str | None = None,
-                     visibility: str = "private") -> dict:
+    def create_space(self, name: str, *, description: str | None = None, visibility: str = "private") -> dict:
         """POST /api/spaces/create — create a new space."""
         body = {"name": name, "visibility": visibility}
         if description:
@@ -303,21 +311,24 @@ class AxClient:
 
     # --- Messages ---
 
-    def send_message(self, space_id: str, content: str, *,
-                     agent_id: str | None = None,
-                     channel: str = "main",
-                     parent_id: str | None = None,
-                     attachments: list[dict] | None = None) -> dict:
+    def send_message(
+        self,
+        space_id: str,
+        content: str,
+        *,
+        agent_id: str | None = None,
+        channel: str = "main",
+        parent_id: str | None = None,
+        attachments: list[dict] | None = None,
+    ) -> dict:
         """POST /api/v1/messages — explicit space_id required."""
-        body: dict = {"content": content, "space_id": space_id,
-                "channel": channel, "message_type": "text"}
+        body: dict = {"content": content, "space_id": space_id, "channel": channel, "message_type": "text"}
         if parent_id:
             body["parent_id"] = parent_id
         if attachments:
             body["attachments"] = attachments
             body["metadata"] = {"accepted_attachments": attachments}
-        r = self._http.post("/api/v1/messages", json=body,
-                            headers=self._with_agent(agent_id))
+        r = self._http.post("/api/v1/messages", json=body, headers=self._with_agent(agent_id))
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -331,12 +342,16 @@ class AxClient:
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        content_type = _mime_from_ext(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        content_type = (
+            _mime_from_ext(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        )
         headers = {k: v for k, v in self._auth_headers().items() if k != "Content-Type"}
 
         with path.open("rb") as fh:
             with httpx.Client(
-                base_url=self.base_url, headers=headers, timeout=60.0,
+                base_url=self.base_url,
+                headers=headers,
+                timeout=60.0,
                 follow_redirects=True,
             ) as upload_http:
                 r = upload_http.post(
@@ -346,11 +361,10 @@ class AxClient:
         r.raise_for_status()
         return self._parse_json(r)
 
-    def list_messages(self, limit: int = 20, channel: str = "main", *,
-                      agent_id: str | None = None) -> dict:
-        r = self._http.get("/api/v1/messages",
-                           params={"limit": limit, "channel": channel},
-                           headers=self._with_agent(agent_id))
+    def list_messages(self, limit: int = 20, channel: str = "main", *, agent_id: str | None = None) -> dict:
+        r = self._http.get(
+            "/api/v1/messages", params={"limit": limit, "channel": channel}, headers=self._with_agent(agent_id)
+        )
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -360,8 +374,7 @@ class AxClient:
         return self._parse_json(r)
 
     def edit_message(self, message_id: str, content: str) -> dict:
-        r = self._http.patch(f"/api/v1/messages/{message_id}",
-                             json={"content": content})
+        r = self._http.patch(f"/api/v1/messages/{message_id}", json={"content": content})
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -371,8 +384,7 @@ class AxClient:
         return r.status_code
 
     def add_reaction(self, message_id: str, emoji: str) -> dict:
-        r = self._http.post(f"/api/v1/messages/{message_id}/reactions",
-                            json={"emoji": emoji})
+        r = self._http.post(f"/api/v1/messages/{message_id}/reactions", json={"emoji": emoji})
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -383,22 +395,25 @@ class AxClient:
 
     # --- Tasks ---
 
-    def create_task(self, space_id: str, title: str, *,
-                    description: str | None = None,
-                    priority: str = "medium",
-                    agent_id: str | None = None) -> dict:
+    def create_task(
+        self,
+        space_id: str,
+        title: str,
+        *,
+        description: str | None = None,
+        priority: str = "medium",
+        agent_id: str | None = None,
+    ) -> dict:
         """POST /api/v1/tasks — explicit space_id required."""
         body = {"title": title, "space_id": space_id, "priority": priority}
         if description:
             body["description"] = description
-        r = self._http.post("/api/v1/tasks", json=body,
-                            headers=self._with_agent(agent_id))
+        r = self._http.post("/api/v1/tasks", json=body, headers=self._with_agent(agent_id))
         r.raise_for_status()
         return self._parse_json(r)
 
     def list_tasks(self, limit: int = 20, *, agent_id: str | None = None) -> dict:
-        r = self._http.get("/api/v1/tasks", params={"limit": limit},
-                           headers=self._with_agent(agent_id))
+        r = self._http.get("/api/v1/tasks", params={"limit": limit}, headers=self._with_agent(agent_id))
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -428,8 +443,7 @@ class AxClient:
     def create_agent(self, name: str, **kwargs) -> dict:
         """POST /api/v1/agents — create a new agent."""
         body: dict = {"name": name}
-        for key in ("description", "system_prompt", "model", "space_id",
-                     "enable_cloud_agent", "can_manage_agents"):
+        for key in ("description", "system_prompt", "model", "space_id", "enable_cloud_agent", "can_manage_agents"):
             if key in kwargs and kwargs[key] is not None:
                 body[key] = kwargs[key]
         r = self._http.post("/api/v1/agents", json=body)
@@ -463,7 +477,7 @@ class AxClient:
         r.raise_for_status()
         roster = self._parse_json(r)
         entries = roster.get("entries", roster) if isinstance(roster, dict) else roster
-        for entry in (entries if isinstance(entries, list) else []):
+        for entry in entries if isinstance(entries, list) else []:
             if str(entry.get("id")) == agent_id:
                 return {
                     "agent_id": agent_id,
@@ -475,8 +489,7 @@ class AxClient:
 
     # --- Context ---
 
-    def set_context(self, space_id: str, key: str, value: str, *,
-                    ttl: int | None = None) -> dict:
+    def set_context(self, space_id: str, key: str, value: str, *, ttl: int | None = None) -> dict:
         """POST /api/v1/context — explicit space_id required."""
         body = {"key": key, "value": value, "space_id": space_id}
         if ttl:
@@ -505,18 +518,16 @@ class AxClient:
 
     # --- Search ---
 
-    def search_messages(self, query: str, limit: int = 20, *,
-                        agent_id: str | None = None) -> dict:
-        r = self._http.post("/api/v1/search/messages",
-                            json={"query": query, "limit": limit},
-                            headers=self._with_agent(agent_id))
+    def search_messages(self, query: str, limit: int = 20, *, agent_id: str | None = None) -> dict:
+        r = self._http.post(
+            "/api/v1/search/messages", json={"query": query, "limit": limit}, headers=self._with_agent(agent_id)
+        )
         r.raise_for_status()
         return self._parse_json(r)
 
     # --- Keys (PAT management) ---
 
-    def create_key(self, name: str, *,
-                   allowed_agent_ids: list[str] | None = None) -> dict:
+    def create_key(self, name: str, *, allowed_agent_ids: list[str] | None = None) -> dict:
         body: dict = {"name": name}
         if allowed_agent_ids:
             body["allowed_agent_ids"] = allowed_agent_ids
@@ -555,58 +566,53 @@ class AxClient:
         for k in ("description", "system_prompt", "model", "space_id"):
             if k in kwargs and kwargs[k] is not None:
                 body[k] = kwargs[k]
-        r = self._http.post("/agents/manage/create", json=body,
-                            headers=self._admin_headers("agents.create"))
+        r = self._http.post("/agents/manage/create", json=body, headers=self._admin_headers("agents.create"))
         r.raise_for_status()
         return self._parse_json(r)
 
     def mgmt_list_agents(self) -> list[dict]:
         """GET /agents/manage/list — requires user_admin + agents.create."""
-        r = self._http.get("/agents/manage/list",
-                           headers=self._admin_headers("agents.create"))
+        r = self._http.get("/agents/manage/list", headers=self._admin_headers("agents.create"))
         r.raise_for_status()
         return self._parse_json(r)
 
     def mgmt_update_agent(self, agent_id: str, **fields) -> dict:
         """PATCH /agents/manage/{id} — requires user_admin + agents.create."""
-        r = self._http.patch(f"/agents/manage/{agent_id}", json=fields,
-                             headers=self._admin_headers("agents.create"))
+        r = self._http.patch(f"/agents/manage/{agent_id}", json=fields, headers=self._admin_headers("agents.create"))
         r.raise_for_status()
         return self._parse_json(r)
 
-    def mgmt_issue_agent_pat(self, agent_id: str, *, name: str | None = None,
-                             expires_in_days: int = 90) -> dict:
+    def mgmt_issue_agent_pat(self, agent_id: str, *, name: str | None = None, expires_in_days: int = 90) -> dict:
         """POST /credentials/agent-pat — requires user_admin + credentials.issue.agent."""
         body = {"agent_id": agent_id, "expires_in_days": expires_in_days}
         if name:
             body["name"] = name
-        r = self._http.post("/credentials/agent-pat", json=body,
-                            headers=self._admin_headers("agents.create credentials.issue.agent"))
+        r = self._http.post(
+            "/credentials/agent-pat", json=body, headers=self._admin_headers("agents.create credentials.issue.agent")
+        )
         r.raise_for_status()
         return self._parse_json(r)
 
-    def mgmt_issue_enrollment(self, *, name: str | None = None,
-                               expires_in_hours: int = 1) -> dict:
+    def mgmt_issue_enrollment(self, *, name: str | None = None, expires_in_hours: int = 1) -> dict:
         """POST /credentials/enrollment — requires user_admin + credentials.issue.agent."""
         body = {"expires_in_hours": expires_in_hours}
         if name:
             body["name"] = name
-        r = self._http.post("/credentials/enrollment", json=body,
-                            headers=self._admin_headers("agents.create credentials.issue.agent"))
+        r = self._http.post(
+            "/credentials/enrollment", json=body, headers=self._admin_headers("agents.create credentials.issue.agent")
+        )
         r.raise_for_status()
         return self._parse_json(r)
 
     def mgmt_revoke_credential(self, credential_id: str) -> dict:
         """DELETE /credentials/{id} — requires user_admin + credentials.revoke."""
-        r = self._http.delete(f"/credentials/{credential_id}",
-                              headers=self._admin_headers("credentials.revoke"))
+        r = self._http.delete(f"/credentials/{credential_id}", headers=self._admin_headers("credentials.revoke"))
         r.raise_for_status()
         return self._parse_json(r)
 
     def mgmt_list_credentials(self) -> list[dict]:
         """GET /credentials — requires user_admin + credentials.issue.agent."""
-        r = self._http.get("/credentials",
-                           headers=self._admin_headers("agents.create credentials.issue.agent"))
+        r = self._http.get("/credentials", headers=self._admin_headers("agents.create credentials.issue.agent"))
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -624,7 +630,8 @@ class AxClient:
         # Use JWT for SSE token param when exchange auth is available
         sse_token = self._get_jwt() if self._exchanger else self.token
         return self._http.stream(
-            "GET", "/api/sse/messages",
+            "GET",
+            "/api/sse/messages",
             params={"token": sse_token},
             timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
         )

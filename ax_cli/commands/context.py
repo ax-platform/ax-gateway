@@ -1,4 +1,5 @@
 """ax context — shared context and file upload operations."""
+
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -29,7 +30,9 @@ def _normalize_upload(payload: dict) -> dict:
 def upload_file(
     file_path: str = typer.Argument(..., help="Local file to upload"),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Context key (default: filename)"),
-    vault: bool = typer.Option(False, "--vault", help="Store permanently in the intelligence vault (default: ephemeral)"),
+    vault: bool = typer.Option(
+        False, "--vault", help="Store permanently in the intelligence vault (default: ephemeral)"
+    ),
     ttl: Optional[int] = typer.Option(None, "--ttl", help="Ephemeral TTL in seconds (default: 86400 = 24h)"),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
@@ -62,8 +65,7 @@ def upload_file(
     # Store reference in context — inline text content so agents can read it
     content_type = info.get("content_type", "")
     is_text = content_type and (
-        content_type.startswith("text/")
-        or content_type in ("application/json", "application/xml", "application/yaml")
+        content_type.startswith("text/") or content_type in ("application/json", "application/xml", "application/yaml")
     )
 
     text_content = None
@@ -86,6 +88,7 @@ def upload_file(
         context_value["content"] = text_content
 
     import json
+
     try:
         if vault:
             # Promote to permanent vault storage
@@ -123,7 +126,9 @@ def fetch_url(
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Context key (default: derived from URL)"),
     vault: bool = typer.Option(False, "--vault", help="Store permanently in the intelligence vault"),
     ttl: Optional[int] = typer.Option(None, "--ttl", help="Ephemeral TTL in seconds (default: 86400)"),
-    upload: bool = typer.Option(False, "--upload", help="Upload the fetched content as a file (not just store the text)"),
+    upload: bool = typer.Option(
+        False, "--upload", help="Upload the fetched content as a file (not just store the text)"
+    ),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
@@ -159,7 +164,9 @@ def fetch_url(
 
     content_type = resp.headers.get("content-type", "").split(";")[0].strip()
     is_text = content_type.startswith("text/") or content_type in (
-        "application/json", "application/xml", "application/javascript",
+        "application/json",
+        "application/xml",
+        "application/javascript",
     )
 
     if upload or not is_text:
@@ -322,6 +329,7 @@ def download_file(
 ):
     """Download a file from context to local disk."""
     import json as _json
+
     client = get_client()
     resolve_space_id(client, explicit=space_id)
 
@@ -359,6 +367,7 @@ def download_file(
             r = http.get(url)
             r.raise_for_status()
             from pathlib import Path
+
             Path(filename).write_bytes(r.content)
             typer.echo(f"[green]Downloaded:[/green] {filename} ({len(r.content)} bytes)")
     except httpx.HTTPStatusError as e:

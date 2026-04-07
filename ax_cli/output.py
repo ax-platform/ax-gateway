@@ -1,4 +1,5 @@
 """Shared output helpers: --json flag, tables, error handling."""
+
 import json
 
 import httpx

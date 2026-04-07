@@ -1,4 +1,5 @@
 """ax agents — agent listing, creation, and management."""
+
 import httpx
 import typer
 
@@ -34,7 +35,9 @@ def create_agent(
     system_prompt: str = typer.Option(None, "--system-prompt", help="System prompt"),
     model: str = typer.Option(None, "--model", "-m", help="LLM model"),
     cloud: bool = typer.Option(False, "--cloud", help="Enable cloud agent"),
-    can_manage_agents: bool = typer.Option(False, "--can-manage-agents", help="Allow this agent to manage other agents"),
+    can_manage_agents: bool = typer.Option(
+        False, "--can-manage-agents", help="Allow this agent to manage other agents"
+    ),
     space_id: str = typer.Option(None, "--space-id", help="Target space"),
     as_json: bool = JSON_OPTION,
 ):
@@ -46,16 +49,23 @@ def create_agent(
     client = get_client()
     try:
         # Try management API first (exchange-based auth)
-        if hasattr(client, '_exchanger') and client._exchanger:
+        if hasattr(client, "_exchanger") and client._exchanger:
             data = client.mgmt_create_agent(
-                name, description=description, system_prompt=system_prompt,
-                model=model, space_id=space_id,
+                name,
+                description=description,
+                system_prompt=system_prompt,
+                model=model,
+                space_id=space_id,
             )
         else:
             data = client.create_agent(
-                name, description=description, system_prompt=system_prompt,
-                model=model, space_id=space_id,
-                enable_cloud_agent=cloud, can_manage_agents=can_manage_agents,
+                name,
+                description=description,
+                system_prompt=system_prompt,
+                model=model,
+                space_id=space_id,
+                enable_cloud_agent=cloud,
+                can_manage_agents=can_manage_agents,
             )
     except httpx.HTTPStatusError as e:
         handle_error(e)
@@ -63,11 +73,13 @@ def create_agent(
         print_json(data)
     else:
         console.print(f"[green]Created agent:[/green] {data['name']} ({data['id']})")
-        print_kv({
-            "origin": data.get("origin"),
-            "status": data.get("status"),
-            "space_id": data.get("space_id"),
-        })
+        print_kv(
+            {
+                "origin": data.get("origin"),
+                "status": data.get("status"),
+                "space_id": data.get("space_id"),
+            }
+        )
 
 
 @app.command("get")
@@ -196,7 +208,9 @@ def tools(
 @app.command("avatar")
 def avatar(
     agent: str = typer.Argument(..., help="Agent name to generate avatar for"),
-    agent_type: str = typer.Option("default", "--type", "-t", help="Agent type for color theme (sentinel, mcp, space_agent, cloud)"),
+    agent_type: str = typer.Option(
+        "default", "--type", "-t", help="Agent type for color theme (sentinel, mcp, space_agent, cloud)"
+    ),
     size: int = typer.Option(128, "--size", "-s", help="Avatar size in pixels"),
     output: str = typer.Option(None, "--output", "-o", help="Save to file (default: print SVG)"),
     set_avatar: bool = typer.Option(False, "--set", help="Upload and set as the agent's avatar_url"),
@@ -238,6 +252,7 @@ def avatar(
             handle_error(e)
     elif as_json:
         import json
+
         print(json.dumps({"name": agent, "svg": svg, "data_uri": avatar_data_uri(agent, agent_type, size)}))
     else:
         print(svg)

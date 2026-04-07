@@ -1,4 +1,5 @@
 """ax assign — assign work to an agent and track until complete."""
+
 import time
 from typing import Optional
 
@@ -29,6 +30,7 @@ _NUDGES = {
 def _detect_verb() -> str:
     """Detect which alias invoked us (assign/ship/manage/boss)."""
     import sys
+
     args = sys.argv[1:2]
     if args and args[0] in _PROMPTS:
         return args[0]
@@ -67,7 +69,10 @@ def run(
     console.print(f"[cyan]Creating task for @{agent_name}...[/cyan]")
     try:
         task_data = client.create_task(
-            sid, instructions[:120], description=instructions, priority=priority,
+            sid,
+            instructions[:120],
+            description=instructions,
+            priority=priority,
         )
     except httpx.HTTPStatusError as e:
         handle_error(e)
@@ -130,14 +135,16 @@ def run(
                 pass
 
             if json_output:
-                print_json({
-                    "task_id": task_id,
-                    "message_id": msg_id,
-                    "agent": agent_name,
-                    "status": "completed",
-                    "response": result[:500],
-                    "cycles": cycle,
-                })
+                print_json(
+                    {
+                        "task_id": task_id,
+                        "message_id": msg_id,
+                        "agent": agent_name,
+                        "status": "completed",
+                        "response": result[:500],
+                        "cycles": cycle,
+                    }
+                )
             return
 
         # Agent responded but no completion signal — nudge for completion
@@ -156,13 +163,15 @@ def run(
     console.print("[dim]Check messages manually or run again.[/dim]")
 
     if json_output:
-        print_json({
-            "task_id": task_id,
-            "message_id": msg_id,
-            "agent": agent_name,
-            "status": "timeout",
-            "cycles": max_cycles,
-        })
+        print_json(
+            {
+                "task_id": task_id,
+                "message_id": msg_id,
+                "agent": agent_name,
+                "status": "timeout",
+                "cycles": max_cycles,
+            }
+        )
 
 
 def _watch_for_agent(client, agent_name: str, *, timeout: int = 300) -> str | None:
@@ -177,7 +186,19 @@ def _watch_for_agent(client, agent_name: str, *, timeout: int = 300) -> str | No
     seen_ids: set[str] = set()
     poll_interval = 3.0  # Check every 3 seconds — agents respond fast
     latest_content: str | None = None
-    completion_signals = ["done", "pushed", "merged", "completed", "finished", "pr ", "pull request", "branch ", "shipped", "implemented", "opened pr"]
+    completion_signals = [
+        "done",
+        "pushed",
+        "merged",
+        "completed",
+        "finished",
+        "pr ",
+        "pull request",
+        "branch ",
+        "shipped",
+        "implemented",
+        "opened pr",
+    ]
 
     # Snapshot current message IDs so we only see NEW messages
     try:
@@ -212,11 +233,13 @@ def _watch_for_agent(client, agent_name: str, *, timeout: int = 300) -> str | No
                 ]
                 author = msg.get("author", {})
                 if isinstance(author, dict):
-                    sender_candidates.extend([
-                        author.get("username", ""),
-                        author.get("name", ""),
-                        author.get("agent_name", ""),
-                    ])
+                    sender_candidates.extend(
+                        [
+                            author.get("username", ""),
+                            author.get("name", ""),
+                            author.get("agent_name", ""),
+                        ]
+                    )
                 elif isinstance(author, str):
                     sender_candidates.append(author)
 
