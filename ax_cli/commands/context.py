@@ -274,9 +274,25 @@ def list_ctx(
         data = client.list_context(prefix=prefix)
     except httpx.HTTPStatusError as exc:
         handle_error(exc)
-    items = data if isinstance(data, list) else data.get("items", data.get("context", []))
+    # API returns dict of {key: {value, ttl, ...}} — normalize to list of rows
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict) and not data.get("items") and not data.get("context"):
+        # Dict of key→metadata pairs (prod API format)
+        items = []
+        for k, v in data.items():
+            entry = {"key": k}
+            if isinstance(v, dict):
+                val = v.get("value", str(v))
+                entry["value"] = str(val)[:80] if len(str(val)) > 80 else str(val)
+                entry["ttl"] = v.get("ttl")
+            else:
+                entry["value"] = str(v)[:80]
+            items.append(entry)
+    else:
+        items = data.get("items", data.get("context", []))
     if as_json:
-        print_json(items)
+        print_json(data)
     else:
         print_table(
             ["Key", "Value Preview", "TTL"],
