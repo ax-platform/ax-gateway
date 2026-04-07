@@ -1,10 +1,11 @@
 """ax events — SSE event streaming."""
+
 import json
 import sys
 from typing import Optional
 
-import typer
 import httpx
+import typer
 
 from ..config import get_client
 from ..output import JSON_OPTION, console

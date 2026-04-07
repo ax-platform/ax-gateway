@@ -1,4 +1,5 @@
 """ax context — shared context and file upload operations."""
+
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -7,7 +8,7 @@ import httpx
 import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, print_kv, print_table, handle_error
+from ..output import JSON_OPTION, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="context", help="Context & file operations", no_args_is_help=True)
 
@@ -29,7 +30,9 @@ def _normalize_upload(payload: dict) -> dict:
 def upload_file(
     file_path: str = typer.Argument(..., help="Local file to upload"),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Context key (default: filename)"),
-    vault: bool = typer.Option(False, "--vault", help="Store permanently in the intelligence vault (default: ephemeral)"),
+    vault: bool = typer.Option(
+        False, "--vault", help="Store permanently in the intelligence vault (default: ephemeral)"
+    ),
     ttl: Optional[int] = typer.Option(None, "--ttl", help="Ephemeral TTL in seconds (default: 86400 = 24h)"),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
@@ -62,8 +65,7 @@ def upload_file(
     # Store reference in context — inline text content so agents can read it
     content_type = info.get("content_type", "")
     is_text = content_type and (
-        content_type.startswith("text/")
-        or content_type in ("application/json", "application/xml", "application/yaml")
+        content_type.startswith("text/") or content_type in ("application/json", "application/xml", "application/yaml")
     )
 
     text_content = None
@@ -86,6 +88,7 @@ def upload_file(
         context_value["content"] = text_content
 
     import json
+
     try:
         if vault:
             # Promote to permanent vault storage
@@ -123,7 +126,9 @@ def fetch_url(
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Context key (default: derived from URL)"),
     vault: bool = typer.Option(False, "--vault", help="Store permanently in the intelligence vault"),
     ttl: Optional[int] = typer.Option(None, "--ttl", help="Ephemeral TTL in seconds (default: 86400)"),
-    upload: bool = typer.Option(False, "--upload", help="Upload the fetched content as a file (not just store the text)"),
+    upload: bool = typer.Option(
+        False, "--upload", help="Upload the fetched content as a file (not just store the text)"
+    ),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
@@ -159,7 +164,9 @@ def fetch_url(
 
     content_type = resp.headers.get("content-type", "").split(";")[0].strip()
     is_text = content_type.startswith("text/") or content_type in (
-        "application/json", "application/xml", "application/javascript",
+        "application/json",
+        "application/xml",
+        "application/javascript",
     )
 
     if upload or not is_text:
@@ -274,9 +281,25 @@ def list_ctx(
         data = client.list_context(prefix=prefix)
     except httpx.HTTPStatusError as exc:
         handle_error(exc)
-    items = data if isinstance(data, list) else data.get("items", data.get("context", []))
+    # API returns dict of {key: {value, ttl, ...}} — normalize to list of rows
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict) and not data.get("items") and not data.get("context"):
+        # Dict of key→metadata pairs (prod API format)
+        items = []
+        for k, v in data.items():
+            entry = {"key": k}
+            if isinstance(v, dict):
+                val = v.get("value", str(v))
+                entry["value"] = str(val)[:80] if len(str(val)) > 80 else str(val)
+                entry["ttl"] = v.get("ttl")
+            else:
+                entry["value"] = str(v)[:80]
+            items.append(entry)
+    else:
+        items = data.get("items", data.get("context", []))
     if as_json:
-        print_json(items)
+        print_json(data)
     else:
         print_table(
             ["Key", "Value Preview", "TTL"],
@@ -306,8 +329,9 @@ def download_file(
 ):
     """Download a file from context to local disk."""
     import json as _json
+
     client = get_client()
-    sid = resolve_space_id(client, explicit=space_id)
+    resolve_space_id(client, explicit=space_id)
 
     try:
         data = client.get_context(key)
@@ -322,18 +346,18 @@ def download_file(
         try:
             raw = _json.loads(raw)
         except Exception:
-            console.print("[red]Context value is not a file upload[/red]")
+            typer.echo("[red]Context value is not a file upload[/red]")
             raise typer.Exit(1)
 
     if not isinstance(raw, dict) or raw.get("type") != "file_upload":
-        console.print("[red]Context key is not a file upload[/red]")
+        typer.echo("[red]Context key is not a file upload[/red]")
         raise typer.Exit(1)
 
     url = raw.get("url", "")
     filename = output or raw.get("filename", key)
 
     if not url:
-        console.print("[red]No URL in file upload[/red]")
+        typer.echo("[red]No URL in file upload[/red]")
         raise typer.Exit(1)
 
     # Download
@@ -343,7 +367,8 @@ def download_file(
             r = http.get(url)
             r.raise_for_status()
             from pathlib import Path
+
             Path(filename).write_bytes(r.content)
-            console.print(f"[green]Downloaded:[/green] {filename} ({len(r.content)} bytes)")
+            typer.echo(f"[green]Downloaded:[/green] {filename} ({len(r.content)} bytes)")
     except httpx.HTTPStatusError as e:
         handle_error(e)

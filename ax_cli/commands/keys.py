@@ -1,11 +1,12 @@
 """ax keys — PAT key management."""
+
 from typing import Optional
 
-import typer
 import httpx
+import typer
 
 from ..config import get_client
-from ..output import JSON_OPTION, print_json, print_table, handle_error
+from ..output import JSON_OPTION, handle_error, print_json, print_table
 
 app = typer.Typer(name="keys", help="API key management", no_args_is_help=True)
 
@@ -13,7 +14,9 @@ app = typer.Typer(name="keys", help="API key management", no_args_is_help=True)
 @app.command("create")
 def create(
     name: str = typer.Option(..., "--name", help="Key name"),
-    agent_id: Optional[list[str]] = typer.Option(None, "--scope-to-agent", help="Restrict this key to a specific agent UUID (repeatable)"),
+    agent_id: Optional[list[str]] = typer.Option(
+        None, "--scope-to-agent", help="Restrict this key to a specific agent UUID (repeatable)"
+    ),
     as_json: bool = JSON_OPTION,
 ):
     """Create a new API key."""

@@ -19,9 +19,12 @@ import { join } from "path";
 import { homedir } from "os";
 
 // --- PID file to prevent stale process accumulation ---
-const PID_FILE = join(homedir(), ".claude", "channels", "ax-channel", "server.pid");
+// Use agent name in PID file so multiple agents can run concurrently.
+// Falls back to "default" if AX_AGENT_NAME isn't set yet (resolved below).
+const _pidAgent = process.env["AX_AGENT_NAME"] || "default";
+const PID_FILE = join(homedir(), ".claude", "channels", "ax-channel", `server.${_pidAgent}.pid`);
 try {
-  // Kill any previous instance
+  // Kill any previous instance of the SAME agent
   if (existsSync(PID_FILE)) {
     const oldPid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
     if (oldPid && oldPid !== process.pid) {
@@ -197,7 +200,7 @@ function startSSE(
     author: string;
     parentId?: string;
     ts?: string;
-  }) => void
+  }) => void | Promise<void>
 ) {
   const seen = new Set<string>();
   let backoff = 1;
@@ -264,7 +267,7 @@ function startSSE(
     ) {
       return;
     }
-    if (type !== "message" && type !== "mention") return;
+    if (type !== "message" && type !== "mention" && type !== "message_updated") return;
 
     let data: Record<string, unknown>;
     try {
@@ -274,7 +277,12 @@ function startSSE(
     }
 
     const id = data.id as string;
-    if (!id || seen.has(id)) return;
+    if (!id) return;
+
+    const isUpdate = type === "message_updated";
+
+    // For new messages, skip if already seen. For updates, allow re-processing.
+    if (!isUpdate && seen.has(id)) return;
 
     const content = (data.content as string) ?? "";
     const parentId = (data.parent_id as string) ?? "";
@@ -312,6 +320,24 @@ function startSSE(
       for (const x of arr.slice(-250)) seen.add(x);
     }
 
+    // Track inbound message ID so replies to THIS message also reach us.
+    // This extends the reply chain: A(ours) → B(theirs,delivered) → C(reply to B, also delivered).
+    if (isReplyToUs) {
+      sentMessageIds.add(id);
+      if (sentMessageIds.size > SENT_MAX) {
+        const arr = [...sentMessageIds];
+        sentMessageIds.clear();
+        for (const x of arr.slice(-SENT_MAX / 2)) sentMessageIds.add(x);
+      }
+    }
+
+    // Skip Hermes runtime progress messages — these are for the frontend UI, not agent conversations.
+    // Patterns: "Working…", "Working... (30s)", "Working… (1 tool)\n  › python...", "Received", etc.
+    const firstLine = content.replace(/@\w+\s*/g, "").trim().split("\n")[0].trim();
+    if (/^(Working|Received|Thinking|Processing)[\s.…]*/i.test(firstLine)) return;
+    // Also skip "No response after Xm" timeout messages
+    if (/^No response after/i.test(firstLine)) return;
+
     // Strip @mention prefix
     const prompt = content
       .replace(new RegExp(`@${agentName}\\b\\s*[-—]?\\s*`, "i"), "")
@@ -319,13 +345,15 @@ function startSSE(
     if (!prompt) return;
 
     log(`mention from ${senderName}: ${prompt.slice(0, 60)}`);
-    onMention({
-      id,
-      content: prompt,
-      author: senderName || "unknown",
-      parentId: data.parent_id as string | undefined,
-      ts: (data.timestamp as string) ?? (data.created_at as string),
-    });
+    void Promise.resolve(
+      onMention({
+        id,
+        content: prompt,
+        author: senderName || "unknown",
+        parentId: data.parent_id as string | undefined,
+        ts: (data.timestamp as string) ?? (data.created_at as string),
+      })
+    ).catch((err) => log(`mention handler failed: ${err}`));
   }
 
   // Don't await — run in background
@@ -361,42 +389,101 @@ const QUEUE_MAX = 100;
 // Track our sent message IDs so we can detect replies to us
 const sentMessageIds = new Set<string>();
 const SENT_MAX = 200;
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let ackMessageId: string | null = null; // ID of the ack message to update in place
+type PendingReplyState = {
+  ackMessageId: string;
+  startedAt: number;
+  timer: ReturnType<typeof setInterval> | null;
+};
+const pendingReplies = new Map<string, PendingReplyState>();
 const HEARTBEAT_INTERVAL = 30_000; // 30 seconds
-const HEARTBEAT_TIMEOUT = 300_000; // 5 minutes — stop if no reply
+const HEARTBEAT_TIMEOUT = 300_000; // 5 minutes - stop if no reply
+
+function rememberSentMessageId(messageId: string | undefined) {
+  if (!messageId) return;
+  sentMessageIds.add(messageId);
+  if (sentMessageIds.size > SENT_MAX) {
+    const arr = [...sentMessageIds];
+    sentMessageIds.clear();
+    for (const x of arr.slice(-SENT_MAX / 2)) sentMessageIds.add(x);
+  }
+}
+
+function stopHeartbeat(parentMessageId: string) {
+  const pending = pendingReplies.get(parentMessageId);
+  if (!pending?.timer) return;
+  clearInterval(pending.timer);
+  pending.timer = null;
+}
+
+function clearPendingReply(parentMessageId: string) {
+  stopHeartbeat(parentMessageId);
+  pendingReplies.delete(parentMessageId);
+}
 
 function startHeartbeat(parentMessageId: string) {
-  stopHeartbeat();
-  const start = Date.now();
+  const pending = pendingReplies.get(parentMessageId);
+  if (!pending) return;
+
+  stopHeartbeat(parentMessageId);
   let count = 0;
-  heartbeatTimer = setInterval(async () => {
-    if (!ackMessageId) return;
+  pending.timer = setInterval(async () => {
+    const active = pendingReplies.get(parentMessageId);
+    if (!active) return;
+
     count++;
-    const elapsed = Math.round((Date.now() - start) / 1000);
-    if (Date.now() - start > HEARTBEAT_TIMEOUT) {
-      stopHeartbeat();
+    const elapsedMs = Date.now() - active.startedAt;
+    const elapsed = Math.round(elapsedMs / 1000);
+    if (elapsedMs > HEARTBEAT_TIMEOUT) {
+      stopHeartbeat(parentMessageId);
       try {
         const jwt = await ensureJwt();
-        await editMessage(jwt, resolvedAgentId, ackMessageId, `No response after ${Math.round(elapsed / 60)}m — session may need attention.`);
+        await editMessage(
+          jwt,
+          resolvedAgentId,
+          active.ackMessageId,
+          `No response after ${Math.max(1, Math.round(elapsed / 60))}m - session may need attention.`
+        );
       } catch {}
       return;
     }
     try {
       const jwt = await ensureJwt();
-      await editMessage(jwt, resolvedAgentId, ackMessageId, `Working... (${elapsed}s)`);
-      log(`heartbeat #${count} updated ${ackMessageId!.slice(0, 12)}`);
+      await editMessage(
+        jwt,
+        resolvedAgentId,
+        active.ackMessageId,
+        `Working... (${elapsed}s)`
+      );
+      log(`heartbeat #${count} updated ${active.ackMessageId.slice(0, 12)}`);
     } catch (err) {
       log(`heartbeat edit failed: ${err}`);
     }
   }, HEARTBEAT_INTERVAL);
 }
 
-function stopHeartbeat() {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
+async function ensureAckMessage(parentMessageId: string): Promise<string | null> {
+  const existing = pendingReplies.get(parentMessageId);
+  if (existing?.ackMessageId) return existing.ackMessageId;
+
+  const jwt = await ensureJwt();
+  const result = await sendMessage(
+    jwt,
+    resolvedAgentId,
+    SPACE_ID,
+    "Received. Working...",
+    parentMessageId
+  );
+  if (!result.id) return null;
+
+  pendingReplies.set(parentMessageId, {
+    ackMessageId: result.id,
+    startedAt: Date.now(),
+    timer: null,
+  });
+  rememberSentMessageId(result.id);
+  startHeartbeat(parentMessageId);
+  log(`ack sent ${result.id.slice(0, 12)} for ${parentMessageId.slice(0, 12)}`);
+  return result.id;
 }
 
 async function ensureJwt(): Promise<string> {
@@ -503,15 +590,16 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   try {
     const jwt = await ensureJwt();
-    stopHeartbeat();
+    const pending = replyTo ? pendingReplies.get(replyTo) : null;
 
     // If we have an ack message, update it in place with the final response
     // Otherwise create a new message
     let resultId: string | undefined;
-    if (ackMessageId) {
-      await editMessage(jwt, resolvedAgentId, ackMessageId, text);
-      resultId = ackMessageId;
-      ackMessageId = null;
+    if (replyTo && pending?.ackMessageId) {
+      stopHeartbeat(replyTo);
+      await editMessage(jwt, resolvedAgentId, pending.ackMessageId, text);
+      resultId = pending.ackMessageId;
+      clearPendingReply(replyTo);
     } else {
       const result = await sendMessage(
         jwt,
@@ -522,15 +610,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       );
       resultId = result.id;
     }
-    // Track sent message so we detect replies to it
-    if (resultId) {
-      sentMessageIds.add(resultId);
-      if (sentMessageIds.size > SENT_MAX) {
-        const arr = [...sentMessageIds];
-        sentMessageIds.clear();
-        for (const x of arr.slice(-SENT_MAX / 2)) sentMessageIds.add(x);
-      }
-    }
+    rememberSentMessageId(resultId);
     return {
       content: [
         {
@@ -570,8 +650,6 @@ startSSE(ensureJwt, AGENT_NAME, resolvedAgentId, async (mention) => {
   // Queue for reliability + get_messages polling
   mentionQueue.push({ ...mention, delivered: false });
   if (mentionQueue.length > QUEUE_MAX) mentionQueue.shift();
-
-  // No ack message — reduces noise. The reply itself is the confirmation.
 
   // Deliver to Claude Code session
   void mcp.notification({

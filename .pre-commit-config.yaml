@@ -1,0 +1,42 @@
+# Pre-commit hooks for ax-cli — mirrors what CI runs so format/lint failures
+# are caught before they reach a PR.
+#
+# CI runs (.github/workflows/ci.yml):
+#   - ruff check ax_cli/
+#   - ruff format --check ax_cli/
+#
+# These hooks run the same checks locally on every git commit. If a commit
+# would fail in CI, it fails locally first — no more red PRs from things that
+# could have been caught at commit time.
+#
+# Setup (one-time, per developer/agent):
+#
+#     pip install pre-commit
+#     pre-commit install
+#
+# Now `git commit` runs the hooks automatically. To run against all files
+# without committing:
+#
+#     pre-commit run --all-files
+#
+# To skip hooks for a specific commit (use sparingly):
+#
+#     git commit --no-verify ...
+#
+# To update the hook versions to whatever's latest:
+#
+#     pre-commit autoupdate
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pin matches the local ruff version being used (0.15.9 as of 2026-04-07).
+    # Bump with `pre-commit autoupdate` and verify CI still passes.
+    rev: v0.15.9
+    hooks:
+      - id: ruff-check
+        # Match CI scope: only ax_cli/ Python files. Other directories
+        # (channel/, tests/, docs/) intentionally excluded — CI doesn't
+        # check them either, so don't drift.
+        files: ^ax_cli/.*\.py$
+      - id: ruff-format
+        files: ^ax_cli/.*\.py$

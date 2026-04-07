@@ -1,11 +1,12 @@
 """ax spaces — list, create, and manage spaces."""
+
 from typing import Optional
 
 import httpx
 import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, print_table, print_kv, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="spaces", help="Space management", no_args_is_help=True)
 
@@ -49,7 +50,9 @@ def create(
     if as_json:
         print_json(space)
     else:
-        console.print(f"[green]Created:[/green] {space.get('name')} (id={str(space.get('id',''))[:8]}…, visibility={space.get('visibility')})")
+        console.print(
+            f"[green]Created:[/green] {space.get('name')} (id={str(space.get('id', ''))[:8]}…, visibility={space.get('visibility')})"
+        )
 
 
 @app.command("get")

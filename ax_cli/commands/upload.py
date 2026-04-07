@@ -1,4 +1,5 @@
 """ax upload — upload files to context, optionally notify agents."""
+
 import json
 from pathlib import Path
 from typing import Optional
@@ -7,7 +8,7 @@ import httpx
 import typer
 
 from ..config import get_client, resolve_space_id
-from ..output import JSON_OPTION, print_json, print_kv, handle_error, console
+from ..output import JSON_OPTION, console, handle_error, print_json
 
 app = typer.Typer(name="upload", help="Upload files to context", no_args_is_help=True)
 
@@ -119,12 +120,14 @@ def upload_file(
             content = f"{message}\n\n📎 Uploaded `{original_name}` to context (key: `{context_key}`)"
         else:
             content = f"📎 Uploaded `{original_name}` to context (key: `{context_key}`)"
-        attachments = [{
-            "id": attachment_id,
-            "content_type": content_type,
-            "filename": original_name,
-            "size_bytes": size,
-        }]
+        attachments = [
+            {
+                "id": attachment_id,
+                "content_type": content_type,
+                "filename": original_name,
+                "size_bytes": size,
+            }
+        ]
 
         try:
             msg = client.send_message(space_id, content, attachments=attachments)
@@ -138,16 +141,19 @@ def upload_file(
         # Wait for aX reply
         if not skip_ax and msg_id:
             from .messages import _wait_for_reply
+
             _wait_for_reply(client, msg_id, timeout=60)
 
     if json_output:
-        print_json({
-            "attachment_id": attachment_id,
-            "url": url,
-            "filename": original_name,
-            "content_type": content_type,
-            "size": size,
-            "context_key": context_key,
-            "context_storage": storage_type,
-            "message_id": msg_id,
-        })
+        print_json(
+            {
+                "attachment_id": attachment_id,
+                "url": url,
+                "filename": original_name,
+                "content_type": content_type,
+                "size": size,
+                "context_key": context_key,
+                "context_storage": storage_type,
+                "message_id": msg_id,
+            }
+        )

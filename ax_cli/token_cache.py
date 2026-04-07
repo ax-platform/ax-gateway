@@ -6,6 +6,7 @@ PAT never touches business endpoints. Only sent to /auth/exchange.
 Cache key: sha256(pat_key_id + token_class + agent_id + audience + scope)
 Cache file: separate from PAT config, permissions 0600.
 """
+
 import hashlib
 import json
 import logging
@@ -102,8 +103,7 @@ class TokenExchanger:
                 # Only load entries for this PAT
                 if isinstance(data, dict):
                     self._cache = {
-                        k: v for k, v in data.items()
-                        if isinstance(v, dict) and v.get("pat_key_id") == self.pat_key_id
+                        k: v for k, v in data.items() if isinstance(v, dict) and v.get("pat_key_id") == self.pat_key_id
                     }
             except (json.JSONDecodeError, OSError):
                 pass

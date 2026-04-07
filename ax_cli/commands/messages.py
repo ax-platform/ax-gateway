@@ -1,12 +1,13 @@
 """ax messages — send, list, get, edit, delete, search."""
+
 import time
 from typing import Optional
 
-import typer
 import httpx
+import typer
 
-from ..config import get_client, resolve_space_id, resolve_agent_name
-from ..output import JSON_OPTION, print_json, print_table, print_kv, handle_error, console
+from ..config import get_client, resolve_agent_name, resolve_space_id
+from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="messages", help="Message operations", no_args_is_help=True)
 
@@ -99,8 +100,12 @@ def send(
     content: str = typer.Argument(..., help="Message content"),
     wait: bool = typer.Option(True, "--wait/--skip-ax", "-w", help="Wait for aX response (default: yes)"),
     timeout: int = typer.Option(60, "--timeout", "-t", help="Max seconds to wait for reply"),
-    to: Optional[str] = typer.Option(None, "--to", help="@mention another agent by name (prepends @name to your message)"),
-    act_as: Optional[str] = typer.Option(None, "--act-as", help="Impersonate: send as a different agent identity. Requires a token scoped to that agent."),
+    to: Optional[str] = typer.Option(
+        None, "--to", help="@mention another agent by name (prepends @name to your message)"
+    ),
+    act_as: Optional[str] = typer.Option(
+        None, "--act-as", help="Impersonate: send as a different agent identity. Requires a token scoped to that agent."
+    ),
     files: Optional[list[str]] = typer.Option(None, "--file", "-f", help="Attach a local file (repeatable)"),
     channel: str = typer.Option("main", "--channel", help="Channel name"),
     parent: Optional[str] = typer.Option(None, "--parent", "--reply-to", "-r", help="Parent message ID (thread reply)"),
@@ -127,8 +132,7 @@ def send(
 
             if agent_scope == "user":
                 typer.echo(
-                    f"Error: --act-as rejected. Your token has agent_scope='user' — "
-                    f"it cannot send as any agent.",
+                    "Error: --act-as rejected. Your token has agent_scope='user' — it cannot send as any agent.",
                     err=True,
                 )
                 raise typer.Exit(1)
@@ -164,7 +168,7 @@ def send(
 
     # --file: upload files and collect attachment metadata
     attachments = []
-    for file_path in (files or []):
+    for file_path in files or []:
         try:
             upload_data = client.upload_file(file_path)
         except FileNotFoundError as exc:
@@ -174,14 +178,16 @@ def send(
             handle_error(exc)
         # Normalize upload response into attachment reference
         att = upload_data.get("attachment", upload_data)
-        attachments.append({
-            "id": att.get("id") or att.get("file_id") or upload_data.get("id"),
-            "filename": att.get("original_filename") or att.get("filename") or att.get("name"),
-            "content_type": att.get("content_type"),
-            "size": att.get("size_bytes") or att.get("size"),
-            "url": att.get("url"),
-            "kind": "file",
-        })
+        attachments.append(
+            {
+                "id": att.get("id") or att.get("file_id") or upload_data.get("id"),
+                "filename": att.get("original_filename") or att.get("filename") or att.get("name"),
+                "content_type": att.get("content_type"),
+                "size": att.get("size_bytes") or att.get("size"),
+                "url": att.get("url"),
+                "kind": "file",
+            }
+        )
         console.print(f"  [dim]Uploaded: {attachments[-1]['filename']}[/dim]")
 
     # --to: prepend @mention to content for targeting another agent
@@ -192,7 +198,10 @@ def send(
 
     try:
         data = client.send_message(
-            sid, final_content, channel=channel, parent_id=parent,
+            sid,
+            final_content,
+            channel=channel,
+            parent_id=parent,
             attachments=attachments or None,
         )
     except httpx.HTTPStatusError as e:

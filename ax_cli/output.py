@@ -1,4 +1,5 @@
 """Shared output helpers: --json flag, tables, error handling."""
+
 import json
 
 import httpx
@@ -39,7 +40,7 @@ def handle_error(e: httpx.HTTPStatusError):
     except Exception:
         body = e.response.text[:200]
         if "<html" in body.lower():
-            detail = f"Got HTML instead of JSON (frontend may be catching this route)"
+            detail = "Got HTML instead of JSON (frontend may be catching this route)"
         else:
             detail = body
     typer.echo(f"Error {e.response.status_code}: {detail}", err=True)

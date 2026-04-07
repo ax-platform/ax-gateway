@@ -3,6 +3,7 @@
 Reuses the ax listen SSE/auth/@mention plumbing, but exposes it as a thin
 MCP server so Claude Code can receive messages and reply in-thread.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +20,7 @@ import typer
 
 from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..output import console
-from .listen import _is_paused, _iter_sse, _should_respond, _strip_mention
+from .listen import _iter_sse, _should_respond, _strip_mention
 
 app = typer.Typer(name="channel", help="Run an aX Claude Code channel over MCP stdio", no_args_is_help=False)
 
@@ -99,9 +100,7 @@ class ChannelBridge:
         await self.write_message({"jsonrpc": "2.0", "id": request_id, "result": result})
 
     async def send_error(self, request_id: Any, code: int, message: str) -> None:
-        await self.write_message(
-            {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
-        )
+        await self.write_message({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
 
     async def emit_mentions(self) -> None:
         self.log("emit_mentions: task started")
@@ -194,12 +193,16 @@ class ChannelBridge:
             return
 
         try:
+
             def _send_as_agent():
                 """Send message as agent, adding X-Agent-Id header for user tokens."""
-                import httpx as _httpx
-                body = {"content": text, "space_id": self.space_id,
-                        "channel": "main", "message_type": "text",
-                        "parent_id": reply_to}
+                body = {
+                    "content": text,
+                    "space_id": self.space_id,
+                    "channel": "main",
+                    "message_type": "text",
+                    "parent_id": reply_to,
+                }
                 # Build auth headers, then add agent identity
                 headers = self.client._auth_headers()
                 if self.agent_id:
@@ -207,6 +210,7 @@ class ChannelBridge:
                 r = self.client._http.post("/api/v1/messages", json=body, headers=headers)
                 r.raise_for_status()
                 return self.client._parse_json(r)
+
             data = await asyncio.to_thread(_send_as_agent)
             message = data.get("message", data)
             sent_id = message.get("id") or data.get("id")
@@ -332,12 +336,12 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                     content_preview = (data.get("content") or "")[:60]
                     bridge.log(f"event {event_type} id={message_id[:12]} content={content_preview!r}")
                     if not message_id or message_id in seen_ids:
-                        bridge.log(f"  -> skip: dup or no id")
+                        bridge.log("  -> skip: dup or no id")
                         continue
                     if not _should_respond(data, bridge.agent_name, bridge.agent_id):
                         bridge.log(f"  -> skip: not for @{bridge.agent_name}")
                         continue
-                    bridge.log(f"  -> MATCH! delivering")
+                    bridge.log("  -> MATCH! delivering")
 
                     prompt = _strip_mention(data.get("content", ""), bridge.agent_name)
                     if not prompt:
@@ -351,7 +355,12 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                     if isinstance(author_raw, dict):
                         author = author_raw.get("name", "unknown")
                     else:
-                        author = data.get("display_name") or data.get("username") or data.get("sender_name") or (author_raw if isinstance(author_raw, str) else "unknown")
+                        author = (
+                            data.get("display_name")
+                            or data.get("username")
+                            or data.get("sender_name")
+                            or (author_raw if isinstance(author_raw, str) else "unknown")
+                        )
                     bridge.enqueue_from_thread(
                         MentionEvent(
                             message_id=message_id,

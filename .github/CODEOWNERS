@@ -2,8 +2,14 @@
 # These owners are automatically requested for review on PRs.
 
 # Default owner — all files
-* @madtank
+* @madtank @anvil
 
 # CI/CD and publishing
 .github/ @madtank
 pyproject.toml @madtank
+
+# Channel MCP server (Bun/TypeScript) — anvil owns the runtime + SSE bridge
+channel/ @anvil @madtank
+
+# Specs — anvil and madtank co-own the design surface
+specs/ @anvil @madtank

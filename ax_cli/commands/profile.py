@@ -7,16 +7,15 @@ the token is loaded.
 
 Storage: ~/.ax/profiles/<name>/profile.toml
 """
+
 import hashlib
-import os
-import platform
 import socket
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import httpx
-import tomllib
 import typer
 from rich.table import Table
 
@@ -104,9 +103,7 @@ def _verify_profile(profile: dict) -> list[str]:
     current_host = socket.gethostname()
     expected_host = profile.get("host_binding", "")
     if expected_host and current_host != expected_host:
-        failures.append(
-            f"Host mismatch — expected {expected_host}, running on {current_host}"
-        )
+        failures.append(f"Host mismatch — expected {expected_host}, running on {current_host}")
 
     expected_workdir = profile.get("workdir_hash", "")
     if expected_workdir:
@@ -215,7 +212,7 @@ def use(
     if err:
         console.print(f"  [yellow]Backend: {err}[/yellow]")
     elif profile.get("agent_id"):
-        console.print(f"  [dim]Fingerprint registered with backend[/dim]")
+        console.print("  [dim]Fingerprint registered with backend[/dim]")
 
 
 @app.command("list")
@@ -223,10 +220,7 @@ def list_profiles():
     """Show all profiles. Active profile is marked."""
     pdir = _profiles_dir()
     active = _active_profile()
-    profiles = sorted(
-        d.name for d in pdir.iterdir()
-        if d.is_dir() and (d / "profile.toml").exists()
-    )
+    profiles = sorted(d.name for d in pdir.iterdir() if d.is_dir() and (d / "profile.toml").exists())
     if not profiles:
         typer.echo("No profiles. Create one with: ax profile add <name> --url ... --token-file ... --agent-name ...")
         return
@@ -275,7 +269,9 @@ def verify(
         console.print(f"  Token: {profile.get('token_sha256', '?')[:12]}... ✓")
         console.print(f"  Host: {profile.get('host_binding', '?')} ✓")
         if profile.get("workdir_hash"):
-            console.print(f"  Workdir: {profile.get('workdir_path', '?')} ({profile.get('workdir_hash', '?')[:12]}...) ✓")
+            console.print(
+                f"  Workdir: {profile.get('workdir_path', '?')} ({profile.get('workdir_hash', '?')[:12]}...) ✓"
+            )
     else:
         console.print(f"[red]Profile '{name}' failed verification:[/red]")
         for f in failures:
