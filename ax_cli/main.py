@@ -47,6 +47,17 @@ app.add_typer(assign.app, name="manage", help="Manage an agent's task to complet
 app.add_typer(assign.app, name="boss", help="Boss an agent until they deliver")
 
 
+@app.command("login")
+def login(
+    token: str = typer.Option(None, "--token", "-t", help="PAT token (axp_u_... or axp_a_...)"),
+    base_url: str = typer.Option("http://localhost:8002", "--url", "-u", help="API base URL"),
+    agent: str = typer.Option(None, "--agent", "-a", help="Agent name or ID (auto-detected if not set)"),
+    space_id: str = typer.Option(None, "--space-id", "-s", help="Space ID (auto-detected if not set)"),
+):
+    """Alias for `ax auth init` using more familiar CLI vocabulary."""
+    auth.init(token=token, base_url=base_url, agent=agent, space_id=space_id)
+
+
 @app.command("send")
 def send_shortcut(
     content: str = typer.Argument(..., help="Message to send"),
