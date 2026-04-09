@@ -203,15 +203,31 @@ def _worker(
         if data is None:
             break
 
-        # Pause gate
-        was_paused = False
-        while _is_paused(agent_name):
-            if not was_paused:
-                console.print(f"[yellow]PAUSED[/yellow] — holding {mention_queue.qsize() + 1} messages")
-                was_paused = True
-            time.sleep(2.0)
-        if was_paused:
-            console.print("[green]RESUMED[/green]")
+        # Kill switch gate — DROP semantics (local filesystem, operator
+        # hard stop). If the pause file exists at dequeue time, the mention
+        # is silently discarded. It does NOT queue for replay on resume.
+        # This matches the intent of a killswitch: disable a runaway agent
+        # and messages sent while it's disabled land in the void, not in a
+        # buffer that fires on re-enable.
+        #
+        # Note: the canonical platform killswitch lives in the ax-backend
+        # (see messages_notifications.broadcast_sse filtering disabled
+        # agents out of the mentions array — paired with PR #31's
+        # `_should_respond` trust-the-backend change). This local file
+        # gate is the operator escape hatch for halting a listener on the
+        # host without touching the backend API. Both layers drop; neither
+        # defers.
+        #
+        # If you need maintenance-window "pause + replay" semantics, that
+        # belongs behind a separate file (e.g. sentinel_maintenance_<agent>)
+        # with explicit queue-and-replay logic, not hidden behind "pause".
+        if _is_paused(agent_name):
+            author_drop = data.get("display_name") or data.get("username") or "?"
+            console.print(
+                f"[yellow]DROPPED[/yellow] — @{agent_name} paused (local); discarded mention from @{author_drop}"
+            )
+            mention_queue.task_done()
+            continue
 
         author = data.get("display_name") or data.get("username") or "?"
         content = data.get("content", "")
