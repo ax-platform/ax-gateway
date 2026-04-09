@@ -144,71 +144,6 @@ def _is_paused(agent_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Backend kill-switch gate (respects UI / MCP set_control)
-# ---------------------------------------------------------------------------
-#
-# The local filesystem pause gate above handles operator-initiated halts on
-# the host running `ax listen`. But the aX platform also has a backend-side
-# kill switch: users can disable/break an agent by clicking on its badge in
-# the UI, and the concierge can disable noisy agents via the MCP
-# `agents.set_control` tool. Both write to AgentControlService in Redis.
-#
-# For agents that receive work via backend dispatch (cloud sentinels,
-# webhook agents), the backend enforces this directly in the dispatch loop.
-# But `ax listen` subscribes to the generic SSE message stream and filters
-# for mentions client-side — it never touches the dispatch loop, so the
-# backend control state is invisible unless the client explicitly checks.
-#
-# This gate does that explicit check. Before invoking the handler on each
-# matched mention, fetch the agent's current control state and skip if
-# disabled. Cached briefly to avoid hammering the API during mention bursts.
-
-_CONTROL_CACHE_TTL_SECONDS = 5.0
-
-
-def _is_backend_disabled(
-    client, agent_id: str | None, cache: dict
-) -> tuple[bool, str | None]:
-    """Check whether the backend has disabled this agent.
-
-    Returns (is_disabled, reason). On network/API errors, returns
-    (False, None) — we prefer to reply on a transient failure rather than
-    silently drop mentions. The local pause file gate remains a hard stop
-    for operator intervention.
-
-    Cache is a dict shared per-worker; callers should pass the same dict
-    across invocations. Entries expire after _CONTROL_CACHE_TTL_SECONDS.
-    """
-    if not agent_id:
-        return False, None
-
-    now = time.monotonic()
-    entry = cache.get(agent_id)
-    if entry is not None and entry["expires_at"] > now:
-        return entry["is_disabled"], entry["reason"]
-
-    try:
-        state = client.get_agent_control(agent_id)
-    except Exception:
-        # Transient error — don't block the handler. The local pause file
-        # gate still provides a hard stop for operator intervention.
-        return False, None
-
-    is_disabled = bool(state.get("is_disabled"))
-    reason = state.get("disabled_reason") or (
-        "Agent is taking a break"
-        if state.get("disabled_until")
-        else "Agent is disabled"
-    )
-    cache[agent_id] = {
-        "is_disabled": is_disabled,
-        "reason": reason if is_disabled else None,
-        "expires_at": now + _CONTROL_CACHE_TTL_SECONDS,
-    }
-    return is_disabled, reason if is_disabled else None
-
-
-# ---------------------------------------------------------------------------
 # Worker thread
 # ---------------------------------------------------------------------------
 
@@ -223,12 +158,6 @@ def _worker(
     dry_run: bool,
 ):
     """Process mentions sequentially from the queue."""
-    # Per-worker cache for backend control state lookups. Shared across
-    # mention events in this worker thread; entries expire after
-    # _CONTROL_CACHE_TTL_SECONDS so a UI Break click is observed within
-    # ~5 seconds of the next mention.
-    control_cache: dict = {}
-
     while True:
         try:
             data = mention_queue.get(timeout=1.0)
@@ -238,7 +167,7 @@ def _worker(
         if data is None:
             break
 
-        # Pause gate (local filesystem — operator hard stop)
+        # Pause gate
         was_paused = False
         while _is_paused(agent_name):
             if not was_paused:
@@ -247,23 +176,6 @@ def _worker(
             time.sleep(2.0)
         if was_paused:
             console.print("[green]RESUMED[/green]")
-
-        # Backend kill-switch gate (respects UI Break/Disable + MCP
-        # agents.set_control). DROP semantics: if the backend says this
-        # agent is disabled, discard the mention — don't queue for replay.
-        # That matches the UI affordance "this agent is taking a break."
-        client = client_holder[0]
-        backend_disabled, backend_reason = _is_backend_disabled(
-            client, agent_id, control_cache
-        )
-        if backend_disabled:
-            author_drop = data.get("display_name") or data.get("username") or "?"
-            console.print(
-                f"[yellow]DROPPED[/yellow] — @{agent_name} backend-disabled "
-                f"({backend_reason}); discarded mention from @{author_drop}"
-            )
-            mention_queue.task_done()
-            continue
 
         author = data.get("display_name") or data.get("username") or "?"
         content = data.get("content", "")
