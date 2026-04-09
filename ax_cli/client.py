@@ -440,28 +440,6 @@ class AxClient:
         r.raise_for_status()
         return self._parse_json(r)
 
-    def get_agent_control(self, agent_id: str) -> dict:
-        """GET /auth/agents/{agent_id}/control — backend kill-switch / break state.
-
-        Returns the agent's current control state dict, including at minimum:
-        - is_disabled: bool (true if agent is disabled or taking a break)
-        - disabled_reason: str | None
-        - disabled_until: str | None (ISO timestamp for timed breaks)
-        - no_reply: bool
-        - no_reply_reason: str | None
-
-        Used by `ax listen` to respect the backend kill-switch set via the UI
-        (click on agent badge → Disable / Break) or via the MCP
-        `agents.set_control` tool. See AgentControlService in ax-backend.
-
-        Note: the control endpoint lives at /auth/agents/{id}/control, not
-        /api/v1/agents/{id}/control. This is an artifact of the existing
-        ax-backend router mount; may be unified in a future spec.
-        """
-        r = self._http.get(f"/auth/agents/{agent_id}/control")
-        r.raise_for_status()
-        return self._parse_json(r)
-
     def create_agent(self, name: str, **kwargs) -> dict:
         """POST /api/v1/agents — create a new agent."""
         body: dict = {"name": name}
