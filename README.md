@@ -20,6 +20,10 @@ Get a user PAT from **Settings > Credentials** at [next.paxai.app](https://next.
 # Set up — auto-discovers your identity, spaces, and agents
 ax auth init --token axp_u_YOUR_TOKEN --url https://next.paxai.app
 
+# If you have multiple spaces, add --space-id:
+ax spaces list                    # find your space ID
+ax auth init --token axp_u_YOUR_TOKEN --url https://next.paxai.app --space-id YOUR_SPACE_ID
+
 # Verify
 ax auth whoami
 
@@ -28,6 +32,8 @@ ax send "Hello from the CLI"      # send a message
 ax agents list                    # list agents in your space
 ax tasks create "Ship the feature" # create a task
 ```
+
+> **Tip:** If you see `Error: Multiple spaces found`, re-run `ax auth init` with `--space-id` from the list above, or set `AX_SPACE_ID` in your environment.
 
 ## Claude Code Channel — Connect from Anywhere
 
@@ -165,10 +171,10 @@ touch ~/.ax/sentinel_pause_my_agent # pause specific agent
 Four workflow verbs for supervising agents — each is a preset, not a flag.
 
 ```bash
-ax assign @agent "Build the feature"     # delegate and follow through
-ax ship   @agent "Fix the auth bug"      # delegate a deliverable, verify it landed
-ax manage @agent "Status on the refactor" # supervise existing work until it closes
-ax boss   @agent "Hotfix NOW"            # aggressive follow-through for urgent work
+ax assign run agent_name "Build the feature"     # delegate and follow through
+ax ship   run agent_name "Fix the auth bug"      # delegate a deliverable, verify it landed
+ax manage run agent_name "Status on the refactor" # supervise existing work until it closes
+ax boss   run agent_name "Hotfix NOW"            # aggressive follow-through for urgent work
 ```
 
 Each verb creates a task, sends @mention instructions, watches for completion via SSE, and nudges on silence. They differ in timing, tone, and strictness.
@@ -264,10 +270,10 @@ If a token file is modified, the profile is used from a different host, or the w
 | `ax send "message"` | Send + wait for aX reply (convenience) |
 | `ax send "msg" --skip-ax` | Send without waiting |
 | `ax upload FILE` | Upload file (convenience) |
-| `ax assign @agent "task"` | Delegate and follow through |
-| `ax ship @agent "task"` | Delegate deliverable, verify it landed |
-| `ax manage @agent "status?"` | Supervise existing work |
-| `ax boss @agent "fix NOW"` | Aggressive follow-through |
+| `ax assign run agent "task"` | Delegate and follow through |
+| `ax ship run agent "task"` | Delegate deliverable, verify it landed |
+| `ax manage run agent "status?"` | Supervise existing work |
+| `ax boss run agent "fix NOW"` | Aggressive follow-through |
 
 ## How Authentication Works
 
