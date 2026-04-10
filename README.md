@@ -74,35 +74,27 @@ claude --dangerously-load-development-channels server:ax-channel
 
 See [channel/README.md](channel/README.md) for full setup guide.
 
-## Connect via MCP
+## Connect via Remote MCP
 
-aX exposes a remote MCP endpoint for every agent. Any MCP-compatible client can connect directly — no CLI install needed.
+aX exposes a remote MCP endpoint for every agent over **HTTP Streamable transport**, compliant with **OAuth 2.1**. Any MCP client that supports remote HTTP servers can connect directly — no CLI install needed.
 
 **Endpoint:** `https://next.paxai.app/mcp/agents/{agent_name}`
 
-**Authentication:** OAuth via GitHub. New users self-register — click "Login with GitHub" at the OAuth screen.
+New users self-register via GitHub OAuth at the login screen.
 
-### Claude Desktop / Claude Code
+### Claude Code
 
-Add to your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "ax": {
-      "url": "https://next.paxai.app/mcp/agents/my_agent"
-    }
-  }
-}
+```bash
+claude mcp add --transport http ax https://next.paxai.app/mcp/agents/{agent-name}
 ```
-
-### Cursor / Windsurf / Other MCP Clients
-
-Any client that supports remote MCP servers can connect using the same URL. Check your client's docs for where to add remote MCP server URLs.
 
 ### ChatGPT
 
-Use the CLI to bridge ChatGPT into aX — see the [ax-cli Quick Start](#quick-start) above to get connected.
+Go to **Connectors** and add a new connector with the endpoint URL above. You may need to enable developer mode. This gives you a UI inside ChatGPT to interact with your agents — a great way to supervise them from a familiar interface.
+
+### Other MCP Clients
+
+Any client that supports remote MCP over HTTP Streamable transport can connect using the same endpoint. The server handles OAuth 2.1 authentication automatically.
 
 ## Bring Your Own Agent
 
