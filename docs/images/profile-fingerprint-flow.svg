@@ -1,8 +1,8 @@
-<svg width="1200" height="760" viewBox="0 0 1200 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<svg width="1200" height="820" viewBox="0 0 1200 820" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">aX CLI profile fingerprint flow</title>
   <desc id="desc">A dark themed flow diagram showing pipx install axctl, ax profile add storing URL, agent, token SHA-256, and hostname, ax profile use verifying token existence, SHA match, and host match, then either refusing or activating before eval ax profile env and ax auth whoami.</desc>
   <defs>
-    <linearGradient id="panel" x1="0" y1="0" x2="1200" y2="760" gradientUnits="userSpaceOnUse">
+    <linearGradient id="panel" x1="0" y1="0" x2="1200" y2="820" gradientUnits="userSpaceOnUse">
       <stop stop-color="#0B1220"/>
       <stop offset="1" stop-color="#111827"/>
     </linearGradient>
@@ -11,6 +11,12 @@
     </filter>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0 0L10 5L0 10V0Z" fill="#60A5FA"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10V0Z" fill="#22C55E"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10V0Z" fill="#F87171"/>
     </marker>
     <style>
       .title{fill:#F9FAFB;font:700 34px 'Inter', 'Segoe UI', sans-serif}
@@ -25,68 +31,89 @@
     </style>
   </defs>
 
-  <rect width="1200" height="760" rx="28" fill="url(#panel)"/>
+  <rect width="1200" height="820" rx="28" fill="url(#panel)"/>
   <text x="72" y="90" class="title">Profile Fingerprint Flow</text>
   <text x="72" y="124" class="subtitle">Secure profile activation checks token fingerprint and machine identity before axctl uses credentials.</text>
 
+  <!-- Step 1: Install -->
   <rect x="68" y="168" width="250" height="132" rx="24" fill="#0F172A" stroke="#2563EB" stroke-width="2" filter="url(#shadow)"/>
   <text x="96" y="210" class="small">Step 1</text>
   <text x="96" y="246" class="boxTitle">Install axctl</text>
   <text x="96" y="282" class="mono">pipx install axctl</text>
 
-  <rect x="382" y="168" width="350" height="220" rx="24" fill="#111827" stroke="#1D4ED8" stroke-width="2" filter="url(#shadow)"/>
-  <text x="412" y="210" class="small">Step 2</text>
-  <text x="412" y="246" class="boxTitle">Add profile</text>
-  <text x="412" y="282" class="mono">ax profile add</text>
-  <text x="412" y="320" class="boxText">Stores:</text>
-  <text x="432" y="352" class="boxText">• base URL</text>
-  <text x="432" y="380" class="boxText">• agent name</text>
-  <text x="432" y="408" class="boxText">• token SHA-256</text>
-  <text x="432" y="436" class="boxText">• hostname</text>
+  <!-- Arrow 1→2 -->
+  <path d="M318 234H402" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
 
-  <rect x="798" y="168" width="320" height="220" rx="24" fill="#111827" stroke="#1D4ED8" stroke-width="2" filter="url(#shadow)"/>
-  <text x="828" y="210" class="small">Step 3</text>
-  <text x="828" y="246" class="boxTitle">Use profile</text>
-  <text x="828" y="282" class="mono">ax profile use</text>
-  <text x="828" y="326" class="boxText">Loads saved fingerprint</text>
-  <text x="828" y="356" class="boxText">before making it active.</text>
+  <!-- Step 2: Add profile -->
+  <rect x="422" y="168" width="300" height="220" rx="24" fill="#111827" stroke="#1D4ED8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="452" y="210" class="small">Step 2</text>
+  <text x="452" y="246" class="boxTitle">Add profile</text>
+  <text x="452" y="282" class="mono">ax profile add</text>
+  <text x="452" y="320" class="boxText">Stores:</text>
+  <text x="472" y="352" class="boxText">• base URL</text>
+  <text x="472" y="380" class="boxText">• agent name</text>
+  <text x="472" y="408" class="boxText">• token SHA-256</text>
+  <text x="472" y="436" class="boxText">• hostname</text>
 
-  <path d="M318 234H362" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M732 234H778" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <!-- Arrow 2→3 -->
+  <path d="M722 278H798" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
 
+  <!-- Step 3: Use profile -->
+  <rect x="818" y="168" width="320" height="180" rx="24" fill="#111827" stroke="#1D4ED8" stroke-width="2" filter="url(#shadow)"/>
+  <text x="848" y="210" class="small">Step 3</text>
+  <text x="848" y="246" class="boxTitle">Use profile</text>
+  <text x="848" y="282" class="mono">ax profile use</text>
+  <text x="848" y="320" class="boxText">Loads saved fingerprint</text>
+  <text x="848" y="348" class="boxText">before making it active.</text>
+
+  <!-- Arrow Step 3 → Diamond -->
+  <path d="M600 440V470" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <!-- Long arrow from step 3 down to diamond -->
+  <path d="M978 348V420H620V440" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+
+  <!-- Checks reference box (left side) -->
+  <rect x="68" y="460" width="300" height="166" rx="22" fill="#111827" stroke="#334155" stroke-width="2"/>
+  <text x="96" y="502" class="boxTitle">Checks performed</text>
+  <text x="96" y="540" class="boxText">1. Token file exists?</text>
+  <text x="96" y="572" class="boxText">2. SHA matches saved hash?</text>
+  <text x="96" y="604" class="boxText">3. Host matches saved host?</text>
+
+  <!-- Dashed line from checks to diamond -->
+  <path d="M368 543H430" stroke="#60A5FA" stroke-width="3" stroke-dasharray="8 10"/>
+
+  <!-- Verify diamond -->
   <g filter="url(#shadow)">
-    <path d="M958 442L1096 542L958 642L820 542L958 442Z" fill="#0F172A" stroke="#2563EB" stroke-width="2.5"/>
+    <path d="M600 480L770 543L600 606L430 543Z" fill="#0F172A" stroke="#2563EB" stroke-width="2.5"/>
   </g>
-  <text x="915" y="520" class="decision">Verify</text>
-  <text x="888" y="548" class="decision">fingerprint</text>
-  <text x="891" y="576" class="decision">checks</text>
+  <text x="553" y="536" class="decision">Verify</text>
+  <text x="533" y="564" class="decision">fingerprint</text>
 
-  <path d="M958 388V426" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <!-- Pass arrow → right -->
+  <text x="786" y="532" class="label" fill="#22C55E">pass</text>
+  <path d="M770 543H870" stroke="#22C55E" stroke-width="4" stroke-linecap="round" marker-end="url(#arrowGreen)"/>
 
-  <rect x="68" y="474" width="320" height="166" rx="22" fill="#111827" stroke="#334155" stroke-width="2"/>
-  <text x="96" y="516" class="boxTitle">Checks performed</text>
-  <text x="96" y="554" class="boxText">1. Token file exists?</text>
-  <text x="96" y="586" class="boxText">2. SHA matches saved hash?</text>
-  <text x="96" y="618" class="boxText">3. Host matches saved host?</text>
+  <!-- PASS: Activate profile box -->
+  <rect x="880" y="500" width="260" height="86" rx="22" fill="#0B1220" stroke="#22C55E" stroke-width="2"/>
+  <text x="920" y="536" class="label" fill="#22C55E">PASS</text>
+  <text x="920" y="566" class="boxTitle">Activate profile</text>
 
-  <path d="M818 542H410" stroke="#60A5FA" stroke-width="3.5" stroke-dasharray="8 10"/>
+  <!-- Arrow from Activate → eval whoami -->
+  <path d="M1010 586V650" stroke="#22C55E" stroke-width="4" stroke-linecap="round" marker-end="url(#arrowGreen)"/>
 
-  <rect x="804" y="54" width="244" height="76" rx="18" fill="#172554" stroke="#3B82F6" stroke-width="1.5"/>
-  <text x="834" y="100" class="muted">Refuse on any mismatch</text>
+  <!-- eval whoami box -->
+  <rect x="720" y="660" width="420" height="74" rx="22" fill="#0B1220" stroke="#2563EB" stroke-width="2"/>
+  <text x="744" y="704" class="mono">eval $(ax profile env) → whoami</text>
 
-  <rect x="700" y="644" width="460" height="74" rx="22" fill="#0B1220" stroke="#2563EB" stroke-width="2"/>
-  <text x="724" y="686" class="mono">eval $(ax profile env) → whoami</text>
+  <!-- Fail arrow → down-left -->
+  <text x="540" y="618" class="label" fill="#F87171">fail</text>
+  <path d="M600 606V690H390" stroke="#F87171" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowRed)"/>
 
-  <rect x="60" y="648" width="310" height="72" rx="22" fill="#3F1D1D" stroke="#EF4444" stroke-width="2"/>
-  <text x="92" y="692" class="boxTitle">Fail → refuse activation</text>
+  <!-- FAIL: Refuse box -->
+  <rect x="68" y="660" width="310" height="74" rx="22" fill="#3F1D1D" stroke="#EF4444" stroke-width="2"/>
+  <text x="100" y="704" class="boxTitle">Fail → refuse activation</text>
 
-  <rect x="780" y="474" width="274" height="96" rx="22" fill="#0B1220" stroke="#22C55E" stroke-width="2"/>
-  <text x="822" y="514" class="label">PASS</text>
-  <text x="822" y="546" class="boxTitle">Activate profile</text>
-
-  <path d="M1096 542H1160V684H1156" stroke="#22C55E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-  <path d="M820 542H456V684H390" stroke="#F87171" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-
-  <text x="1092" y="528" class="label">pass</text>
-  <text x="732" y="528" class="label">fail</text>
+  <!-- Refuse note (top right) -->
+  <rect x="824" y="54" width="244" height="76" rx="18" fill="#172554" stroke="#3B82F6" stroke-width="1.5"/>
+  <text x="854" y="100" class="muted">Refuse on any mismatch</text>
 </svg>
