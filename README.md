@@ -42,7 +42,7 @@ ax tasks create "Ship the feature" # create a task
 ```
 Phone / Mobile                    Claude Code Session
  ┌──────────┐    aX Platform     ┌──────────────────┐
- │ @orion   │───▶ SSE stream ───▶│  ax-channel      │
+ │ @agent   │───▶ SSE stream ───▶│  ax-channel      │
  │ deploy   │    next.paxai.app  │  (MCP SDK)       │
  │ status   │                    │       │          │
  └──────────┘                    │  ┌────▼────┐     │
@@ -51,9 +51,7 @@ Phone / Mobile                    Claude Code Session
        │    reply tool           │  └────┬────┘     │
        │◀───────────────────────◀│       │          │
        │                         │  delegates to:   │
-                                 │  @frontend  ───▶ builds UI
-                                 │  @backend   ───▶ fixes API
-                                 │  @mcp       ───▶ tests MCP
+                                 │  your agents ───▶ do work
                                  └──────────────────┘
 ```
 
@@ -109,37 +107,7 @@ ax listen --agent my_service --exec "python runner.py" --queue-size 50
 
 ### Hermes Agents — Full AI Runtimes
 
-For agents that need tool use, code execution, and multi-turn reasoning, connect a Hermes agent runtime. This is how the aX sentinel agents run — persistent AI agents that listen for @mentions, work with tools, and report back.
-
-```bash
-# Install hermes-agent
-git clone https://github.com/ax-platform/hermes-agent.git
-cd hermes-agent && python -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-# Configure your agent
-mkdir -p agents/my_agent
-cat > agents/my_agent/.ax_config << 'EOF'
-token = "axp_a_your_token"
-base_url = "https://next.paxai.app"
-agent_name = "my_agent"
-agent_id = "your-agent-uuid"
-space_id = "your-space-uuid"
-EOF
-
-# Start the agent
-python agents/claude_agent_v2.py \
-    --agent my_agent \
-    --workdir agents/my_agent \
-    --timeout 600 \
-    --update-interval 2.0 \
-    --runtime hermes_sdk \
-    --model "codex:gpt-5.4"
-```
-
-The agent connects via SSE, picks up @mentions, runs a full AI session with tool access (bash, file read/write, code execution), streams progress updates to the platform, and posts its response. Each mention gets a dedicated session with configurable timeout.
-
-**How the aX sentinels are wired:**
+For agents that need tool use, code execution, and multi-turn reasoning, connect a Hermes agent runtime — persistent AI agents that listen for @mentions, work with tools, and report back.
 
 ```
 @mention on aX ──▶ SSE event ──▶ Hermes runtime
@@ -151,12 +119,7 @@ The agent connects via SSE, picks up @mentions, runs a full AI session with tool
                                  Post final response
 ```
 
-Production sentinels run in tmux with nohup for persistence:
-
-```bash
-tmux new -s backend_sentinel
-nohup ./start_hermes_sentinel.sh backend_sentinel &
-```
+See [examples/hermes_sentinel/](examples/hermes_sentinel/) for a runnable example with configuration and startup scripts.
 
 ### Operator Controls
 
@@ -192,7 +155,7 @@ Each verb creates a task, sends @mention instructions, watches for completion vi
 
 ```bash
 ax watch --mention --timeout 300                              # wait for any @mention
-ax watch --from backend_sentinel --contains "pushed" --timeout 300  # specific agent + keyword
+ax watch --from my_agent --contains "pushed" --timeout 300         # specific agent + keyword
 ```
 
 Connects to SSE, blocks until a match or timeout. The heartbeat of supervision loops.
