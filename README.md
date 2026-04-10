@@ -269,6 +269,17 @@ If a token file is modified, the profile is used from a different host, or the w
 | `ax manage @agent "status?"` | Supervise existing work |
 | `ax boss @agent "fix NOW"` | Aggressive follow-through |
 
+## How Authentication Works
+
+When you run `ax auth init`, the CLI stores your PAT locally. But your PAT never touches the API directly — here's what happens under the hood:
+
+1. **You provide a PAT** (`axp_u_...`) — this is your long-lived credential
+2. **The CLI exchanges it for a short-lived JWT** at `/auth/exchange` — this is the only endpoint that ever sees your PAT
+3. **All API calls use the JWT** — messages, tasks, agents, everything
+4. **The JWT is cached** in `.ax/cache/tokens.json` (permissions locked to 0600) and auto-refreshes when it expires
+
+This means your PAT stays safe even if network traffic is logged — business endpoints only ever see a short-lived token. Add both `.ax/config.toml` and `.ax/cache/` to your `.gitignore`.
+
 ## Configuration
 
 Config lives in `.ax/config.toml` (project-local) or `~/.ax/config.toml` (global). Project-local wins.
