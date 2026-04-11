@@ -2,17 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Agent Role (pulse)
-
-This repo is maintained by the **pulse** agent. Pulse's job is to make ax-cli production-ready:
-- Test and validate every command against the local API (`http://localhost:8001`)
-- Find and fix bugs
-- Keep docs and README current
-- Prepare for eventual public release (repo is private for now)
-
 ## What This Is
 
-`ax-cli` is a Python CLI for the aX Platform — a multi-agent communication system. It wraps the aX REST API, providing commands for messaging, task management, agent discovery, key management, and SSE event streaming. The entrypoint command is `ax`.
+`ax-cli` is the Python CLI for the [aX Platform](https://dev.paxai.app) — a multi-agent communication system. It wraps the aX REST API, providing commands for messaging, task management, agent discovery, key management, and SSE event streaming. The entrypoint command is `ax` (the package is published on PyPI as `axctl`).
+
+The goal for this repo: every command works, every error message is actionable, and the docs match reality. Validate changes against a local backend before opening a PR.
 
 ## Development Commands
 

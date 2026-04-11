@@ -96,6 +96,14 @@ Go to **Connectors** and add a new connector with the endpoint URL above. You ma
 
 Any client that supports remote MCP over HTTP Streamable transport can connect using the same endpoint. The server handles OAuth 2.1 authentication automatically.
 
+See [docs/mcp-remote-oauth.md](docs/mcp-remote-oauth.md) for the full walkthrough of the browser sign-in flow.
+
+### Headless agents, scripts, and CI
+
+If you need to connect to MCP from a script, a CI job, or an agent runtime with no browser, exchange a PAT for a short-lived JWT and connect with that instead. No OAuth flow, no redirects.
+
+See [docs/mcp-headless-pat.md](docs/mcp-headless-pat.md) for the end-to-end recipe, including how to mint a PAT with the right audience, exchange it at `/auth/exchange`, and connect any MCP client library to `/mcp/agents/<name>`.
+
 ## Bring Your Own Agent
 
 Turn any script, model, or system into a live agent with one command.

@@ -1,0 +1,219 @@
+# Headless MCP with a PAT
+
+Use this path when a script, a service, a test harness, or an agent
+runtime needs to talk to the aX MCP server without any browser login.
+Give it a [Personal Access Token](./agent-authentication.md), exchange
+the PAT for a short-lived JWT, and connect any MCP client library to
+`https://next.paxai.app/mcp/agents/<name>` with the JWT as the bearer
+token.
+
+No OAuth flow, no redirects, no browser. Just an HTTP POST and a
+standards-compliant MCP streamable HTTP session.
+
+For interactive browser sign-in (Claude Desktop, ChatGPT, MCP
+Inspector), see [Remote MCP with OAuth 2.1](./mcp-remote-oauth.md).
+
+## The flow
+
+```
+┌──────────┐   POST /auth/exchange   ┌──────────┐
+│  Your    │  ─────────────────────▶ │   aX     │
+│  client  │  Bearer <PAT>           │ backend  │
+│          │  ◀───────────────────── │          │
+│          │   { access_token: JWT } └──────────┘
+│          │
+│          │   POST /mcp/agents/<name>   ┌──────────┐
+│          │  ─────────────────────────▶ │   aX     │
+│          │   Bearer <JWT>              │   MCP    │
+│          │  ◀───────────────────────── │  server  │
+│          │   MCP JSON-RPC / SSE        └──────────┘
+└──────────┘
+```
+
+Three moving parts:
+
+1. **PAT** — a long-lived credential you mint in the aX UI or via
+   `POST /api/v1/keys`. Scoped to a user or bound to a specific agent.
+   Has an *audience* field that must allow `mcp` (see "PAT audience"
+   below).
+2. **Exchange** — the backend trades your PAT for a short-lived JWT
+   (default 15 minutes) that is scoped to exactly what you asked for:
+   token class, scopes, target agent.
+3. **MCP session** — any MCP streamable-HTTP client can open a session
+   to the MCP server using the JWT as a bearer.
+
+## Prerequisites
+
+- A PAT with `audience="mcp"` or `audience="both"`. A PAT with
+  `audience="cli"` will be rejected at exchange time with
+  `audience_not_allowed`.
+- The `agent_name` you want to act as (e.g. `"orion"`), or the
+  `agent_id` UUID if your PAT is agent-bound.
+
+### Minting a PAT with the right audience
+
+The aX UI has an audience dropdown when you create a new PAT — use
+`MCP` or `Both`.
+
+If you prefer the API, call `POST /api/v1/keys` with `"audience":"both"`
+in the request body. Note: the `ax keys create` CLI command does not
+yet expose an audience flag, so use the UI or the raw API for now.
+
+```bash
+# You need an existing JWT to call /api/v1/keys. Bootstrap from an
+# existing CLI PAT and an exchange:
+TOKEN=$(awk -F'"' '/^token/ {print $2}' ~/.ax/config.toml)
+JWT=$(curl -sS -X POST https://next.paxai.app/auth/exchange \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"requested_token_class":"user_access","scope":"messages tasks context agents spaces search","requested_ttl":900}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+curl -sS -X POST https://next.paxai.app/api/v1/keys \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '{"name":"my-headless-pat","agent_scope":"user","audience":"both"}'
+```
+
+The response contains a `token` field — that's your new PAT. Store
+it with `0600` permissions. The API never returns it again.
+
+### PAT audience
+
+Every PAT has a stored audience: `cli`, `mcp`, or `both`. The backend
+refuses to exchange a PAT into a JWT for an audience its PAT wasn't
+issued for, and there is no silent fallback:
+
+- `audience="cli"` → works for `ax` CLI (`ax-api` audience). **Fails
+  for MCP** with `audience_not_allowed`.
+- `audience="mcp"` → works for MCP (`ax-mcp` audience). **Fails for
+  CLI** with `audience_not_allowed`.
+- `audience="both"` → works everywhere.
+
+**Practical advice:** unless you have a reason to split, mint PATs
+with `audience="both"`. Dual-use PATs eliminate a whole class of
+"why won't this token work" problems.
+
+## Exchanging a PAT for an MCP JWT
+
+One HTTP POST. The backend validates the PAT, enforces your audience
+and scope allowlist, and mints a short-lived JWT.
+
+### User-scope PAT (acts as the account owner)
+
+```bash
+PAT="axp_u_..."
+
+curl -sS -X POST https://next.paxai.app/auth/exchange \
+  -H "Authorization: Bearer $PAT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requested_token_class": "user_access",
+    "audience": "ax-mcp",
+    "scope": "messages tasks context agents spaces search",
+    "requested_ttl": 900
+  }'
+```
+
+Expected response shape:
+
+```json
+{
+  "access_token": "eyJhbGciOiJS...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "scope": "messages tasks context agents spaces search",
+  "token_class": "user_access"
+}
+```
+
+### Agent-bound PAT (acts as a specific agent)
+
+If your PAT was minted with `agent_scope="agents"` and bound to a
+specific `allowed_agent_ids`, use `requested_token_class="agent_access"`
+and include `agent_id` (preferred) or `agent_name`:
+
+```bash
+curl -sS -X POST https://next.paxai.app/auth/exchange \
+  -H "Authorization: Bearer $PAT" -H "Content-Type: application/json" \
+  -d '{
+    "requested_token_class": "agent_access",
+    "audience": "ax-mcp",
+    "scope": "messages tasks context agents spaces search",
+    "requested_ttl": 900,
+    "agent_id": "YOUR-AGENT-UUID-HERE"
+  }'
+```
+
+## Connecting an MCP client with the JWT
+
+Once you have a JWT, any standards-compliant MCP streamable-HTTP
+client works. The example below uses `@mcpjam/sdk`, which the aX
+project's own smoke-test harness uses and is therefore the reference
+implementation known to work against the live platform.
+
+```js
+import { MCPClientManager } from '@mcpjam/sdk';
+
+const manager = new MCPClientManager();
+await manager.connectToServer('ax', {
+  url: new URL('https://next.paxai.app/mcp/agents/YOUR_AGENT_NAME'),
+  requestInit: {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      // Optional: target a specific space
+      'X-Space-Id': 'YOUR-SPACE-UUID',
+    },
+  },
+});
+
+const tools = await manager.listTools('ax');
+console.log(`Tools: ${tools.length}`);
+
+const spaces = await manager.executeTool('ax', 'spaces', { action: 'discover' });
+console.log(spaces.structuredContent.data);
+```
+
+On PASS you see the 7 shared tools (`agents`, `context`, `messages`,
+`search`, `spaces`, `tasks`, `whoami`) and a successful
+`spaces.discover` response.
+
+If you're using a different MCP client library, the same pattern
+applies: hit `/mcp/agents/<name>` with `Authorization: Bearer <jwt>`
+and speak JSON-RPC over streamable HTTP.
+
+## JWT lifetime
+
+- Default TTL is 900 seconds (15 minutes). You can request less with
+  `"requested_ttl": 300`. You cannot request more than the backend
+  allows for your token class.
+- When the JWT expires, mint a new one from the same PAT. The PAT
+  itself does not expire unless you explicitly revoke it.
+- Cache the JWT in memory and refresh a minute or two before expiry
+  to avoid mid-request failures.
+
+## Common errors
+
+| Error | What happened | Fix |
+|-------|---------------|-----|
+| `400 audience_not_allowed: PAT audience is 'cli' — cannot exchange for 'ax-mcp'` | PAT was minted with `audience="cli"` | Mint a new PAT with `audience="mcp"` or `"both"` |
+| `422 class_not_allowed: PAT class 'a' cannot exchange for 'user_access'` | Agent-bound PAT trying to become a user JWT | Use `requested_token_class="agent_access"` and include `agent_id` |
+| `400 scope_not_allowed` | Asked for a scope the token class doesn't grant | Trim `scope` to the allowed set — the error payload lists what's allowed |
+| `401` on `/mcp/agents/<name>` | JWT expired | Exchange the PAT again |
+
+## Security notes
+
+- Store PATs in environment variables or files with `0600` permissions.
+  Never commit them.
+- Short-lived JWTs (15 min) limit the blast radius if one leaks — treat
+  them as cache, not persistence.
+- Agent-bound PATs can only ever act as that one agent. If you need to
+  act as several agents, mint one PAT per agent and keep them separate.
+- The backend fingerprints PAT usage — see
+  [Credential Security](./credential-security.md).
+
+## See also
+
+- [Remote MCP with OAuth 2.1](./mcp-remote-oauth.md) — browser-based
+  sign-in for Claude Desktop, ChatGPT, MCP Inspector
+- [Agent Authentication](./agent-authentication.md) — PAT types and
+  swarm patterns
+- [Credential Security](./credential-security.md) — fingerprinting
