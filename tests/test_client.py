@@ -1,6 +1,7 @@
 """Tests for AxClient auth and token class selection."""
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from ax_cli.client import AxClient
@@ -63,6 +64,40 @@ class TestTokenClassSelection:
 
         call_body = mock_post.call_args[1]["json"]
         assert call_body["requested_token_class"] == "user_access"
+
+
+class TestCredentialManagement:
+    """Verify credential management request payloads."""
+
+    def test_issue_agent_pat_sends_requested_audience(self):
+        client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
+        client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})
+        response = httpx.Response(
+            201,
+            json={"ok": True},
+            request=httpx.Request("POST", "https://example.com/credentials/agent-pat"),
+        )
+        client._http.post = MagicMock(return_value=response)
+
+        client.mgmt_issue_agent_pat("agent-123", audience="mcp")
+
+        body = client._http.post.call_args.kwargs["json"]
+        assert body["audience"] == "mcp"
+
+    def test_issue_enrollment_sends_requested_audience(self):
+        client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
+        client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})
+        response = httpx.Response(
+            201,
+            json={"ok": True},
+            request=httpx.Request("POST", "https://example.com/credentials/enrollment"),
+        )
+        client._http.post = MagicMock(return_value=response)
+
+        client.mgmt_issue_enrollment(audience="both")
+
+        body = client._http.post.call_args.kwargs["json"]
+        assert body["audience"] == "both"
 
     def test_agent_pat_without_agent_id_uses_user_access(self, tmp_path, monkeypatch, mock_exchange):
         """Agent PAT without agent_id falls back to user_access."""

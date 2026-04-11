@@ -49,7 +49,12 @@ def issue_agent_pat(
             handle_error(e)
 
     try:
-        data = client.mgmt_issue_agent_pat(agent_id, name=name, expires_in_days=expires_days)
+        data = client.mgmt_issue_agent_pat(
+            agent_id,
+            name=name,
+            expires_in_days=expires_days,
+            audience=audience,
+        )
     except httpx.HTTPStatusError as e:
         handle_error(e)
 
@@ -80,7 +85,11 @@ def issue_enrollment(
     """
     client = get_client()
     try:
-        data = client.mgmt_issue_enrollment(name=name, expires_in_hours=expires_hours)
+        data = client.mgmt_issue_enrollment(
+            name=name,
+            expires_in_hours=expires_hours,
+            audience=audience,
+        )
     except httpx.HTTPStatusError as e:
         handle_error(e)
 
