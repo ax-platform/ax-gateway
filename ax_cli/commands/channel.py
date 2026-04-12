@@ -386,20 +386,33 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             or (author_raw if isinstance(author_raw, str) else "unknown")
                         )
 
-                    # Extract attachment metadata from the message.
-                    # The backend includes attachments in metadata.attachments
-                    # (and sometimes at the top level for SSE events).
+                    # Extract attachment metadata.  SSE events often omit
+                    # the full metadata.attachments that the REST API returns,
+                    # so we first check the SSE payload and fall back to a
+                    # lightweight GET /messages/{id} call when needed.
                     attachments = None
                     msg_metadata = data.get("metadata") or {}
                     if isinstance(msg_metadata, dict):
                         raw_attachments = msg_metadata.get("attachments") or msg_metadata.get("accepted_attachments")
                         if raw_attachments and isinstance(raw_attachments, list):
                             attachments = raw_attachments
-                    # Fallback: some SSE event shapes put attachments at top level
                     if not attachments:
                         raw_top = data.get("attachments")
                         if raw_top and isinstance(raw_top, list):
                             attachments = raw_top
+                    # Fallback: fetch full message from REST API to get attachments
+                    if not attachments and message_id:
+                        try:
+                            full_msg = bridge.client.get_message(message_id)
+                            if isinstance(full_msg, dict):
+                                full_msg = full_msg.get("message", full_msg)
+                            full_meta = (full_msg or {}).get("metadata") or {}
+                            api_attachments = full_meta.get("attachments") or full_meta.get("accepted_attachments")
+                            if api_attachments and isinstance(api_attachments, list):
+                                attachments = api_attachments
+                                bridge.log(f"  fetched {len(attachments)} attachment(s) from REST API")
+                        except Exception as exc:
+                            bridge.log(f"  attachment fetch failed: {exc}")
 
                     bridge.enqueue_from_thread(
                         MentionEvent(
