@@ -39,6 +39,7 @@ class MentionEvent:
     raw_content: str
     created_at: str | None
     space_id: str
+    attachments: list[dict[str, Any]] | None = None
 
 
 class ChannelBridge:
@@ -114,21 +115,24 @@ class ChannelBridge:
                 self.log("emit_mentions: initialized done, sending notification")
 
                 self._last_message_id = event.message_id
+                meta: dict[str, Any] = {
+                    "chat_id": event.space_id,
+                    "message_id": event.message_id,
+                    "parent_id": event.parent_id,
+                    "user": event.author,
+                    "sender": event.author,
+                    "source": "ax",
+                    "space_id": event.space_id,
+                    "ts": event.created_at,
+                    "raw_content": event.raw_content,
+                }
+                if event.attachments:
+                    meta["attachments"] = event.attachments
                 await self.send_notification(
                     "notifications/claude/channel",
                     {
                         "content": event.prompt,
-                        "meta": {
-                            "chat_id": event.space_id,
-                            "message_id": event.message_id,
-                            "parent_id": event.parent_id,
-                            "user": event.author,
-                            "sender": event.author,
-                            "source": "ax",
-                            "space_id": event.space_id,
-                            "ts": event.created_at,
-                            "raw_content": event.raw_content,
-                        },
+                        "meta": meta,
                     },
                 )
                 self.log(f"delivered mention {event.message_id} from {event.author}")
@@ -381,6 +385,22 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             or data.get("sender_name")
                             or (author_raw if isinstance(author_raw, str) else "unknown")
                         )
+
+                    # Extract attachment metadata from the message.
+                    # The backend includes attachments in metadata.attachments
+                    # (and sometimes at the top level for SSE events).
+                    attachments = None
+                    msg_metadata = data.get("metadata") or {}
+                    if isinstance(msg_metadata, dict):
+                        raw_attachments = msg_metadata.get("attachments") or msg_metadata.get("accepted_attachments")
+                        if raw_attachments and isinstance(raw_attachments, list):
+                            attachments = raw_attachments
+                    # Fallback: some SSE event shapes put attachments at top level
+                    if not attachments:
+                        raw_top = data.get("attachments")
+                        if raw_top and isinstance(raw_top, list):
+                            attachments = raw_top
+
                     bridge.enqueue_from_thread(
                         MentionEvent(
                             message_id=message_id,
@@ -390,6 +410,7 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             raw_content=data.get("content", ""),
                             created_at=data.get("created_at"),
                             space_id=bridge.space_id,
+                            attachments=attachments,
                         )
                     )
         except (httpx.ConnectError, httpx.ReadTimeout, ConnectionError) as exc:
