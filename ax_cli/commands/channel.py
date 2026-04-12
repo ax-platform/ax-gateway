@@ -191,7 +191,9 @@ class ChannelBridge:
         if not reply_to:
             await self.send_error(request_id, -32602, "reply_to is required until at least one aX message has arrived")
             return
-        if getattr(self.client, "_use_exchange", False) and not str(getattr(self.client, "token", "")).startswith("axp_a_"):
+        if getattr(self.client, "_use_exchange", False) and not str(getattr(self.client, "token", "")).startswith(
+            "axp_a_"
+        ):
             await self.send_response(
                 request_id,
                 {

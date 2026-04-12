@@ -657,7 +657,8 @@ class AxClient:
         if space_id:
             params["space_id"] = space_id
         return self._http.stream(
-            "GET", "/api/sse/messages",
+            "GET",
+            "/api/sse/messages",
             params=params,
             timeout=timeout or httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
         )
