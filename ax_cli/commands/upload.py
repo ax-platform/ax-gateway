@@ -20,7 +20,7 @@ def upload_file(
     message: Optional[str] = typer.Option(None, "--message", "-m", help="Message to send referencing the upload"),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="Context key (default: unique upload key)"),
     vault: bool = typer.Option(False, "--vault", help="Store permanently in vault (default: ephemeral 24h)"),
-    skip_ax: bool = typer.Option(False, "--skip-ax", help="Send message without waiting for aX reply"),
+    skip_ax: bool = typer.Option(True, "--skip-ax/--wait", help="Skip waiting for aX reply (default: skip)"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Only output the attachment ID"),
     json_output: bool = JSON_OPTION,
 ):

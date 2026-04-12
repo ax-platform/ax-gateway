@@ -29,6 +29,7 @@ from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..output import console
 
 app = typer.Typer(name="listen", help="Listen for @mentions via SSE", no_args_is_help=False)
+REPLY_ANCHOR_MAX = 500
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +58,50 @@ def _iter_sse(response: httpx.Response):
             data_lines = []
 
 
-def _should_respond(data: dict, agent_name: str, agent_id: str | None) -> bool:
-    """Return True if this message is an @mention for our agent.
+def _message_sender_identity(data: dict) -> tuple[str, str]:
+    """Return sender display name and agent/user id from an SSE payload."""
+    author = data.get("author")
+    if isinstance(author, dict):
+        return str(author.get("name") or ""), str(author.get("id") or "")
+    return (
+        str(
+            data.get("display_name")
+            or data.get("username")
+            or data.get("sender_name")
+            or (author if isinstance(author, str) else "")
+            or ""
+        ),
+        str(data.get("agent_id") or data.get("author_id") or ""),
+    )
+
+
+def _is_self_authored(data: dict, agent_name: str, agent_id: str | None) -> bool:
+    """Return True when an SSE payload was authored by this listener's agent."""
+    sender, sender_id = _message_sender_identity(data)
+    if sender.lower() == agent_name.lower():
+        return True
+    return bool(agent_id and sender_id == agent_id)
+
+
+def _remember_reply_anchor(reply_anchor_ids: set[str], message_id: object) -> None:
+    """Track message IDs whose replies should wake this listener."""
+    if not message_id:
+        return
+    reply_anchor_ids.add(str(message_id))
+    if len(reply_anchor_ids) > REPLY_ANCHOR_MAX:
+        keep = list(reply_anchor_ids)[-REPLY_ANCHOR_MAX // 2 :]
+        reply_anchor_ids.clear()
+        reply_anchor_ids.update(keep)
+
+
+def _should_respond(
+    data: dict,
+    agent_name: str,
+    agent_id: str | None,
+    *,
+    reply_anchor_ids: set[str] | None = None,
+) -> bool:
+    """Return True if this message is an @mention or a reply to this agent.
 
     Trusts the backend's authoritative `mentions` array in the event
     payload. If the backend says this agent is NOT in the mentions list,
@@ -77,27 +120,13 @@ def _should_respond(data: dict, agent_name: str, agent_id: str | None) -> bool:
         return False
     content = data.get("content", "")
 
-    # SSE events use different field names depending on event type:
-    # 'message' events have author as dict {"id": ..., "name": ..., "type": ...}
-    # 'mention' events have author as string, plus sender_name
-    author = data.get("author")
-    if isinstance(author, dict):
-        sender = author.get("name", "")
-        sender_id = author.get("id", "")
-    else:
-        sender = (
-            data.get("display_name")
-            or data.get("username")
-            or data.get("sender_name")
-            or (author if isinstance(author, str) else "")
-        )
-        sender_id = data.get("agent_id") or ""
-
     # Self-filter: never respond to our own messages, regardless of content.
-    if sender.lower() == agent_name.lower():
+    if _is_self_authored(data, agent_name, agent_id):
         return False
-    if agent_id and sender_id == agent_id:
-        return False
+
+    parent_id = str(data.get("parent_id") or "")
+    if parent_id and reply_anchor_ids and parent_id in reply_anchor_ids:
+        return True
 
     # Primary path: trust the backend's authoritative mentions list.
     # An empty list is MEANINGFUL — it means "no active mentions for
@@ -192,6 +221,7 @@ def _worker(
     space_id: str,
     handler,
     dry_run: bool,
+    reply_anchor_ids: set[str],
 ):
     """Process mentions sequentially from the queue."""
     while True:
@@ -251,12 +281,14 @@ def _worker(
             response_text = handler(prompt)
             if response_text:
                 client = client_holder[0]
-                client.send_message(
+                result = client.send_message(
                     space_id,
                     response_text,
                     agent_id=agent_id,
                     parent_id=msg_id,
                 )
+                message = result.get("message", result) if isinstance(result, dict) else {}
+                _remember_reply_anchor(reply_anchor_ids, message.get("id"))
                 console.print(f"[green]  replied[/green] ({len(response_text)} chars)")
         except Exception as e:
             console.print(f"[red]  error: {e}[/red]")
@@ -373,10 +405,11 @@ def listen(
     # Start worker thread
     mention_q: queue.Queue = queue.Queue(maxsize=queue_size)
     client_holder = [client]
+    reply_anchor_ids: set[str] = set()
 
     worker_thread = threading.Thread(
         target=_worker,
-        args=(mention_q, client_holder, agent_name, agent_id, sid, handler, dry_run),
+        args=(mention_q, client_holder, agent_name, agent_id, sid, handler, dry_run, reply_anchor_ids),
         daemon=True,
     )
     worker_thread.start()
@@ -414,10 +447,16 @@ def listen(
                         if msg_id in seen_ids:
                             continue
 
-                        if _should_respond(data, agent_name, agent_id):
+                        if _is_self_authored(data, agent_name, agent_id):
+                            _remember_reply_anchor(reply_anchor_ids, msg_id)
+                            seen_ids.add(msg_id)
+                            continue
+
+                        if _should_respond(data, agent_name, agent_id, reply_anchor_ids=reply_anchor_ids):
                             seen_ids.add(msg_id)
                             if len(seen_ids) > SEEN_MAX:
                                 seen_ids = set(list(seen_ids)[-SEEN_MAX // 2 :])
+                            _remember_reply_anchor(reply_anchor_ids, msg_id)
 
                             if as_json:
                                 print(

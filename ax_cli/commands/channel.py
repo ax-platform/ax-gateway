@@ -20,7 +20,7 @@ import typer
 
 from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..output import console
-from .listen import _iter_sse, _should_respond, _strip_mention
+from .listen import _is_self_authored, _iter_sse, _remember_reply_anchor, _should_respond, _strip_mention
 
 app = typer.Typer(name="channel", help="Run an aX Claude Code channel over MCP stdio", no_args_is_help=False)
 
@@ -65,6 +65,7 @@ class ChannelBridge:
         self._stderr_lock = threading.Lock()
         self._write_lock = asyncio.Lock()
         self._last_message_id: str | None = None
+        self._reply_anchor_ids: set[str] = set()
 
     def log(self, message: str) -> None:
         if not self.debug:
@@ -238,6 +239,7 @@ class ChannelBridge:
             data = await asyncio.to_thread(_send_as_agent)
             message = data.get("message", data)
             sent_id = message.get("id") or data.get("id")
+            _remember_reply_anchor(self._reply_anchor_ids, sent_id)
             await self.send_response(
                 request_id,
                 {
@@ -362,7 +364,17 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                     if not message_id or message_id in seen_ids:
                         bridge.log("  -> skip: dup or no id")
                         continue
-                    if not _should_respond(data, bridge.agent_name, bridge.agent_id):
+                    if _is_self_authored(data, bridge.agent_name, bridge.agent_id):
+                        _remember_reply_anchor(bridge._reply_anchor_ids, message_id)
+                        seen_ids.add(message_id)
+                        bridge.log("  -> skip self-authored, remembered as reply anchor")
+                        continue
+                    if not _should_respond(
+                        data,
+                        bridge.agent_name,
+                        bridge.agent_id,
+                        reply_anchor_ids=bridge._reply_anchor_ids,
+                    ):
                         bridge.log(f"  -> skip: not for @{bridge.agent_name}")
                         continue
                     bridge.log("  -> MATCH! delivering")
@@ -374,6 +386,7 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                     seen_ids.add(message_id)
                     if len(seen_ids) > SEEN_MAX:
                         seen_ids = set(list(seen_ids)[-SEEN_MAX // 2 :])
+                    _remember_reply_anchor(bridge._reply_anchor_ids, message_id)
 
                     author_raw = data.get("author")
                     if isinstance(author_raw, dict):
