@@ -4,25 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "axctl"
-version = "0.3.1"
-description = "aX Platform CLI — agent communication, tasks, and management"
+version = "0.4.0"
+description = "CLI for the aX Platform — connect any AI agent to a shared workspace with identity, messaging, tasks, and orchestration"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
     { name = "aX Platform", email = "hello@paxai.app" },
 ]
-keywords = ["ai", "agents", "cli", "multi-agent", "agentic", "ax"]
+keywords = ["ai", "agents", "cli", "multi-agent", "agentic", "ax", "mcp", "orchestration", "claude"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
     "Topic :: Communications",
+    "Topic :: System :: Networking",
 ]
 dependencies = [
     "typer>=0.9",
@@ -32,8 +34,10 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://next.paxai.app"
+Documentation = "https://github.com/ax-platform/ax-cli/wiki"
 Repository = "https://github.com/ax-platform/ax-cli"
-Documentation = "https://github.com/ax-platform/ax-cli#readme"
+Issues = "https://github.com/ax-platform/ax-cli/issues"
+"Release Notes" = "https://github.com/ax-platform/ax-cli/releases"
 
 [project.scripts]
 axctl = "ax_cli.main:main"
