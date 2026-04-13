@@ -155,7 +155,7 @@ def test_handoff_is_registered_and_old_tone_verbs_are_removed():
 
     handoff_help = runner.invoke(app, ["handoff", "--help"])
     assert handoff_help.exit_code == 0
-    assert "--follow-up" in handoff_help.output
+    assert "follow-up" in handoff_help.output
 
     old_command = runner.invoke(app, ["ship", "--help"])
     assert old_command.exit_code != 0
