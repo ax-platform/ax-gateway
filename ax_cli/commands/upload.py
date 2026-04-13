@@ -14,6 +14,26 @@ from ..output import JSON_OPTION, console, handle_error, print_json
 app = typer.Typer(name="upload", help="Upload files to context", no_args_is_help=True)
 
 
+def _message_attachment_ref(
+    *,
+    attachment_id: str,
+    content_type: str,
+    filename: str,
+    size_bytes: int,
+    url: str,
+    context_key: str,
+) -> dict:
+    """Build the message attachment pointer used by REST/SSE/MCP consumers."""
+    return {
+        "id": attachment_id,
+        "content_type": content_type,
+        "filename": filename,
+        "size_bytes": size_bytes,
+        "url": url,
+        "context_key": context_key,
+    }
+
+
 @app.command("file")
 def upload_file(
     file_path: str = typer.Argument(..., help="Path to the file to upload"),
@@ -81,6 +101,7 @@ def upload_file(
     context_value = {
         "type": "file_upload",
         "attachment_id": attachment_id,
+        "context_key": context_key,
         "filename": original_name,
         "content_type": content_type,
         "size": size,
@@ -122,12 +143,14 @@ def upload_file(
         else:
             content = f"📎 Uploaded `{original_name}` to context (key: `{context_key}`)"
         attachments = [
-            {
-                "id": attachment_id,
-                "content_type": content_type,
-                "filename": original_name,
-                "size_bytes": size,
-            }
+            _message_attachment_ref(
+                attachment_id=attachment_id,
+                content_type=content_type,
+                filename=original_name,
+                size_bytes=size,
+                url=url,
+                context_key=context_key,
+            )
         ]
 
         try:
