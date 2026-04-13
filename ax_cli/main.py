@@ -17,6 +17,7 @@ from .commands import (
     keys,
     listen,
     messages,
+    mint,
     profile,
     spaces,
     tasks,
@@ -40,6 +41,7 @@ app.add_typer(profile.app, name="profile")
 app.add_typer(assign.app, name="assign")
 app.add_typer(spaces.app, name="spaces")
 app.add_typer(channel.app, name="channel")
+app.add_typer(mint.app, name="token")
 
 # Work management aliases — same engine, different intent
 app.add_typer(assign.app, name="ship", help="Ship work through an agent")
