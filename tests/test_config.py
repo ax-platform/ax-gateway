@@ -8,6 +8,7 @@ from ax_cli.config import (
     _global_config_dir,
     _load_config,
     _save_user_config,
+    diagnose_auth_config,
     resolve_agent_id,
     resolve_agent_name,
     resolve_base_url,
@@ -15,6 +16,21 @@ from ax_cli.config import (
     resolve_user_base_url,
     resolve_user_token,
 )
+
+
+def _write_active_profile(global_dir: Path, *, name: str = "next-orion") -> Path:
+    token_file = global_dir / "profiles" / name / "token"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text("axp_a_agent.secret")
+    (global_dir / "profiles" / ".active").write_text(f"{name}\n")
+    (global_dir / "profiles" / name / "profile.toml").write_text(
+        f'base_url = "https://next.paxai.app"\n'
+        f'agent_name = "orion"\n'
+        f'agent_id = "agent-orion"\n'
+        f'space_id = "next-space"\n'
+        f'token_file = "{token_file}"\n'
+    )
+    return token_file
 
 
 class TestFindProjectRoot:
@@ -216,6 +232,100 @@ class TestLoadConfig:
         assert cfg["principal_type"] == "user"
         assert "agent_name" not in cfg
         assert "agent_id" not in cfg
+
+
+class TestAuthDoctorDiagnostics:
+    def test_named_env_reports_user_login_as_effective_source(self, tmp_path, monkeypatch):
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
+        _save_user_config(
+            {
+                "token": "axp_u_dev.secret",
+                "base_url": "https://dev.paxai.app",
+                "principal_type": "user",
+                "space_id": "dev-space",
+            },
+            env_name="dev",
+            activate=False,
+        )
+
+        diagnostic = diagnose_auth_config(env_name="dev")
+
+        assert diagnostic["ok"] is True
+        assert diagnostic["selected_env"] == "dev"
+        assert diagnostic["effective"]["auth_source"] == "user_login:dev"
+        assert diagnostic["effective"]["base_url"] == "https://dev.paxai.app"
+        assert diagnostic["effective"]["host"] == "dev.paxai.app"
+        assert diagnostic["effective"]["space_id"] == "dev-space"
+        assert diagnostic["effective"]["principal_intent"] == "user"
+
+    def test_active_profile_reports_agent_runtime_source(self, tmp_path, monkeypatch):
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
+        _write_active_profile(global_dir)
+        isolated = tmp_path / "isolated"
+        isolated.mkdir()
+        monkeypatch.chdir(isolated)
+
+        diagnostic = diagnose_auth_config()
+
+        assert diagnostic["ok"] is True
+        assert diagnostic["selected_profile"] == "next-orion"
+        assert diagnostic["effective"]["auth_source"] == "active_profile:next-orion"
+        assert diagnostic["effective"]["token_kind"] == "agent_pat"
+        assert diagnostic["effective"]["principal_intent"] == "agent"
+        assert diagnostic["effective"]["space_id"] == "next-space"
+
+    def test_explicit_env_vars_report_environment_sources(self, tmp_path, monkeypatch):
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
+        monkeypatch.setenv("AX_TOKEN", "axp_a_env.secret")
+        monkeypatch.setenv("AX_BASE_URL", "https://env.paxai.app")
+        monkeypatch.setenv("AX_AGENT_NAME", "env-agent")
+        monkeypatch.setenv("AX_AGENT_ID", "env-agent-id")
+        monkeypatch.setenv("AX_SPACE_ID", "env-space")
+
+        diagnostic = diagnose_auth_config()
+
+        assert diagnostic["ok"] is True
+        assert diagnostic["effective"]["auth_source"] == "env:AX_TOKEN"
+        assert diagnostic["effective"]["base_url_source"] == "env:AX_BASE_URL"
+        assert diagnostic["effective"]["agent_name_source"] == "env:AX_AGENT_NAME"
+        assert diagnostic["effective"]["agent_id_source"] == "env:AX_AGENT_ID"
+        assert diagnostic["effective"]["space_source"] == "env:AX_SPACE_ID"
+        assert diagnostic["effective"]["host"] == "env.paxai.app"
+        assert diagnostic["effective"]["principal_intent"] == "agent"
+
+    def test_unsafe_local_config_reports_ignored_reason_and_uses_profile(self, tmp_path, monkeypatch):
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
+        _write_active_profile(global_dir)
+
+        local_ax = tmp_path / ".ax"
+        local_ax.mkdir()
+        (local_ax / "config.toml").write_text(
+            'token = "axp_u_user.secret"\n'
+            'base_url = "http://localhost:8002"\n'
+            'agent_name = "wire_tap"\n'
+            'agent_id = "agent-wire-tap"\n'
+            'space_id = "dev-space"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        diagnostic = diagnose_auth_config()
+
+        assert diagnostic["ok"] is True
+        assert diagnostic["effective"]["auth_source"] == "active_profile:next-orion"
+        assert diagnostic["effective"]["agent_name"] == "orion"
+        assert diagnostic["effective"]["space_id"] == "next-space"
+        assert any(warning["code"] == "unsafe_local_config_ignored" for warning in diagnostic["warnings"])
+        local_source = next(source for source in diagnostic["sources"] if source["name"] == "local_config")
+        assert local_source["ignored"] is True
+        assert "user PAT" in local_source["reason"]
 
 
 class TestResolveAgentId:

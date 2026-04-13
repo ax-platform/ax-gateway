@@ -12,6 +12,7 @@ from ..config import (
     _local_config_dir,
     _save_config,
     _save_user_config,
+    diagnose_auth_config,
     get_client,
     resolve_agent_name,
     resolve_token,
@@ -150,6 +151,45 @@ def login_user(
         console.print(f"  {k} = {v}")
 
     console.print("\n[cyan]You're ready.[/cyan] Try: ax auth whoami")
+
+
+@app.command("doctor")
+def doctor(
+    env_name: str = typer.Option(
+        None,
+        "--env",
+        help="Diagnose a named user-login environment created with `axctl login --env`",
+    ),
+    space_id: str = typer.Option(None, "--space-id", help="Show this explicit space override in the resolution"),
+    as_json: bool = JSON_OPTION,
+):
+    """Explain effective auth/config resolution without calling the API."""
+    data = diagnose_auth_config(env_name=env_name, explicit_space_id=space_id)
+    if as_json:
+        print_json(data)
+    else:
+        effective = data["effective"]
+        status = "[green]OK[/green]" if data["ok"] else "[red]PROBLEM[/red]"
+        console.print(f"[bold]aX auth doctor:[/bold] {status}")
+        console.print(f"  principal_intent = {effective.get('principal_intent')}")
+        console.print(f"  auth_source      = {effective.get('auth_source')}")
+        console.print(f"  token_kind       = {effective.get('token_kind')} ({effective.get('token')})")
+        console.print(f"  base_url         = {effective.get('base_url')} ({effective.get('base_url_source')})")
+        console.print(f"  host             = {effective.get('host')}")
+        console.print(f"  space_id         = {effective.get('space_id')} ({effective.get('space_source')})")
+        console.print(f"  agent_name       = {effective.get('agent_name')} ({effective.get('agent_name_source')})")
+        console.print(f"  agent_id         = {effective.get('agent_id')} ({effective.get('agent_id_source')})")
+        if data.get("selected_env"):
+            console.print(f"  selected_env     = {data['selected_env']}")
+        if data.get("selected_profile"):
+            console.print(f"  selected_profile = {data['selected_profile']}")
+        for warning in data.get("warnings", []):
+            console.print(f"[yellow]warning:[/yellow] {warning['code']} - {warning.get('reason')}")
+        for problem in data.get("problems", []):
+            console.print(f"[red]problem:[/red] {problem['code']} - {problem.get('reason')}")
+
+    if not data["ok"]:
+        raise typer.Exit(1)
 
 
 @app.command()

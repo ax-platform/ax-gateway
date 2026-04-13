@@ -39,6 +39,18 @@ axctl qa preflight --env dev --space-id <space-id> --for playwright --artifact .
 The preflight command runs the same contract suite as `contracts`, labels the
 downstream target, and can write a JSON artifact for CI or agent supervision.
 
+When preflight appears to target the wrong host, space, or principal, run:
+
+```bash
+axctl auth doctor --json
+axctl auth doctor --env dev --space-id <space-id> --json
+```
+
+The doctor command is the static instrument panel for credential/config
+resolution. It reports the effective auth source, selected env/profile, resolved
+host, resolved space, principal intent, and ignored local config reasons without
+calling the API.
+
 ## Harness Modes
 
 ### Read-only default

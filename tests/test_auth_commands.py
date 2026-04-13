@@ -221,3 +221,35 @@ def test_user_login_env_stores_named_login_and_marks_active(monkeypatch, write_c
         "environment": "dev",
     }
     assert (global_dir / "users" / ".active").read_text().strip() == "dev"
+
+
+def test_auth_doctor_json_outputs_diagnostics(monkeypatch):
+    monkeypatch.setattr(
+        auth,
+        "diagnose_auth_config",
+        lambda *, env_name, explicit_space_id: {
+            "ok": True,
+            "selected_env": env_name,
+            "selected_profile": None,
+            "effective": {
+                "auth_source": "user_login:dev",
+                "token_kind": "user_pat",
+                "token": "axp_u_...cret",
+                "base_url": "https://dev.paxai.app",
+                "base_url_source": "user_login:dev",
+                "host": "dev.paxai.app",
+                "space_id": explicit_space_id,
+                "space_source": "option:--space-id",
+                "principal_intent": "user",
+            },
+            "sources": [],
+            "warnings": [],
+            "problems": [],
+        },
+    )
+
+    result = runner.invoke(app, ["auth", "doctor", "--env", "dev", "--space-id", "space-1", "--json"])
+
+    assert result.exit_code == 0
+    assert '"auth_source": "user_login:dev"' in result.output
+    assert '"space_id": "space-1"' in result.output

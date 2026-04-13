@@ -12,6 +12,7 @@ import os
 import re
 import tomllib  # stdlib 3.11+
 from pathlib import Path
+from urllib.parse import urlparse
 
 import typer
 
@@ -226,6 +227,364 @@ def _load_active_profile_config() -> dict:
         except OSError:
             pass
     return cfg
+
+
+def _active_profile_name() -> str | None:
+    marker = _global_config_dir() / "profiles" / ".active"
+    if not marker.exists():
+        return None
+    name = marker.read_text().strip()
+    return name or None
+
+
+def _active_profile_path(name: str | None = None) -> Path | None:
+    profile_name = name or _active_profile_name()
+    if not profile_name:
+        return None
+    return _global_config_dir() / "profiles" / profile_name / "profile.toml"
+
+
+def _load_active_profile_diagnostic() -> tuple[str | None, Path | None, dict]:
+    name = _active_profile_name()
+    path = _active_profile_path(name)
+    if not name or not path or not path.exists():
+        return name, path, {}
+
+    profile = tomllib.loads(path.read_text())
+    cfg: dict = {}
+    if profile.get("base_url"):
+        cfg["base_url"] = profile["base_url"]
+    if "agent_name" in profile:
+        cfg["agent_name"] = profile.get("agent_name")
+    if "agent_id" in profile:
+        cfg["agent_id"] = profile.get("agent_id")
+    if profile.get("space_id"):
+        cfg["space_id"] = profile.get("space_id")
+
+    token_file = profile.get("token_file")
+    if token_file:
+        cfg["token_file"] = str(Path(token_file).expanduser())
+        try:
+            cfg["token"] = Path(token_file).expanduser().read_text().strip()
+        except OSError:
+            cfg["token_error"] = f"cannot read token_file: {token_file}"
+    return name, path, cfg
+
+
+def _token_kind(token: str | None) -> str:
+    if not token:
+        return "missing"
+    if token.startswith("axp_u_"):
+        return "user_pat"
+    if token.startswith("axp_a_"):
+        return "agent_pat"
+    if token.startswith("eyJ"):
+        return "jwt"
+    return "other"
+
+
+def _redact_token(token: str | None) -> str | None:
+    if not token:
+        return None
+    if len(token) <= 10:
+        return "***"
+    return f"{token[:6]}...{token[-4:]}"
+
+
+def _host_from_url(base_url: str | None) -> str | None:
+    if not base_url:
+        return None
+    parsed = urlparse(base_url)
+    return parsed.hostname or base_url
+
+
+def _source_record(
+    name: str,
+    *,
+    path: Path | None = None,
+    exists: bool,
+    used: bool = False,
+    ignored: bool = False,
+    reason: str | None = None,
+    keys: list[str] | None = None,
+) -> dict:
+    record = {
+        "name": name,
+        "exists": exists,
+        "used": used,
+        "ignored": ignored,
+    }
+    if path:
+        record["path"] = str(path)
+    if reason:
+        record["reason"] = reason
+    if keys:
+        record["keys"] = sorted(keys)
+    return record
+
+
+def diagnose_auth_config(*, env_name: str | None = None, explicit_space_id: str | None = None) -> dict:
+    """Return machine-readable auth/config resolution diagnostics.
+
+    This is intentionally static: it does not exchange tokens or call the API.
+    `ax qa preflight` is the runtime truth gate; this is the instrument panel
+    that explains which local inputs would feed that runtime path.
+    """
+
+    normalized_env = _normalize_user_env(env_name) if env_name else None
+    sources: list[dict] = []
+    warnings: list[dict] = []
+    problems: list[dict] = []
+    field_sources: dict[str, str] = {}
+    effective: dict[str, str | None] = {}
+
+    def apply_cfg(cfg: dict, source: str) -> None:
+        for key in ("token", "base_url", "agent_name", "agent_id", "space_id", "principal_type"):
+            if key in cfg:
+                value = cfg.get(key)
+                if value is not None:
+                    effective[key] = str(value)
+                else:
+                    effective.pop(key, None)
+                field_sources[key] = source
+
+    global_path = _global_config_dir() / "config.toml"
+    global_cfg = tomllib.loads(global_path.read_text()) if global_path.exists() else {}
+    global_cred_keys = sorted({"token", "token_file", "agent_id", "agent_name"} & set(global_cfg.keys()))
+    sources.append(
+        _source_record(
+            "global_config",
+            path=global_path,
+            exists=global_path.exists(),
+            used=not bool(normalized_env) and bool(global_cfg),
+            keys=list(global_cfg.keys()) if global_cfg else None,
+        )
+    )
+    if global_cred_keys:
+        warnings.append(
+            {
+                "code": "global_config_contains_credentials",
+                "path": str(global_path),
+                "keys": global_cred_keys,
+                "reason": "global config should only contain defaults such as base_url",
+            }
+        )
+
+    selected_profile_name, selected_profile_path, active_profile_cfg = _load_active_profile_diagnostic()
+    selected_user_env = normalized_env or _resolve_user_env()
+    user_cfg = _load_user_config(selected_user_env)
+    user_path = _user_config_path(selected_user_env)
+
+    local_dir = _local_config_dir()
+    local_path = (local_dir / "config.toml") if local_dir else None
+    local_cfg = tomllib.loads(local_path.read_text()) if local_path and local_path.exists() else {}
+    unsafe_local = bool(local_cfg and _is_unsafe_user_token_agent_config(local_cfg))
+
+    if normalized_env:
+        sources.append(
+            _source_record(
+                f"user_login:{normalized_env}",
+                path=user_path,
+                exists=user_path.exists(),
+                used=bool(user_cfg),
+                keys=list(user_cfg.keys()) if user_cfg else None,
+            )
+        )
+        if not user_cfg:
+            problems.append(
+                {
+                    "code": "missing_user_login_env",
+                    "reason": f"No user login found for env '{normalized_env}'",
+                }
+            )
+        else:
+            apply_cfg(user_cfg, f"user_login:{normalized_env}")
+            effective["principal_type"] = "user"
+            field_sources["principal_type"] = f"user_login:{normalized_env}"
+
+        if selected_profile_name:
+            sources.append(
+                _source_record(
+                    f"active_profile:{selected_profile_name}",
+                    path=selected_profile_path,
+                    exists=bool(selected_profile_path and selected_profile_path.exists()),
+                    ignored=True,
+                    reason="--env selects a named user login and bypasses active agent profiles",
+                    keys=list(active_profile_cfg.keys()) if active_profile_cfg else None,
+                )
+            )
+        if local_path:
+            reason = "--env selects a named user login and bypasses local runtime config"
+            if unsafe_local:
+                reason = "unsafe user PAT plus agent identity; also bypassed by --env"
+            sources.append(
+                _source_record(
+                    "local_config",
+                    path=local_path,
+                    exists=local_path.exists(),
+                    ignored=local_path.exists(),
+                    reason=reason if local_path.exists() else None,
+                    keys=list(local_cfg.keys()) if local_cfg else None,
+                )
+            )
+            if unsafe_local:
+                warnings.append(
+                    {
+                        "code": "unsafe_local_config_ignored",
+                        "path": str(local_path),
+                        "reason": "local config combines user PAT (axp_u_) with agent identity fields",
+                    }
+                )
+    else:
+        apply_cfg(global_cfg, "global_config")
+
+        sources.append(
+            _source_record(
+                f"user_login:{selected_user_env}" if selected_user_env else "user_login",
+                path=user_path,
+                exists=user_path.exists(),
+                used=bool(user_cfg),
+                keys=list(user_cfg.keys()) if user_cfg else None,
+            )
+        )
+        apply_cfg(user_cfg, f"user_login:{selected_user_env}" if selected_user_env else "user_login")
+
+        if selected_profile_name:
+            sources.append(
+                _source_record(
+                    f"active_profile:{selected_profile_name}",
+                    path=selected_profile_path,
+                    exists=bool(selected_profile_path and selected_profile_path.exists()),
+                    used=bool(active_profile_cfg),
+                    keys=list(active_profile_cfg.keys()) if active_profile_cfg else None,
+                )
+            )
+            apply_cfg(active_profile_cfg, f"active_profile:{selected_profile_name}")
+            if "principal_type" not in active_profile_cfg and _has_agent_identity(active_profile_cfg):
+                effective["principal_type"] = "agent"
+                field_sources["principal_type"] = f"active_profile:{selected_profile_name}"
+        else:
+            sources.append(
+                _source_record(
+                    "active_profile",
+                    path=selected_profile_path,
+                    exists=False,
+                    used=False,
+                )
+            )
+
+        if local_path:
+            if unsafe_local:
+                sources.append(
+                    _source_record(
+                        "local_config",
+                        path=local_path,
+                        exists=local_path.exists(),
+                        ignored=True,
+                        reason="local config combines user PAT (axp_u_) with agent identity fields",
+                        keys=list(local_cfg.keys()) if local_cfg else None,
+                    )
+                )
+                warnings.append(
+                    {
+                        "code": "unsafe_local_config_ignored",
+                        "path": str(local_path),
+                        "reason": "local config combines user PAT (axp_u_) with agent identity fields",
+                    }
+                )
+            else:
+                sources.append(
+                    _source_record(
+                        "local_config",
+                        path=local_path,
+                        exists=local_path.exists(),
+                        used=bool(local_cfg),
+                        keys=list(local_cfg.keys()) if local_cfg else None,
+                    )
+                )
+                apply_cfg(local_cfg, "local_config")
+                if "principal_type" not in local_cfg and _has_agent_identity(local_cfg):
+                    effective["principal_type"] = "agent"
+                    field_sources["principal_type"] = "local_config"
+
+    used_env_keys: list[str] = []
+    if not normalized_env:
+        env_overrides = {
+            "token": os.environ.get("AX_TOKEN"),
+            "base_url": os.environ.get("AX_BASE_URL"),
+            "agent_name": os.environ.get("AX_AGENT_NAME"),
+            "agent_id": os.environ.get("AX_AGENT_ID"),
+            "space_id": os.environ.get("AX_SPACE_ID"),
+        }
+        for key, value in env_overrides.items():
+            if value is None:
+                continue
+            used_env_keys.append(f"AX_{key.upper()}")
+            if key in {"agent_name", "agent_id"} and value.lower() in ("", "none", "null"):
+                effective.pop(key, None)
+            else:
+                effective[key] = value
+            field_sources[key] = f"env:AX_{key.upper()}"
+        if used_env_keys:
+            sources.append(
+                _source_record(
+                    "environment",
+                    exists=True,
+                    used=True,
+                    keys=used_env_keys,
+                )
+            )
+    if explicit_space_id:
+        effective["space_id"] = explicit_space_id
+        field_sources["space_id"] = "option:--space-id"
+
+    token = effective.get("token")
+    base_url = effective.get("base_url") or "http://localhost:8001"
+    token_kind = _token_kind(str(token) if token else None)
+    agent_identity_present = bool(effective.get("agent_id") or effective.get("agent_name"))
+    principal_type = effective.get("principal_type")
+    if token_kind == "user_pat" and agent_identity_present and principal_type != "user":
+        principal_intent = "mixed_user_token_agent_identity"
+        problems.append(
+            {
+                "code": "user_pat_with_agent_identity",
+                "reason": "effective config would combine user PAT with agent identity",
+            }
+        )
+    elif principal_type == "user" or token_kind == "user_pat":
+        principal_intent = "user"
+    elif principal_type == "agent" or token_kind == "agent_pat" or agent_identity_present:
+        principal_intent = "agent"
+    elif token_kind == "missing":
+        principal_intent = "missing"
+        problems.append({"code": "missing_token", "reason": "no token resolved"})
+    else:
+        principal_intent = "unknown"
+
+    return {
+        "ok": not problems,
+        "selected_env": normalized_env or selected_user_env,
+        "selected_profile": selected_profile_name,
+        "effective": {
+            "auth_source": field_sources.get("token"),
+            "token_kind": token_kind,
+            "token": _redact_token(str(token) if token else None),
+            "base_url": base_url,
+            "base_url_source": field_sources.get("base_url"),
+            "host": _host_from_url(base_url),
+            "space_id": effective.get("space_id"),
+            "space_source": field_sources.get("space_id"),
+            "agent_name": effective.get("agent_name"),
+            "agent_name_source": field_sources.get("agent_name"),
+            "agent_id": effective.get("agent_id"),
+            "agent_id_source": field_sources.get("agent_id"),
+            "principal_type": principal_type,
+            "principal_intent": principal_intent,
+        },
+        "sources": sources,
+        "warnings": warnings,
+        "problems": problems,
+    }
 
 
 def _load_config() -> dict:

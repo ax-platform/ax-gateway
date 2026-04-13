@@ -242,6 +242,17 @@ with `agent_id` or `agent_name`, because that stale hybrid would make agent
 commands run with user identity. Use `axctl login` for user setup and an
 agent PAT profile for agent runtime.
 
+Use `ax auth doctor` when config resolution is unclear:
+
+```bash
+ax auth doctor
+ax auth doctor --env dev --space-id <space-id> --json
+```
+
+The doctor command does not call the API. It reports the effective auth source,
+selected env/profile, resolved host and space, principal intent, and any ignored
+local config reason.
+
 ## Commands
 
 ### Regression Smoke
