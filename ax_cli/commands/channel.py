@@ -34,6 +34,7 @@ SEEN_MAX = 500
 class MentionEvent:
     message_id: str
     parent_id: str | None
+    conversation_id: str | None
     author: str
     prompt: str
     raw_content: str
@@ -120,6 +121,7 @@ class ChannelBridge:
                     "chat_id": event.space_id,
                     "message_id": event.message_id,
                     "parent_id": event.parent_id,
+                    "conversation_id": event.conversation_id,
                     "user": event.author,
                     "sender": event.author,
                     "source": "ax",
@@ -431,6 +433,7 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                         MentionEvent(
                             message_id=message_id,
                             parent_id=data.get("parent_id"),
+                            conversation_id=data.get("conversation_id"),
                             author=author,
                             prompt=prompt,
                             raw_content=data.get("content", ""),

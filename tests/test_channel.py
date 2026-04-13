@@ -83,6 +83,19 @@ def test_listener_treats_parent_reply_as_delivery_signal():
     assert _should_respond(data, "anvil", "agent-123", reply_anchor_ids=anchors) is True
 
 
+def test_listener_treats_conversation_reply_as_delivery_signal():
+    anchors = {"agent-message-1"}
+    data = {
+        "id": "reply-1",
+        "content": "I looked at this",
+        "conversation_id": "agent-message-1",
+        "author": {"id": "other-agent", "name": "orion", "type": "agent"},
+        "mentions": [],
+    }
+
+    assert _should_respond(data, "anvil", "agent-123", reply_anchor_ids=anchors) is True
+
+
 def test_listener_tracks_self_authored_messages_without_responding():
     anchors: set[str] = set()
     data = {

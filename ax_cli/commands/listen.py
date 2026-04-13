@@ -125,7 +125,8 @@ def _should_respond(
         return False
 
     parent_id = str(data.get("parent_id") or "")
-    if parent_id and reply_anchor_ids and parent_id in reply_anchor_ids:
+    conversation_id = str(data.get("conversation_id") or "")
+    if reply_anchor_ids and (parent_id in reply_anchor_ids or conversation_id in reply_anchor_ids):
         return True
 
     # Primary path: trust the backend's authoritative mentions list.
