@@ -299,7 +299,7 @@ class AxClient:
             headers["X-Agent-Id"] = agent_id
         return headers
 
-    def _parse_json(self, r: httpx.Response) -> dict:
+    def _parse_json(self, r: httpx.Response) -> dict | list[dict]:
         """Parse JSON response, raising a clear error if HTML is returned."""
         content_type = r.headers.get("content-type", "")
         if "text/html" in content_type or r.text.lstrip().startswith("<!"):
@@ -309,6 +309,34 @@ class AxClient:
                 response=r,
             )
         return r.json()
+
+    def _is_management_route_miss(self, r: httpx.Response) -> bool:
+        """Return true when a deploy/proxy missed a management route.
+
+        Some environments expose agent management at /api/v1/agents/manage/*,
+        while older/local mounts expose /agents/manage/*. Fall back only for
+        route-shape misses; authz/authn failures must remain visible.
+        """
+        content_type = r.headers.get("content-type", "")
+        if "text/html" in content_type or r.text.lstrip().startswith("<!"):
+            return True
+        return r.status_code in {404, 405}
+
+    def _management_json_with_fallback(self, method: str, paths: list[str], **kwargs) -> dict | list[dict]:
+        """Request JSON from the first live management route in paths."""
+        last_response: httpx.Response | None = None
+        for path in paths:
+            r = getattr(self._http, method)(path, **kwargs)
+            if self._is_management_route_miss(r):
+                last_response = r
+                continue
+            r.raise_for_status()
+            return self._parse_json(r)
+
+        if last_response is None:
+            raise RuntimeError("No management route paths provided")
+        last_response.raise_for_status()
+        return self._parse_json(last_response)
 
     # --- Identity ---
 
@@ -602,20 +630,25 @@ class AxClient:
         return {**self._base_headers, "Authorization": f"Bearer {jwt}"}
 
     def mgmt_create_agent(self, name: str, **kwargs) -> dict:
-        """POST /agents/manage/create — requires user_admin + agents.create."""
+        """Create an agent — requires user_admin + agents.create."""
         body: dict = {"name": name}
         for k in ("description", "system_prompt", "model", "space_id"):
             if k in kwargs and kwargs[k] is not None:
                 body[k] = kwargs[k]
-        r = self._http.post("/agents/manage/create", json=body, headers=self._admin_headers("agents.create"))
-        r.raise_for_status()
-        return self._parse_json(r)
+        return self._management_json_with_fallback(
+            "post",
+            ["/api/v1/agents/manage/create", "/agents/manage/create"],
+            json=body,
+            headers=self._admin_headers("agents.create"),
+        )
 
     def mgmt_list_agents(self) -> list[dict]:
-        """GET /agents/manage/list — requires user_admin + agents.create."""
-        r = self._http.get("/agents/manage/list", headers=self._admin_headers("agents.create"))
-        r.raise_for_status()
-        return self._parse_json(r)
+        """List manageable agents — requires user_admin + agents.create."""
+        return self._management_json_with_fallback(
+            "get",
+            ["/api/v1/agents/manage/list", "/agents/manage/list"],
+            headers=self._admin_headers("agents.create"),
+        )
 
     def mgmt_update_agent(self, agent_id: str, **fields) -> dict:
         """PATCH /agents/manage/{id} — requires user_admin + agents.create."""

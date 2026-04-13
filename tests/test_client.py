@@ -82,6 +82,17 @@ class TestTokenClassSelection:
 class TestCredentialManagement:
     """Verify credential management request payloads."""
 
+    def _response(self, method: str, url: str, status_code: int, *, json=None, text: str | None = None):
+        request = httpx.Request(method, url)
+        if text is not None:
+            return httpx.Response(
+                status_code,
+                text=text,
+                headers={"content-type": "text/html; charset=utf-8"},
+                request=request,
+            )
+        return httpx.Response(status_code, json=json or {}, request=request)
+
     def test_create_key_with_allowed_agents_sets_agent_scope(self):
         client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
         response = httpx.Response(
@@ -126,6 +137,124 @@ class TestCredentialManagement:
 
         body = client._http.post.call_args.kwargs["json"]
         assert body["audience"] == "both"
+
+    def test_mgmt_create_agent_prefers_api_v1_route(self):
+        client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
+        client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})
+        client._http.post = MagicMock(
+            return_value=self._response(
+                "POST",
+                "https://example.com/api/v1/agents/manage/create",
+                201,
+                json={"agent": {"id": "agent-123", "name": "new-agent"}},
+            )
+        )
+
+        result = client.mgmt_create_agent("new-agent")
+
+        assert result["agent"]["id"] == "agent-123"
+        assert client._http.post.call_args.args[0] == "/api/v1/agents/manage/create"
+
+    def test_mgmt_create_agent_falls_back_to_legacy_route_on_route_miss(self):
+        client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
+        client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})
+        client._http.post = MagicMock(
+            side_effect=[
+                self._response(
+                    "POST",
+                    "https://example.com/api/v1/agents/manage/create",
+                    404,
+                    json={"detail": "Not Found"},
+                ),
+                self._response(
+                    "POST",
+                    "https://example.com/agents/manage/create",
+                    201,
+                    json={"agent": {"id": "agent-123", "name": "new-agent"}},
+                ),
+            ]
+        )
+
+        result = client.mgmt_create_agent("new-agent")
+
+        assert result["agent"]["id"] == "agent-123"
+        assert [call.args[0] for call in client._http.post.call_args_list] == [
+            "/api/v1/agents/manage/create",
+            "/agents/manage/create",
+        ]
+
+    def test_mgmt_create_agent_falls_back_when_frontend_catches_route(self):
+        client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
+        client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})
+        client._http.post = MagicMock(
+            side_effect=[
+                self._response(
+                    "POST",
+                    "https://example.com/api/v1/agents/manage/create",
+                    200,
+                    text="<!DOCTYPE html><html></html>",
+                ),
+                self._response(
+                    "POST",
+                    "https://example.com/agents/manage/create",
+                    201,
+                    json={"agent": {"id": "agent-123", "name": "new-agent"}},
+                ),
+            ]
+        )
+
+        result = client.mgmt_create_agent("new-agent")
+
+        assert result["agent"]["id"] == "agent-123"
+        assert [call.args[0] for call in client._http.post.call_args_list] == [
+            "/api/v1/agents/manage/create",
+            "/agents/manage/create",
+        ]
+
+    def test_mgmt_create_agent_does_not_fallback_on_auth_failure(self):
+        client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
+        client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})
+        client._http.post = MagicMock(
+            return_value=self._response(
+                "POST",
+                "https://example.com/api/v1/agents/manage/create",
+                401,
+                json={"detail": "Not authenticated"},
+            )
+        )
+
+        with pytest.raises(httpx.HTTPStatusError):
+            client.mgmt_create_agent("new-agent")
+
+        assert client._http.post.call_count == 1
+
+    def test_mgmt_list_agents_falls_back_to_legacy_route_on_route_miss(self):
+        client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
+        client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})
+        client._http.get = MagicMock(
+            side_effect=[
+                self._response(
+                    "GET",
+                    "https://example.com/api/v1/agents/manage/list",
+                    405,
+                    json={"detail": "Method Not Allowed"},
+                ),
+                self._response(
+                    "GET",
+                    "https://example.com/agents/manage/list",
+                    200,
+                    json=[{"id": "agent-123", "name": "new-agent"}],
+                ),
+            ]
+        )
+
+        result = client.mgmt_list_agents()
+
+        assert result == [{"id": "agent-123", "name": "new-agent"}]
+        assert [call.args[0] for call in client._http.get.call_args_list] == [
+            "/api/v1/agents/manage/list",
+            "/agents/manage/list",
+        ]
 
     def test_agent_pat_without_agent_id_uses_user_access(self, tmp_path, monkeypatch, mock_exchange):
         """Agent PAT without agent_id falls back to user_access."""
