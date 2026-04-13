@@ -21,6 +21,47 @@ app = typer.Typer(name="auth", help="Authentication & identity", no_args_is_help
 token_app = typer.Typer(name="token", help="Token management", no_args_is_help=True)
 app.add_typer(token_app, name="token")
 
+DEFAULT_LOGIN_BASE_URL = "https://next.paxai.app"
+
+
+def _resolve_login_token(token: str | None) -> str:
+    """Return an explicit token or prompt for one without echoing it."""
+    if token and token.strip():
+        return token.strip()
+
+    console.print("[cyan]Paste your aX token. Input is hidden.[/cyan]")
+    entered = typer.prompt("Token", hide_input=True).strip()
+    if not entered:
+        console.print("[red]Token required.[/red] Get one from Settings > Credentials in the UI.")
+        raise typer.Exit(1)
+    return entered
+
+
+def _candidate_space_id(space: dict) -> str | None:
+    value = space.get("id", space.get("space_id"))
+    return str(value) if value else None
+
+
+def _select_login_space(space_list: list[dict]) -> dict | None:
+    """Pick only an unambiguous default; login itself should not force space setup."""
+    if len(space_list) == 1:
+        return space_list[0]
+
+    for key in ("is_current", "current", "is_default", "default"):
+        matches = [space for space in space_list if space.get(key) is True]
+        if len(matches) == 1:
+            return matches[0]
+
+    personal = [
+        space
+        for space in space_list
+        if space.get("is_personal") is True or str(space.get("space_mode", "")).lower() == "personal"
+    ]
+    if len(personal) == 1:
+        return personal[0]
+
+    return None
+
 
 @app.command()
 def whoami(as_json: bool = JSON_OPTION):
@@ -61,33 +102,30 @@ def whoami(as_json: bool = JSON_OPTION):
 
 @app.command("init")
 def init(
-    token: str = typer.Option(None, "--token", "-t", help="PAT token (axp_u_... or axp_a_...)"),
-    base_url: str = typer.Option("http://localhost:8002", "--url", "-u", help="API base URL"),
+    token: str = typer.Option(None, "--token", "-t", help="PAT token (prompted securely if omitted)"),
+    base_url: str = typer.Option(DEFAULT_LOGIN_BASE_URL, "--url", "-u", help="API base URL"),
     agent: str = typer.Option(None, "--agent", "-a", help="Agent name or ID (auto-detected if not set)"),
-    space_id: str = typer.Option(None, "--space-id", "-s", help="Space ID (auto-detected if not set)"),
+    space_id: str = typer.Option(None, "--space-id", "-s", help="Optional default space ID"),
 ):
     """Set up authentication for this project.
 
     Just provide your PAT — everything else is auto-discovered:
 
     \b
-        ax auth init --token axp_u_...
-        ax auth init --token axp_u_... --url https://next.paxai.app
+        ax login
+        ax login --url https://next.paxai.app
 
     The CLI will:
     1. Verify the token works (exchange it for a JWT)
     2. Discover your identity, spaces, and agents
-    3. Auto-select defaults if there's only one option
+    3. Auto-select a default space only when it is unambiguous
     4. Save everything to .ax/config.toml
 
     After init, all commands just work — no flags needed.
     """
     from pathlib import Path
 
-    if not token:
-        console.print("[red]Token required.[/red] Get one from Settings > Credentials in the UI.")
-        console.print("  ax auth init --token axp_u_YOUR_TOKEN_HERE")
-        raise typer.Exit(1)
+    token = _resolve_login_token(token)
 
     # --agent accepts both name and UUID
     import re
@@ -267,13 +305,18 @@ def init(
             try:
                 spaces = client.list_spaces()
                 space_list = spaces.get("spaces", spaces) if isinstance(spaces, dict) else spaces
-                if isinstance(space_list, list) and len(space_list) == 1:
-                    cfg["space_id"] = str(space_list[0].get("id"))
-                    console.print(f"[green]Space:[/green] {space_list[0].get('name')} (auto-selected)")
-                elif isinstance(space_list, list) and len(space_list) > 1:
-                    console.print(f"\n[yellow]{len(space_list)} spaces found.[/yellow] Use --space-id to pick one:")
-                    for s in space_list[:5]:
-                        console.print(f"  {s.get('name')} — {s.get('id')}")
+                if isinstance(space_list, list):
+                    selected_space = _select_login_space([s for s in space_list if isinstance(s, dict)])
+                    if selected_space:
+                        selected_id = _candidate_space_id(selected_space)
+                        if selected_id:
+                            cfg["space_id"] = selected_id
+                            console.print(f"[green]Space:[/green] {selected_space.get('name', selected_id)}")
+                    elif len(space_list) > 1:
+                        console.print(
+                            f"\n[yellow]{len(space_list)} spaces found.[/yellow] "
+                            "No default space selected during login."
+                        )
             except Exception:
                 pass
 

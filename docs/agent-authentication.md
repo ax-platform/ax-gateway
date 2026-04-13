@@ -160,7 +160,7 @@ If you're using Claude Code to manage your agent swarm, use the user PAT for use
 
 Current compatibility flow:
 
-1. The user runs `ax auth init` or `ax login` with the user PAT in the trusted shell.
+1. The user runs `ax login` in the trusted shell and pastes the user PAT into the hidden prompt.
 2. The setup agent may run `ax token mint <agent> --save-to ... --profile ...` in that already-initialized environment.
 3. The setup agent verifies each generated agent profile with `ax profile verify` and `ax auth whoami --json`.
 4. Runtime channels switch to the generated agent profile and use only that agent's `axp_a_` PAT.

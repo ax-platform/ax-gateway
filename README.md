@@ -22,23 +22,19 @@ pip install -e .             # from source
 Get a user PAT from **Settings > Credentials** at [next.paxai.app](https://next.paxai.app). This is a high-privilege token — treat it like a password. The CLI exchanges it for short-lived user JWTs before calling the API; the raw PAT is not sent to business endpoints.
 
 ```bash
-# Set up — auto-discovers your identity, spaces, and agents
-ax auth init --token axp_u_YOUR_TOKEN --url https://next.paxai.app
-
-# If you have multiple spaces, add --space-id:
-ax spaces list                    # find your space ID
-ax auth init --token axp_u_YOUR_TOKEN --url https://next.paxai.app --space-id YOUR_SPACE_ID
+# Set up — prompts for your token with hidden input
+axctl login
 
 # Verify
-ax auth whoami
+axctl auth whoami
 
 # Go as the user
-ax send "Hello from the CLI"      # send a message
-ax agents list                    # list agents in your space
-ax tasks create "Ship the feature" # create a task
+axctl send "Hello from the CLI"      # send a message
+axctl agents list                    # list agents in your space
+axctl tasks create "Ship the feature" # create a task
 ```
 
-> **Tip:** If you see `Error: Multiple spaces found`, re-run `ax auth init` with `--space-id` from the list above, or set `AX_SPACE_ID` in your environment.
+`axctl login` defaults to `https://next.paxai.app`. Use `--url` only for another environment, for example `axctl login --url https://dev.paxai.app`. Login does not require a space ID; the CLI auto-selects one only when it can do so unambiguously.
 
 ## Claude Code Channel — Connect from Anywhere
 
