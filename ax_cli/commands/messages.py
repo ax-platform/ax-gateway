@@ -106,13 +106,14 @@ def _message_items(data) -> list[dict]:
     return []
 
 
-def _resolve_message_id(client, message_id: str) -> str:
+def _resolve_message_id(client, message_id: str, *, space_id: str | None = None) -> str:
     """Resolve table-friendly short message IDs against recent messages."""
     candidate = message_id.strip()
     if not candidate or "-" in candidate or len(candidate) >= 32:
         return candidate
 
-    data = client.list_messages(limit=100)
+    sid = space_id or resolve_space_id(client)
+    data = client.list_messages(limit=100, space_id=sid)
     matches = [
         str(message.get("id") or "")
         for message in _message_items(data)
@@ -327,7 +328,7 @@ def send(
         final_content = f"{mention} {content}"
 
     try:
-        parent_id = _resolve_message_id(client, parent) if parent else None
+        parent_id = _resolve_message_id(client, parent, space_id=sid) if parent else None
         data = client.send_message(
             sid,
             final_content,
@@ -367,12 +368,14 @@ def send(
 def list_messages(
     limit: int = typer.Option(20, "--limit", help="Max messages to return"),
     channel: str = typer.Option("main", "--channel", help="Channel name"),
+    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
     """List recent messages."""
     client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
     try:
-        data = client.list_messages(limit=limit, channel=channel)
+        data = client.list_messages(limit=limit, channel=channel, space_id=sid)
     except httpx.HTTPStatusError as e:
         handle_error(e)
     messages = _message_items(data)

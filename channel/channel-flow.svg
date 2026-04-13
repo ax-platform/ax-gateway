@@ -1,149 +1,107 @@
 <svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">aX Channel flow diagram</title>
-  <desc id="desc">One message from anywhere reaches Claude Code, which coordinates an entire agent network, then returns a reply to the user.</desc>
+  <title id="title">aX Channel listener flow</title>
+  <desc id="desc">A clean view of the aX channel runtime: a space message is streamed over versioned SSE to an agent channel, delivered to Claude Code, and replies back to the same thread.</desc>
 
   <defs>
-    <linearGradient id="bg" x1="120" y1="80" x2="1480" y2="820" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0B1020"/>
-      <stop offset="0.55" stop-color="#111A30"/>
-      <stop offset="1" stop-color="#0A1326"/>
+    <linearGradient id="bg" x1="120" y1="40" x2="1480" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07111F"/>
+      <stop offset="0.52" stop-color="#0B1F2D"/>
+      <stop offset="1" stop-color="#111827"/>
     </linearGradient>
-    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
-      <stop stop-color="#111A30"/>
-      <stop offset="1" stop-color="#0D1528"/>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10263A"/>
+      <stop offset="1" stop-color="#0A1724"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#6EE7F9"/>
-      <stop offset="0.5" stop-color="#7C8CFF"/>
-      <stop offset="1" stop-color="#A855F7"/>
+    <linearGradient id="cardAlt" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#123229"/>
+      <stop offset="1" stop-color="#0D1D2B"/>
     </linearGradient>
-    <linearGradient id="accentSoft" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#113845"/>
-      <stop offset="1" stop-color="#28163F"/>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#5EEAD4"/>
+      <stop offset="0.55" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#93C5FD"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#020617" flood-opacity="0.45"/>
+    <linearGradient id="reply" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#FB7185"/>
+    </linearGradient>
+    <filter id="shadow" x="-16%" y="-20%" width="132%" height="148%">
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#020617" flood-opacity="0.42"/>
     </filter>
-    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="0" stdDeviation="18" flood-color="#60A5FA" flood-opacity="0.28"/>
+    <filter id="glow" x="-35%" y="-35%" width="170%" height="170%">
+      <feDropShadow dx="0" dy="0" stdDeviation="20" flood-color="#38BDF8" flood-opacity="0.20"/>
     </filter>
     <marker id="arrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
-      <path d="M1 1L13 7L1 13" fill="none" stroke="#77E4F7" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M2 2L12 7L2 12" fill="none" stroke="#7DD3FC" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
-    <marker id="arrowReturn" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
-      <path d="M1 1L13 7L1 13" fill="none" stroke="#C084FC" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <marker id="replyArrow" markerWidth="14" markerHeight="14" refX="12" refY="7" orient="auto" markerUnits="strokeWidth">
+      <path d="M2 2L12 7L2 12" fill="none" stroke="#F59E0B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
   </defs>
 
-  <rect width="1600" height="900" rx="32" fill="url(#bg)"/>
-  <circle cx="1410" cy="118" r="180" fill="#1D4ED8" opacity="0.10"/>
-  <circle cx="214" cy="760" r="220" fill="#9333EA" opacity="0.10"/>
-  <circle cx="820" cy="450" r="320" fill="#06B6D4" opacity="0.05"/>
+  <rect width="1600" height="900" rx="34" fill="url(#bg)"/>
+  <circle cx="220" cy="160" r="260" fill="#14B8A6" opacity="0.08"/>
+  <circle cx="1390" cy="720" r="310" fill="#2563EB" opacity="0.10"/>
+  <circle cx="790" cy="440" r="430" fill="#0EA5E9" opacity="0.04"/>
 
-  <text x="120" y="96" fill="#E5EEF9" font-size="42" font-family="Inter, Arial, sans-serif" font-weight="700">aX Channel</text>
-  <text x="120" y="134" fill="#9FB0C9" font-size="22" font-family="Inter, Arial, sans-serif">One message from anywhere reaches Claude Code, which coordinates an entire agent network.</text>
+  <text x="96" y="104" fill="#F8FAFC" font-family="Aptos, Inter, Arial, sans-serif" font-size="48" font-weight="800">aX Channel Listener</text>
+  <text x="98" y="144" fill="#A7B8CC" font-family="Aptos, Inter, Arial, sans-serif" font-size="22">Agent-owned token, explicit space binding, threaded replies.</text>
 
-  <rect x="86" y="194" width="1428" height="498" rx="34" fill="rgba(10,16,32,0.28)" stroke="rgba(148,163,184,0.14)"/>
+  <rect x="84" y="188" width="1432" height="438" rx="32" fill="#06111E" opacity="0.42" stroke="#24445F" stroke-opacity="0.55"/>
 
-  <!-- Phone / Mobile -->
   <g filter="url(#shadow)">
-    <rect x="110" y="290" width="228" height="268" rx="34" fill="url(#panel)" stroke="rgba(125,211,252,0.32)" stroke-width="2"/>
-    <rect x="139" y="324" width="170" height="176" rx="22" fill="#0A1020" stroke="rgba(148,163,184,0.18)"/>
-    <circle cx="224" cy="525" r="12" fill="#17233B" stroke="rgba(148,163,184,0.24)"/>
-    <rect x="194" y="305" width="60" height="7" rx="3.5" fill="#24324C"/>
-    <path d="M168 384C168 371.85 177.85 362 190 362H258C270.15 362 280 371.85 280 384V398C280 410.15 270.15 420 258 420H224L199 439V420H190C177.85 420 168 410.15 168 398V384Z" fill="url(#accentSoft)" stroke="rgba(110,231,249,0.32)"/>
-    <text x="154" y="590" fill="#F8FAFC" font-size="24" font-family="Inter, Arial, sans-serif" font-weight="700">Phone / Mobile</text>
-    <text x="150" y="620" fill="#9FB0C9" font-size="18" font-family="Inter, Arial, sans-serif">Message sent from anywhere</text>
-  </g>
-  <g filter="url(#softGlow)">
-    <path d="M164 212C164 196.536 176.536 184 192 184H410C425.464 184 438 196.536 438 212V256C438 271.464 425.464 284 410 284H292L248 320V284H192C176.536 284 164 271.464 164 256V212Z" fill="#F8FAFC"/>
-    <text x="192" y="232" fill="#0F172A" font-size="20" font-family="Inter, Arial, sans-serif" font-weight="700">@orion check deploy status</text>
-    <text x="192" y="257" fill="#475569" font-size="16" font-family="Inter, Arial, sans-serif">Mention posted from the aX interface</text>
+    <rect x="128" y="270" width="250" height="230" rx="28" fill="url(#card)" stroke="#2DD4BF" stroke-opacity="0.34"/>
+    <text x="158" y="326" fill="#E6FFFB" font-family="Aptos, Inter, Arial, sans-serif" font-size="27" font-weight="800">aX Space</text>
+    <text x="158" y="366" fill="#9BC5D6" font-family="Aptos, Inter, Arial, sans-serif" font-size="17">message or reply</text>
+    <rect x="158" y="404" width="164" height="44" rx="14" fill="#082033" stroke="#214C65"/>
+    <text x="180" y="432" fill="#E0F2FE" font-family="Aptos, Inter, Arial, sans-serif" font-size="16">@agent mention</text>
   </g>
 
-  <!-- aX Platform -->
   <g filter="url(#shadow)">
-    <rect x="430" y="300" width="252" height="248" rx="30" fill="url(#panel)" stroke="rgba(125,211,252,0.32)" stroke-width="2"/>
-    <path d="M492 396C495 365 521 342 553 342C579 342 601 357 610 380C613 379 617 378 621 378C645 378 664 397 664 421C664 445 645 464 621 464H499C474 464 454 444 454 419C454 397 470 380 492 377V396Z" fill="url(#accentSoft)" stroke="rgba(110,231,249,0.3)"/>
-    <path d="M520 438H598" stroke="#77E4F7" stroke-width="5" stroke-linecap="round"/>
-    <path d="M544 414H576" stroke="#A5B4FC" stroke-width="5" stroke-linecap="round"/>
-    <text x="488" y="590" fill="#F8FAFC" font-size="27" font-family="Inter, Arial, sans-serif" font-weight="700">aX Platform</text>
-    <text x="488" y="620" fill="#9FB0C9" font-size="18" font-family="Inter, Arial, sans-serif">next.paxai.app</text>
+    <rect x="492" y="270" width="250" height="230" rx="28" fill="url(#card)" stroke="#38BDF8" stroke-opacity="0.34"/>
+    <text x="522" y="326" fill="#E0F2FE" font-family="Aptos, Inter, Arial, sans-serif" font-size="27" font-weight="800">SSE Stream</text>
+    <text x="522" y="366" fill="#9BC5D6" font-family="Aptos, Inter, Arial, sans-serif" font-size="17">/api/v1/sse/messages</text>
+    <rect x="522" y="404" width="158" height="44" rx="14" fill="#082033" stroke="#214C65"/>
+    <text x="544" y="432" fill="#E0F2FE" font-family="Aptos, Inter, Arial, sans-serif" font-size="16">space_id bound</text>
   </g>
 
-  <!-- ax-channel -->
   <g filter="url(#shadow)">
-    <rect x="770" y="300" width="252" height="248" rx="30" fill="url(#panel)" stroke="rgba(125,211,252,0.32)" stroke-width="2"/>
-    <rect x="830" y="350" width="134" height="108" rx="18" fill="#0A1020" stroke="rgba(148,163,184,0.22)"/>
-    <path d="M852 380H942" stroke="#77E4F7" stroke-width="4" stroke-linecap="round"/>
-    <path d="M852 406H942" stroke="#A78BFA" stroke-width="4" stroke-linecap="round" stroke-dasharray="10 10"/>
-    <path d="M852 432H912" stroke="#77E4F7" stroke-width="4" stroke-linecap="round"/>
-    <circle cx="949" cy="432" r="10" fill="#77E4F7"/>
-    <text x="830" y="590" fill="#F8FAFC" font-size="27" font-family="Inter, Arial, sans-serif" font-weight="700">ax-channel</text>
-    <text x="830" y="620" fill="#9FB0C9" font-size="18" font-family="Inter, Arial, sans-serif">SSE + MCP SDK</text>
+    <rect x="856" y="270" width="250" height="230" rx="28" fill="url(#cardAlt)" stroke="#A3E635" stroke-opacity="0.30"/>
+    <text x="886" y="326" fill="#ECFCCB" font-family="Aptos, Inter, Arial, sans-serif" font-size="27" font-weight="800">ax-channel</text>
+    <text x="886" y="366" fill="#BBD6BF" font-family="Aptos, Inter, Arial, sans-serif" font-size="17">agent PAT -> JWT</text>
+    <rect x="886" y="404" width="170" height="44" rx="14" fill="#0B221D" stroke="#2F5444"/>
+    <text x="908" y="432" fill="#ECFCCB" font-family="Aptos, Inter, Arial, sans-serif" font-size="16">self-filter + queue</text>
   </g>
 
-  <!-- Claude Code -->
   <g filter="url(#shadow)">
-    <rect x="1110" y="300" width="252" height="248" rx="30" fill="url(#panel)" stroke="rgba(125,211,252,0.32)" stroke-width="2"/>
-    <rect x="1162" y="350" width="148" height="100" rx="16" fill="#091120" stroke="rgba(148,163,184,0.2)"/>
-    <circle cx="1190" cy="380" r="5" fill="#FB7185"/>
-    <circle cx="1210" cy="380" r="5" fill="#FBBF24"/>
-    <circle cx="1230" cy="380" r="5" fill="#34D399"/>
-    <path d="M1188 414L1210 434L1252 392" stroke="#77E4F7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="1160" y="590" fill="#F8FAFC" font-size="27" font-family="Inter, Arial, sans-serif" font-weight="700">Claude Code</text>
-    <text x="1160" y="620" fill="#9FB0C9" font-size="18" font-family="Inter, Arial, sans-serif">Channel message arrives in-session</text>
+    <rect x="1220" y="270" width="250" height="230" rx="28" fill="url(#card)" stroke="#93C5FD" stroke-opacity="0.36"/>
+    <text x="1250" y="326" fill="#EFF6FF" font-family="Aptos, Inter, Arial, sans-serif" font-size="27" font-weight="800">Claude Code</text>
+    <text x="1250" y="366" fill="#A7B8CC" font-family="Aptos, Inter, Arial, sans-serif" font-size="17">MCP channel event</text>
+    <rect x="1250" y="404" width="158" height="44" rx="14" fill="#082033" stroke="#214C65"/>
+    <text x="1272" y="432" fill="#E0F2FE" font-family="Aptos, Inter, Arial, sans-serif" font-size="16">reply tool</text>
   </g>
 
-  <!-- Message arrival bubble -->
-  <g>
-    <path d="M1092 210C1092 194.536 1104.54 182 1120 182H1396C1411.46 182 1424 194.536 1424 210V254C1424 269.464 1411.46 282 1396 282H1288L1244 318V282H1120C1104.54 282 1092 269.464 1092 254V210Z" fill="#EEF6FF" opacity="0.98"/>
-    <text x="1120" y="230" fill="#0F172A" font-size="20" font-family="Inter, Arial, sans-serif" font-weight="700">Incoming message</text>
-    <text x="1120" y="255" fill="#334155" font-size="17" font-family="Inter, Arial, sans-serif">“@orion check deploy status”</text>
+  <path d="M380 385H486" stroke="url(#line)" stroke-width="7" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="405" y="356" fill="#9BDCF2" font-family="Aptos, Inter, Arial, sans-serif" font-size="16" font-weight="700">event</text>
+  <path d="M744 385H850" stroke="url(#line)" stroke-width="7" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="766" y="356" fill="#9BDCF2" font-family="Aptos, Inter, Arial, sans-serif" font-size="16" font-weight="700">push</text>
+  <path d="M1108 385H1214" stroke="url(#line)" stroke-width="7" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="1128" y="356" fill="#9BDCF2" font-family="Aptos, Inter, Arial, sans-serif" font-size="16" font-weight="700">deliver</text>
+
+  <path d="M1345 504C1300 592 1120 648 800 648C480 648 276 594 252 504" stroke="url(#reply)" stroke-width="5" stroke-linecap="round" stroke-dasharray="14 14" marker-end="url(#replyArrow)"/>
+  <text x="602" y="692" fill="#FED7AA" font-family="Aptos, Inter, Arial, sans-serif" font-size="19" font-weight="700">Reply posts back with parent_id; runtime history stays separate.</text>
+
+  <g filter="url(#glow)">
+    <rect x="138" y="688" width="594" height="110" rx="24" fill="#071827" stroke="#1F5672"/>
+    <text x="170" y="728" fill="#E0F2FE" font-family="Aptos, Inter, Arial, sans-serif" font-size="21" font-weight="800">Credential rule</text>
+    <text x="170" y="762" fill="#A7B8CC" font-family="Aptos, Inter, Arial, sans-serif" font-size="18">Channel runtime uses an agent PAT. User tokens are bootstrap/admin credentials.</text>
   </g>
 
-  <!-- Flow arrows -->
-  <path d="M340 424C372 424 394 424 430 424" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <text x="360" y="394" fill="#9FB0C9" font-size="15" font-family="Inter, Arial, sans-serif">mention event</text>
-  <path d="M684 424C716 424 738 424 770 424" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <text x="720" y="394" fill="#9FB0C9" font-size="15" font-family="Inter, Arial, sans-serif">real-time stream</text>
-  <path d="M1024 424C1056 424 1078 424 1110 424" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <text x="1048" y="394" fill="#9FB0C9" font-size="15" font-family="Inter, Arial, sans-serif">bridge into Claude Code</text>
-
-  <!-- Agent network -->
-  <g>
-    <rect x="1068" y="682" width="336" height="144" rx="28" fill="rgba(12,20,38,0.55)" stroke="rgba(148,163,184,0.14)"/>
-    <text x="1098" y="718" fill="#C7D2FE" font-size="18" font-family="Inter, Arial, sans-serif" font-weight="700">Delegation to specialist agents</text>
-
-    <rect x="1094" y="742" width="90" height="48" rx="14" fill="#101B31" stroke="rgba(110,231,249,0.28)"/>
-    <text x="1110" y="771" fill="#E5EEF9" font-size="14" font-family="Inter, Arial, sans-serif" font-weight="600">frontend</text>
-    <text x="1109" y="787" fill="#8EA2C5" font-size="12" font-family="Inter, Arial, sans-serif">sentinel</text>
-
-    <rect x="1191" y="742" width="90" height="48" rx="14" fill="#101B31" stroke="rgba(110,231,249,0.28)"/>
-    <text x="1208" y="771" fill="#E5EEF9" font-size="14" font-family="Inter, Arial, sans-serif" font-weight="600">backend</text>
-    <text x="1207" y="787" fill="#8EA2C5" font-size="12" font-family="Inter, Arial, sans-serif">sentinel</text>
-
-    <rect x="1288" y="742" width="90" height="48" rx="14" fill="#101B31" stroke="rgba(110,231,249,0.28)"/>
-    <text x="1314" y="771" fill="#E5EEF9" font-size="14" font-family="Inter, Arial, sans-serif" font-weight="600">mcp</text>
-    <text x="1304" y="787" fill="#8EA2C5" font-size="12" font-family="Inter, Arial, sans-serif">sentinel</text>
+  <g filter="url(#glow)">
+    <rect x="868" y="688" width="594" height="110" rx="24" fill="#071827" stroke="#1F5672"/>
+    <text x="900" y="728" fill="#E0F2FE" font-family="Aptos, Inter, Arial, sans-serif" font-size="21" font-weight="800">Attachment rule</text>
+    <text x="900" y="762" fill="#A7B8CC" font-family="Aptos, Inter, Arial, sans-serif" font-size="18">Share files as message signals backed by context_key metadata.</text>
   </g>
 
-  <path d="M1236 550V614" stroke="#77E4F7" stroke-width="5" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M1236 614C1236 650 1160 680 1140 742" stroke="#77E4F7" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M1236 614C1236 660 1236 684 1236 742" stroke="#77E4F7" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-  <path d="M1236 614C1236 650 1312 680 1334 742" stroke="#77E4F7" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
-
-  <!-- Return path -->
-  <path d="M120 742H134C190 742 236 696 236 640V618" stroke="#C084FC" stroke-width="3" stroke-dasharray="10 12" stroke-linecap="round" opacity="0.0"/>
-  <path d="M1236 814C1040 860 720 854 456 810C314 786 224 734 224 614" stroke="#C084FC" stroke-width="5" stroke-dasharray="14 12" stroke-linecap="round" marker-end="url(#arrowReturn)"/>
-  <text x="628" y="834" fill="#D8B4FE" font-size="18" font-family="Inter, Arial, sans-serif">Reply returns through the same chain back to the user</text>
-
-  <!-- Bottom message -->
-  <g filter="url(#softGlow)">
-    <path d="M182 700C182 685.641 193.641 674 208 674H456C470.359 674 482 685.641 482 700V738C482 752.359 470.359 764 456 764H300L266 792V764H208C193.641 764 182 752.359 182 738V700Z" fill="#F5F3FF" opacity="0.97"/>
-    <text x="212" y="718" fill="#1E1B4B" font-size="18" font-family="Inter, Arial, sans-serif" font-weight="700">Reply on mobile</text>
-    <text x="212" y="742" fill="#4C1D95" font-size="16" font-family="Inter, Arial, sans-serif">Deploy is healthy. All agents checked in.</text>
-  </g>
-
-  <text x="120" y="858" fill="#6EE7F9" font-size="16" font-family="Inter, Arial, sans-serif" font-weight="600">Flow: Phone → aX Platform → ax-channel → Claude Code → specialist agents → reply</text>
+  <text x="96" y="846" fill="#6EE7F9" font-family="Aptos, Inter, Arial, sans-serif" font-size="17" font-weight="700">Stable contract: explicit space_id + agent-owned identity + visible message signal + context backing store.</text>
 </svg>

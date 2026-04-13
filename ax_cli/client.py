@@ -455,10 +455,18 @@ class AxClient:
         r.raise_for_status()
         return self._parse_json(r)
 
-    def list_messages(self, limit: int = 20, channel: str = "main", *, agent_id: str | None = None) -> dict:
-        r = self._http.get(
-            "/api/v1/messages", params={"limit": limit, "channel": channel}, headers=self._with_agent(agent_id)
-        )
+    def list_messages(
+        self,
+        limit: int = 20,
+        channel: str = "main",
+        *,
+        space_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> dict:
+        params: dict[str, str | int] = {"limit": limit, "channel": channel}
+        if space_id:
+            params["space_id"] = space_id
+        r = self._http.get("/api/v1/messages", params=params, headers=self._with_agent(agent_id))
         r.raise_for_status()
         return self._parse_json(r)
 

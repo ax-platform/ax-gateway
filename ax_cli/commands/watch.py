@@ -120,6 +120,7 @@ def _matches(
 def _watch_poll(
     client,
     *,
+    space_id: str,
     from_agent: str | None = None,
     contains: str | None = None,
     timeout: int = 300,
@@ -155,7 +156,7 @@ def _watch_poll(
             raise typer.Exit(1)
 
         try:
-            data = client.list_messages(limit=10)
+            data = client.list_messages(limit=10, space_id=space_id)
         except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadError):
             time.sleep(interval)
             continue
@@ -221,10 +222,12 @@ def watch(
     """
     client = get_client()
     agent_name = resolve_agent_name()
+    space_id = resolve_space_id(client)
 
     if poll:
         _watch_poll(
             client,
+            space_id=space_id,
             from_agent=from_agent,
             contains=contains,
             timeout=timeout,
@@ -233,7 +236,6 @@ def watch(
             quiet=quiet,
         )
         return
-    space_id = resolve_space_id(client)
 
     start_time = time.time()
     matched: list[dict] = []

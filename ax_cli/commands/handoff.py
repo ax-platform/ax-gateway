@@ -212,7 +212,7 @@ def _matches_handoff_progress(message: dict[str, Any], **kwargs) -> bool:
     return (thread_match or token_match or mention_match) and _is_handoff_progress(message)
 
 
-def _recent_match(client, *, on_progress=None, **kwargs) -> dict[str, Any] | None:
+def _recent_match(client, *, space_id: str, on_progress=None, **kwargs) -> dict[str, Any] | None:
     """Check recent messages and direct replies to avoid missing fast responses."""
     candidates: list[dict[str, Any]] = []
 
@@ -222,7 +222,7 @@ def _recent_match(client, *, on_progress=None, **kwargs) -> dict[str, Any] | Non
         pass
 
     try:
-        candidates.extend(_message_items(client.list_messages(limit=30)))
+        candidates.extend(_message_items(client.list_messages(limit=30, space_id=space_id)))
     except Exception:
         pass
 
@@ -269,7 +269,7 @@ def _wait_for_handoff_reply(
             last_progress = label
             console.print(f"[dim]@{agent_name}: {label}[/dim]")
 
-    match = _recent_match(client, on_progress=on_progress, **kwargs)
+    match = _recent_match(client, space_id=space_id, on_progress=on_progress, **kwargs)
     if match:
         return match
 
@@ -288,7 +288,7 @@ def _wait_for_handoff_reply(
                     console.print(
                         f"[yellow]SSE unavailable ({response.status_code}); falling back to recent messages.[/yellow]"
                     )
-                    return _recent_match(client, on_progress=on_progress, **kwargs)
+                    return _recent_match(client, space_id=space_id, on_progress=on_progress, **kwargs)
 
                 for event_type, data in _iter_sse(response):
                     if timeout > 0 and time.time() > deadline:
@@ -301,19 +301,19 @@ def _wait_for_handoff_reply(
                         on_progress(data)
                         continue
         except httpx.ReadTimeout:
-            match = _recent_match(client, on_progress=on_progress, **kwargs)
+            match = _recent_match(client, space_id=space_id, on_progress=on_progress, **kwargs)
             if match:
                 return match
             continue
         except (httpx.ConnectError, httpx.ReadError):
-            match = _recent_match(client, on_progress=on_progress, **kwargs)
+            match = _recent_match(client, space_id=space_id, on_progress=on_progress, **kwargs)
             if match:
                 return match
             time.sleep(1)
         except KeyboardInterrupt:
             raise typer.Exit(1)
 
-    return _recent_match(client, on_progress=on_progress, **kwargs)
+    return _recent_match(client, space_id=space_id, on_progress=on_progress, **kwargs)
 
 
 def _resolve_agent_id(client, agent_name: str) -> str | None:

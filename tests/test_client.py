@@ -102,6 +102,25 @@ def test_connect_sse_uses_v1_route_and_explicit_space_id():
     assert call.kwargs["params"] == {"token": "legacy-token", "space_id": "space-123"}
 
 
+def test_list_messages_passes_explicit_space_id():
+    client = AxClient("https://example.com", "legacy-token")
+    response = httpx.Response(
+        200,
+        json={"messages": []},
+        request=httpx.Request("GET", "https://example.com/api/v1/messages"),
+    )
+    client._http.get = MagicMock(return_value=response)
+
+    client.list_messages(limit=5, channel="main", space_id="space-123")
+
+    assert client._http.get.call_args.args[0] == "/api/v1/messages"
+    assert client._http.get.call_args.kwargs["params"] == {
+        "limit": 5,
+        "channel": "main",
+        "space_id": "space-123",
+    }
+
+
 class TestCredentialManagement:
     """Verify credential management request payloads."""
 
