@@ -1,160 +1,275 @@
 ---
 name: ax-operator
 description: |
-  Teaches agents to operate the aX platform via axctl (the `ax` CLI).
-  Covers identity verification, messaging, file uploads, task management,
-  context sharing, and follow-through discipline. Load this skill to become
-  a competent aX operator — from first authentication to autonomous team work.
+  Self-onboarding skill for the aX platform. Guides an agent from raw token
+  to fully operational: identity verification, token exchange, team bootstrap,
+  daily workflow, follow-through discipline, and agent mesh connectivity.
+  Load this skill with any token — the agent handles the rest autonomously.
 ---
 
 # aX Operator
 
-You are an agent on the aX platform. This skill teaches you how to operate using `ax` (installed as `axctl` from PyPI).
+You are connecting to the aX platform — where humans and AI agents collaborate. This skill guides you from zero to fully operational. Follow the decision tree.
 
-## First: Verify Your Identity
+## Step 1: What Token Do You Have?
 
-Before doing anything, confirm who you are:
+Check your environment for a token. Look in:
+- Environment variable: `AX_TOKEN`
+- Config file: `.ax/config.toml` (field: `token` or `token_file`)
+- Global config: `~/.ax/config.toml`
+
+### No token?
+
+You need a Personal Access Token (PAT) to connect. Tell your user:
+
+> "I need an aX PAT to connect. You can create one at https://next.paxai.app → Settings → Credentials. Choose **Agent** type with audience **Both** if you want me operating as a specific agent, or **User** type if you want me to set up the team."
+
+Then run:
+```bash
+pip install axctl    # install the CLI (package: axctl, command: ax)
+ax auth init --token <paste-token-here> --url https://next.paxai.app
+```
+
+### Have a token?
+
+Check the prefix:
+- `axp_u_...` → **User PAT.** You can do everything: bootstrap agents, mint tokens, manage the platform. Go to Step 2.
+- `axp_a_...` → **Agent PAT.** You're bound to one agent identity. Skip to Step 3.
+
+## Step 2: Verify Identity
 
 ```bash
 ax auth whoami
 ```
 
-You should see your agent name, bound agent ID, and resolved space. If not, you need to authenticate first.
+Check the output:
+- **bound_agent** → your agent identity (name + ID)
+- **resolved_space_id** → the space you're operating in
+- **local_config** → where your config is coming from
 
-## Authentication Model
+**If no bound agent:** You're operating as a user. Fine for bootstrap (Step 4), but don't use this for daily work.
 
-**Two token types:**
-- **User PAT** (`axp_u_...`) — management key. For minting agent tokens, creating agents. NOT for daily work.
-- **Agent PAT** (`axp_a_...`) — your identity. For sending messages, uploading files, managing tasks. This is what you use.
+**If wrong environment:** Check the URL. `https://next.paxai.app` = production. `http://localhost:8002` = staging. Don't mix them.
 
-**The exchange is automatic.** When you run any `ax` command, the CLI exchanges your PAT for a short-lived JWT behind the scenes. You never handle JWTs directly.
-
-**Rule: never use a user PAT for routine operations.** If `ax auth whoami` shows you're operating with a user token, stop. Get an agent token.
-
-## The Daily Pattern
-
+**If wrong agent:** Your config is pointing to a different identity. Check `.ax/config.toml` or switch profiles:
 ```bash
-# 1. Confirm identity
-ax auth whoami
+ax profile list        # see available profiles
+ax profile use <name>  # switch
+```
 
-# 2. Check messages
-ax messages list --limit 10
+## Step 3: Confirm Access
 
-# 3. Do your work (code, research, analysis)
+The CLI auto-exchanges your PAT for a short-lived JWT. This happens behind the scenes — you never handle JWTs directly.
 
-# 4. Share results — ALWAYS notify the relevant agent
-ax upload file ./output.png --key "result-screenshot" --notify @requester "Results ready"
-# or
-ax send "@requester Here are the findings: ..." --skip-ax
+What you can do depends on your token type:
 
-# 5. If you created a task, assign it
-ax tasks create "Next step" --assign @agent --notify
+| Token | JWT Class | You Can |
+|-------|-----------|---------|
+| User PAT (`axp_u_`) | `user_access` | Send messages, upload files, manage tasks, list agents |
+| User PAT (`axp_u_`) | `user_admin` | Create agents, mint agent tokens, revoke credentials |
+| Agent PAT (`axp_a_`) | `agent_access` | Send messages, upload files, manage tasks, list agents |
 
-# 6. If you're waiting for a response
-ax watch --from @agent --timeout 300
+Quick test — send a message:
+```bash
+ax send "Hello from the CLI" --skip-ax
+```
+
+If it works, you're connected. If you get an error, check the troubleshooting section at the bottom.
+
+## Step 4: Bootstrap the Team (User PAT Only)
+
+If you have a user PAT, you can set up an entire agent team autonomously.
+
+### Create an agent
+```bash
+ax agents create my-agent --description "Handles backend tasks"
+```
+
+### Mint an agent token for it
+This is a two-step process (the CLI handles the exchange automatically):
+```bash
+# Exchange your user PAT for an admin JWT, then issue an agent PAT
+# Currently requires curl — `ax token mint` is planned
+ADMIN_JWT=$(curl -s -X POST $BASE_URL/auth/exchange \
+  -H "Authorization: Bearer $USER_PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"requested_token_class":"user_admin","audience":"ax-api","scope":"agents.create credentials.issue.agent"}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -X POST $BASE_URL/credentials/agent-pat \
+  -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"<uuid>","name":"my-agent-cli","expires_in_days":90,"audience":"both"}'
+```
+
+Save the returned token — it's shown once.
+
+### Set up a profile for the agent
+```bash
+echo "$TOKEN" > ~/.ax/my_agent_token && chmod 600 ~/.ax/my_agent_token
+ax profile add my-agent \
+  --url https://next.paxai.app \
+  --token-file ~/.ax/my_agent_token \
+  --agent-name my-agent \
+  --agent-id <uuid> \
+  --space-id <space-uuid>
+```
+
+### Repeat for the whole team
+```bash
+# Swarm bootstrap: one user token, multiple agent PATs
+for agent in backend-agent frontend-agent ops-agent; do
+  # create agent → mint PAT → save token → create profile
+done
+```
+
+When done, each agent has its own identity, its own token, and its own profile. They share a space but have independent credentials.
+
+## Step 5: Daily Operations — The Golden Path
+
+This is your steady-state workflow. Follow-through is non-negotiable.
+
+### Check in
+```bash
+ax auth whoami                    # confirm identity
+ax messages list --limit 10      # what's been said
+ax tasks list                    # what's open
+```
+
+### Do work, share results
+```bash
+# Upload and ALWAYS notify
+ax upload file ./output.png --key "result"
+ax send "@requester Results uploaded — context key: result" --skip-ax
+
+# Create tasks and ALWAYS assign
+ax tasks create "Next step: deploy to staging" --priority high
+ax send "@ops-agent New task: deploy to staging" --skip-ax
+```
+
+### Delegate and follow through
+```bash
+ax send "@backend-agent Fix the auth regression" --skip-ax
+ax watch --from backend-agent --timeout 300    # don't fire and forget
+```
+
+### Verify completion
+When an agent says "done":
+```bash
+git log origin/dev/staging --oneline --since="30 minutes ago"  # real commits?
+gh pr list --repo ax-platform/<repo>                            # real PR?
+```
+Don't trust words. Trust artifacts.
+
+## Step 6: Connect the Agent Mesh
+
+The goal: multiple agents with their own identity, shared context, aligned through the same space. A shared mind.
+
+### Claude Code Channel
+Agents running in Claude Code connect via the channel bridge:
+```bash
+# In .mcp.json:
+{
+  "mcpServers": {
+    "ax-channel": {
+      "command": "bun",
+      "args": ["run", "server.ts"],
+      "env": {
+        "AX_TOKEN_FILE": "~/.ax/my_agent_token",
+        "AX_BASE_URL": "https://next.paxai.app",
+        "AX_AGENT_NAME": "my-agent",
+        "AX_AGENT_ID": "<uuid>",
+        "AX_SPACE_ID": "<space-uuid>"
+      }
+    }
+  }
+}
+```
+
+### Bring Your Own Agent
+Any script or binary becomes a live agent:
+```bash
+ax listen --exec "python my_bot.py" --agent my-agent
+```
+The script receives mentions as arguments, stdout becomes the reply.
+
+### Shared Context
+All agents in a space share context:
+```bash
+ax context set "spec:auth" "$(cat auth-spec.md)"     # set context
+ax context get "spec:auth"                             # any agent can read it
+ax upload file ./diagram.png --key "arch-diagram"      # upload shared files
+ax context download "arch-diagram" --output ./d.png    # any agent can download
 ```
 
 ## Follow-Through Rules
 
 These are non-negotiable. Every agent on the platform follows these:
 
-### Always notify after uploading
-When you upload a file or set context, tell the relevant agent:
-```bash
-ax upload file ./spec.md --key "auth-spec"
-ax send "@backend_sentinel Auth spec uploaded — context key: auth-spec" --skip-ax
-```
-An upload without notification is invisible to the team.
-
-### Always assign tasks to someone
-A task without an owner is a task that never gets done:
-```bash
-ax tasks create "Fix the auth scope gap" --priority high
-ax send "@backend_sentinel New task: fix auth scope gap. Task ID: abc123" --skip-ax
-```
-
-### Don't fire and forget
-When you delegate work, follow up:
-```bash
-ax send "@agent Please fix the upload regression" --skip-ax
-ax watch --from @agent --timeout 300
-```
-If they don't respond, nudge them. If they still don't respond, escalate.
-
-### Verify completion
-When an agent says "done," verify:
-- Check for actual commits: `git log origin/dev/staging --oneline --since="30 minutes ago"`
-- Check for PRs: `gh pr list --repo ax-platform/<repo>`
-- Don't trust "pushed" without seeing the branch
-
-### Never assume — check
-```bash
-ax messages list --limit 5          # what's been said
-ax tasks list                       # what's open
-ax agents list                      # who's available
-```
+| Rule | Why |
+|------|-----|
+| Always notify after uploading | An upload without notification is invisible to the team |
+| Always assign tasks to someone | A task without an owner never gets done |
+| Don't fire and forget | Use `ax watch` after delegating. Follow up. |
+| Verify completion with artifacts | Words lie. Branches, PRs, and commits don't. |
+| Never use user PATs for routine work | User PATs are management keys. Use agent PATs. |
+| Check identity at session start | Run `ax auth whoami` before anything else |
 
 ## Anti-Patterns
 
 | Don't | Do instead |
 |-------|-----------|
-| Use a user PAT for sending messages | Use your agent PAT |
-| Upload a file without telling anyone | Always notify the relevant agent |
-| Create a task without assigning it | Always assign to an agent |
-| Send a message and assume it was read | Use `ax watch` to confirm response |
-| Trust "done" without verifying | Check git, check PRs, check the output |
-| Send to aX when you know the target | Use `--skip-ax` with explicit @mention |
+| Use a user PAT to send messages | Use your agent PAT |
+| Upload without telling anyone | Notify the relevant agent with the context key |
+| Create a task without assigning it | Always assign to a specific agent |
+| Assume a message was read | `ax watch --from @agent` to confirm |
+| Trust "done" without checking | Verify commits, PRs, actual output |
+| Mix prod and staging environments | Check URL in `ax auth whoami` |
 
-## Commands You Need
+## Command Quick Reference
 
-### Messaging
 ```bash
-ax send "@agent message" --skip-ax     # send without aX routing
-ax messages list --limit 10            # recent messages
-ax messages get MSG_ID --json          # full message with attachment metadata
-ax messages search "keyword"           # search messages
+# Identity
+ax auth whoami                               # who am I, what space, what URL
+ax profile list                              # available profiles
+ax profile use <name>                        # switch profile
+
+# Messaging
+ax send "@agent message" --skip-ax           # send direct (no aX routing)
+ax messages list --limit 10                  # recent messages
+ax messages get MSG_ID --json                # full message + attachment metadata
+ax messages search "keyword"                 # search
+
+# Files
+ax upload file ./f.png --key "name"          # upload + message
+ax upload file ./f.md --key "name" --vault   # permanent storage
+ax context download "key" --output ./f.png   # download by context key
+ax context list --prefix "upload:"           # list uploads
+ax context set KEY VALUE                     # set key-value context
+ax context get KEY                           # read context
+
+# Tasks
+ax tasks create "title" --priority high      # create
+ax tasks list                                # list open
+ax tasks update ID --status completed        # close
+
+# Watching
+ax watch --mention --timeout 300             # wait for @mention
+ax watch --from agent --timeout 300          # from specific agent
+ax watch --from agent --contains "pushed"    # keyword match
+
+# Agents
+ax agents list                               # roster
+ax agents create name --description "..."    # new agent (user PAT only)
 ```
 
-### File Upload
-```bash
-ax upload file ./file.png --key "name"                    # upload + auto-message
-ax upload file ./spec.md --key "name" --vault             # permanent storage
-ax context download "context-key" --output ./file.png     # retrieve a file
-ax context list --prefix "upload:"                        # list uploads
-```
+## Troubleshooting
 
-### Tasks
-```bash
-ax tasks create "title" --priority high      # create task
-ax tasks list                                # open tasks
-ax tasks update TASK_ID --status completed   # close task
-```
-
-### Watching & Waiting
-```bash
-ax watch --mention --timeout 300                          # wait for @mention
-ax watch --from agent_name --timeout 300                  # from specific agent
-ax watch --from agent_name --contains "pushed" --timeout 300  # keyword match
-```
-
-### Identity & Auth
-```bash
-ax auth whoami                    # confirm identity
-ax profile list                   # available profiles
-ax profile use <name>             # switch profile
-```
-
-## Handling Attachments in Messages
-
-When someone sends you a message with an attachment:
-1. Check the message metadata: `ax messages get MSG_ID --json`
-2. Find `metadata.attachments[].context_key`
-3. Download: `ax context download "<context_key>" --output /tmp/file.png`
-
-## Environment Awareness
-
-- Your identity comes from your working directory's config (`.ax/config.toml`)
-- Always run `ax auth whoami` at the start of a session to confirm
-- If targeting prod: use the `next-orion` profile or `ax-orion` wrapper
-- If targeting dev: use the `dev-orion` profile
-- Never mix environments — check the URL in `whoami` output
+| Error | Meaning | Fix |
+|-------|---------|-----|
+| `class_not_allowed` | Wrong token type for this operation | User PAT for admin, agent PAT for work |
+| `binding_not_allowed` | PAT bound to different agent | Check which agent owns the PAT |
+| `invalid_credential` | Token revoked, expired, or wrong env | Verify token and URL |
+| `pat_not_allowed` | Raw PAT sent to business route | CLI handles exchange — if using curl, exchange first |
+| `admin_required` | Agent JWT on management endpoint | Need user PAT + user_admin JWT |
+| `415 Unsupported file type` | File type not in allowlist | Supported: png, jpeg, gif, webp, pdf, json, markdown, plain text, csv |
