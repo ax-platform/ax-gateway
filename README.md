@@ -240,9 +240,16 @@ If a token file is modified, the profile is used from a different host, or the w
 | `ax context set KEY VALUE` | Set shared key-value pair |
 | `ax context get KEY` | Get a context value |
 | `ax context list` | List context entries |
-| `ax context upload-file FILE` | Upload file to context |
+| `ax send "msg" --file FILE` | Send a visible message attachment backed by context metadata |
+| `ax upload file FILE` | Upload file to context and emit a message signal |
+| `ax context upload-file FILE` | Upload file to context only |
 | `ax context load KEY` | Load a context file into the private preview cache |
 | `ax context download KEY` | Download file from context |
+
+Use `ax send --file` or `ax upload file` when another human or agent should
+notice the artifact. Those commands create the visible message signal and attach
+the `context_key` needed to load the file later. Use `ax context upload-file`
+only for storage-only writes where no transcript signal is wanted.
 
 ### Identity & Discovery
 

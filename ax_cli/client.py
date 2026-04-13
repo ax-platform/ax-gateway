@@ -36,16 +36,43 @@ _EXT_MIME: dict[str, str] = {
     ".jsx": "text/javascript",
     ".ts": "text/typescript",
     ".tsx": "text/typescript",
+    # The upload API intentionally keeps a narrow MIME allowlist. Normalize
+    # common source/config artifacts to inert text so CLI uploads work without
+    # expanding backend policy for every language-specific MIME type.
+    ".java": "text/plain",
+    ".go": "text/plain",
+    ".rs": "text/plain",
+    ".kt": "text/plain",
+    ".kts": "text/plain",
+    ".c": "text/plain",
+    ".cc": "text/plain",
+    ".cpp": "text/plain",
+    ".cs": "text/plain",
+    ".rb": "text/plain",
+    ".sh": "text/plain",
+    ".css": "text/plain",
+    ".xml": "text/plain",
+    ".yaml": "text/plain",
+    ".yml": "text/plain",
+    ".sql": "text/plain",
     ".svg": "image/svg+xml",
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xls": "application/vnd.ms-excel",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
+_FILENAME_MIME: dict[str, str] = {
+    "dockerfile": "text/plain",
+    "makefile": "text/plain",
+}
 
 
 def _mime_from_ext(ext: str) -> str | None:
     return _EXT_MIME.get(ext)
+
+
+def _mime_from_filename(filename: str) -> str | None:
+    return _FILENAME_MIME.get(filename.lower())
 
 
 def _build_fingerprint(token: str) -> dict[str, str]:
@@ -406,7 +433,10 @@ class AxClient:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         content_type = (
-            _mime_from_ext(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            _mime_from_filename(path.name)
+            or _mime_from_ext(path.suffix.lower())
+            or mimetypes.guess_type(path.name)[0]
+            or "application/octet-stream"
         )
         headers = {k: v for k, v in self._auth_headers().items() if k != "Content-Type"}
 

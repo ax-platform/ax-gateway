@@ -1,10 +1,11 @@
 """Tests for AxClient auth and token class selection."""
+
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
-from ax_cli.client import AxClient
+from ax_cli.client import AxClient, _mime_from_ext, _mime_from_filename
 
 
 class TestTokenClassSelection:
@@ -77,6 +78,16 @@ class TestTokenClassSelection:
 
         call_body = mock_post.call_args[1]["json"]
         assert call_body["requested_token_class"] == "user_access"
+
+
+def test_cli_mime_overrides_normalize_common_source_artifacts_to_safe_text():
+    assert _mime_from_ext(".java") == "text/plain"
+    assert _mime_from_ext(".go") == "text/plain"
+    assert _mime_from_ext(".rs") == "text/plain"
+    assert _mime_from_ext(".yaml") == "text/plain"
+    assert _mime_from_ext(".sh") == "text/plain"
+    assert _mime_from_filename("Dockerfile") == "text/plain"
+    assert _mime_from_filename("Makefile") == "text/plain"
 
 
 class TestCredentialManagement:
