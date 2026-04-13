@@ -325,5 +325,9 @@ def show_env(
     print(f'export AX_TOKEN="{token}"')
     print(f'export AX_BASE_URL="{profile.get("base_url", "")}"')
     print(f'export AX_AGENT_NAME="{profile.get("agent_name", "")}"')
+    if profile.get("agent_id"):
+        print(f'export AX_AGENT_ID="{profile["agent_id"]}"')
+    else:
+        print('export AX_AGENT_ID="none"')
     if profile.get("space_id"):
         print(f'export AX_SPACE_ID="{profile["space_id"]}"')
