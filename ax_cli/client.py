@@ -174,7 +174,42 @@ class _RetryOnAuthClient:
         self._inner.close()
 
 
+def _user_token_suppressed() -> bool:
+    """Check if user-token guardrail is suppressed via env or flag."""
+    return os.environ.get("AX_I_KNOW_WHAT_IM_DOING", "").lower() in ("1", "true", "yes")
+
+
+def _warn_user_token(path: str) -> None:
+    """Emit user-token guardrail warning to stderr.
+
+    This runs inside an httpx event hook so it must never block.
+    Warning only — no prompt. The warning fires once per session.
+    """
+    import sys
+
+    sys.stderr.write(
+        f"\n\033[33m⚠  User token (axp_u_) used for: {path}\033[0m\n"
+        "   User tokens are management keys — use an agent token (axp_a_) for daily work.\n"
+        "   Suppress: AX_I_KNOW_WHAT_IM_DOING=1\n\n"
+    )
+    sys.stderr.flush()
+
+
 class AxClient:
+    # Paths that are legitimate user-token operations (management/admin).
+    # Everything else is routine work that should use agent tokens.
+    _USER_TOKEN_ALLOWED_PATHS = frozenset({
+        "/auth/exchange",
+        "/auth/me",
+        "/agents/manage/create",
+        "/agents/manage/list",
+        "/credentials/agent-pat",
+        "/credentials/enrollment",
+        "/api/v1/keys",
+        "/api/v1/agents",  # listing agents is needed for name resolution
+    })
+    _user_token_warned = False
+
     def __init__(self, base_url: str, token: str, *, agent_name: str | None = None, agent_id: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.token = token
@@ -222,6 +257,10 @@ class AxClient:
         - axp_a_ (agent-bound PAT) + agent_id → agent_access
         - axp_u_ (user PAT) → user_access always, even if agent_id is set
           (user PATs cannot exchange for agent_access — server returns 422)
+
+        Also enforces user-token guardrail: warns (once) when a user PAT
+        is used for a user_access exchange (routine work that should use
+        an agent token).
         """
         is_agent_pat = self.token.startswith("axp_a_")
         if self.agent_id and is_agent_pat:
@@ -231,6 +270,10 @@ class AxClient:
                 scope="messages tasks context agents spaces search",
                 force_refresh=force_refresh,
             )
+        # User PAT path — warn if this is routine work
+        if self.token.startswith("axp_u_") and not AxClient._user_token_warned and not _user_token_suppressed():
+            AxClient._user_token_warned = True
+            _warn_user_token("user_access exchange")
         return self._exchanger.get_token(
             "user_access",
             scope="messages tasks context agents spaces search",

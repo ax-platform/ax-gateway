@@ -100,6 +100,12 @@ def mint(
 
     client = get_client()
 
+    # Suppress user-token guardrail — this IS a management operation.
+    # We need user_access for agent name resolution (user_admin lacks agents.list),
+    # but that shouldn't trigger the "don't use user tokens for routine work" warning.
+    from ..client import AxClient
+    AxClient._user_token_warned = True
+
     # Step 2: Resolve agent name → UUID (uses user_access JWT via standard endpoint)
     console.print(f"[cyan]Resolving agent '{agent}'...[/cyan]")
     agent_id, agent_name = _resolve_agent_id(client, agent)
