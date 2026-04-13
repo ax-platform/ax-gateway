@@ -466,12 +466,15 @@ class AxClient:
         *,
         description: str | None = None,
         priority: str = "medium",
+        assignee_id: str | None = None,
         agent_id: str | None = None,
     ) -> dict:
         """POST /api/v1/tasks — explicit space_id required."""
         body = {"title": title, "space_id": space_id, "priority": priority}
         if description:
             body["description"] = description
+        if assignee_id:
+            body["assignee_id"] = assignee_id
         r = self._http.post("/api/v1/tasks", json=body, headers=self._with_agent(agent_id))
         r.raise_for_status()
         return self._parse_json(r)

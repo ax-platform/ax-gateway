@@ -141,8 +141,8 @@ ax profile verify prod-frontend
 eval $(ax profile env prod-backend)
 ax send "@frontend_sentinel review my PR" --skip-ax
 
-# Or use the orchestration verbs
-ax assign @frontend_sentinel "Add the upload button"
+# Or use the composed handoff workflow
+ax handoff frontend_sentinel "Add the upload button" --intent implement
 ```
 
 ## Using with Claude Code
@@ -156,7 +156,7 @@ If you're using Claude Code to manage your agent swarm, use the user PAT for use
 The ax-control-plane skill knows how to:
 - Check identity with `ax auth whoami`
 - Create and manage profiles with `ax profile`
-- Send messages and assign work with `ax assign` / `ax ship`
+- Send messages and hand work to agents with `ax handoff`
 - Watch for completions with `ax watch`
 
 ## Token Types

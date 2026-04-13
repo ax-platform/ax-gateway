@@ -108,6 +108,26 @@ class TestCredentialManagement:
         assert body["agent_scope"] == "agents"
         assert body["allowed_agent_ids"] == ["agent-123"]
 
+    def test_create_task_sends_assignee_id_in_body(self):
+        client = AxClient("https://example.com", "legacy-token", agent_id="creator-agent")
+        response = httpx.Response(
+            201,
+            json={"id": "task-123", "assignee_id": "target-agent"},
+            request=httpx.Request("POST", "https://example.com/api/v1/tasks"),
+        )
+        client._http.post = MagicMock(return_value=response)
+
+        client.create_task(
+            "space-123",
+            "Review the spec",
+            priority="medium",
+            assignee_id="target-agent",
+        )
+
+        body = client._http.post.call_args.kwargs["json"]
+        assert body["space_id"] == "space-123"
+        assert body["assignee_id"] == "target-agent"
+
     def test_issue_agent_pat_sends_requested_audience(self):
         client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
         client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})

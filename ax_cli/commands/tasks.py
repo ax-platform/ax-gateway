@@ -32,7 +32,7 @@ def create(
             title,
             description=description,
             priority=priority,
-            agent_id=assign_to,
+            assignee_id=assign_to,
         )
     except httpx.HTTPStatusError as e:
         handle_error(e)

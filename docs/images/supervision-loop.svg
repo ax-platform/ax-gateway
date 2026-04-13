@@ -1,6 +1,6 @@
 <svg width="1200" height="760" viewBox="0 0 1200 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Supervisor loop</title>
-  <desc id="desc">A dark themed loop diagram showing a supervisor assigning a task with ax send, watching with ax watch, deciding on match by verifying branch, reviewing diff, merging or rejecting, and closing the task, with a timeout path for checking messages, fetching git updates, and nudging or escalating before repeating.</desc>
+  <desc id="desc">A dark themed loop diagram showing ax handoff creating a task, sending a targeted message, watching SSE, checking recent replies, and returning a structured result with timeout and nudge paths.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="760" gradientUnits="userSpaceOnUse">
       <stop stop-color="#0B1220"/>
@@ -25,8 +25,8 @@
   <rect width="1200" height="760" rx="28" fill="url(#bg)"/>
   <rect x="28" y="28" width="1144" height="704" rx="24" stroke="#1E293B"/>
 
-  <text x="70" y="92" class="title">Supervisor Loop</text>
-  <text x="70" y="122" class="subtitle">Assign work, watch the thread, decide on delivery, and recover cleanly when progress stalls.</text>
+  <text x="70" y="92" class="title">Handoff Loop</text>
+  <text x="70" y="122" class="subtitle">Create a task, message an agent, watch replies, and recover cleanly when progress stalls.</text>
 
   <path d="M600 176C763 176 894 307 894 380C894 453 763 584 600 584C437 584 306 453 306 380C306 307 437 176 600 176Z" stroke="#1D4ED8" stroke-width="2.5" stroke-dasharray="10 10" opacity="0.85"/>
   <circle cx="600" cy="380" r="16" fill="#2563EB" opacity="0.18"/>
@@ -35,34 +35,34 @@
   <g filter="url(#shadow)">
     <rect x="470" y="146" width="260" height="92" rx="22" fill="#0F172A" stroke="#3B82F6" stroke-width="2"/>
     <text x="500" y="180" class="small">Start</text>
-    <text x="500" y="212" class="label">Assign task</text>
-    <text x="500" y="234" class="body">Use <tspan fill="#93C5FD">ax send</tspan> to hand work to an agent.</text>
+    <text x="500" y="212" class="label">Run handoff</text>
+    <text x="500" y="234" class="body">Use <tspan fill="#93C5FD">ax handoff</tspan> to create task + message.</text>
   </g>
 
   <g filter="url(#shadow)">
     <rect x="840" y="310" width="250" height="104" rx="22" fill="#0F172A" stroke="#334155"/>
     <text x="870" y="344" class="small">Observe</text>
-    <text x="870" y="376" class="label">Watch progress</text>
-    <text x="870" y="398" class="body">Track the live thread with</text>
-    <text x="870" y="420" class="body"><tspan fill="#93C5FD">ax watch</tspan> until work completes.</text>
+    <text x="870" y="376" class="label">Watch SSE</text>
+    <text x="870" y="398" class="body">Track the thread and mentions</text>
+    <text x="870" y="420" class="body">until the target agent replies.</text>
   </g>
 
   <g filter="url(#shadow)">
     <rect x="460" y="530" width="280" height="108" rx="22" fill="#0F172A" stroke="#334155"/>
     <text x="490" y="564" class="small">Timeout path</text>
-    <text x="490" y="596" class="label">Check and nudge</text>
-    <text x="490" y="618" class="body">Review <tspan fill="#93C5FD">messages list</tspan>, run <tspan fill="#93C5FD">git fetch</tspan>,</text>
-    <text x="490" y="640" class="body">then nudge the agent or escalate.</text>
+    <text x="490" y="596" class="label">Fallback</text>
+    <text x="490" y="618" class="body">Check recent messages and replies,</text>
+    <text x="490" y="640" class="body">then nudge once if requested.</text>
   </g>
 
   <g filter="url(#shadow)">
     <rect x="110" y="308" width="270" height="144" rx="22" fill="#0F172A" stroke="#334155"/>
     <text x="140" y="342" class="small">Decision path</text>
-    <text x="140" y="374" class="label">On match</text>
-    <text x="140" y="398" class="body">1. Verify git branch</text>
-    <text x="140" y="422" class="body">2. Review diff</text>
-    <text x="140" y="446" class="body">3. Merge or reject</text>
-    <text x="140" y="470" class="body">4. Close task</text>
+    <text x="140" y="374" class="label">Return result</text>
+    <text x="140" y="398" class="body">1. Status</text>
+    <text x="140" y="422" class="body">2. Task metadata</text>
+    <text x="140" y="446" class="body">3. Sent message</text>
+    <text x="140" y="470" class="body">4. Agent reply</text>
   </g>
 
   <path d="M730 192C806 224 862 279 892 330" stroke="#60A5FA" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
@@ -87,5 +87,5 @@
     <text x="343" y="214" class="pill">repeat loop</text>
   </g>
 
-  <text x="70" y="700" class="subtitle">Supervisor keeps cycling: assign → observe → decide, with a timeout branch for follow-up and escalation.</text>
+  <text x="70" y="700" class="subtitle">Handoff keeps the loop explicit: task + message -> watch -> result, with timeout recovery.</text>
 </svg>

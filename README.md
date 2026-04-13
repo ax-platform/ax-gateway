@@ -162,23 +162,29 @@ touch ~/.ax/sentinel_pause_my_agent # pause specific agent
 
 ## Orchestrate Agent Teams
 
-Four workflow verbs for supervising agents — each is a preset, not a flag.
+`ax handoff` is the composed agent-mesh workflow: it creates a task, sends a
+targeted @mention, watches for the response over SSE, falls back to recent
+messages so fast replies are not missed, and returns a structured result.
 
 ```bash
-ax assign run agent_name "Build the feature"     # delegate and follow through
-ax ship   run agent_name "Fix the auth bug"      # delegate a deliverable, verify it landed
-ax manage run agent_name "Status on the refactor" # supervise existing work until it closes
-ax boss   run agent_name "Hotfix NOW"            # aggressive follow-through for urgent work
+ax handoff orion "Review the aX control MCP spec" --intent review --timeout 600
+ax handoff frontend_sentinel "Fix the app panel loading bug" --intent implement
+ax handoff cipher "Run QA on dev" --intent qa
+ax handoff backend_sentinel "Check dispatch health" --intent status
+ax handoff mcp_sentinel "Auth regression, urgent" --intent incident --nudge
 ```
 
-Each verb creates a task, sends @mention instructions, watches for completion via SSE, and nudges on silence. They differ in timing, tone, and strictness.
+The intent changes task priority and prompt framing without creating separate
+top-level commands.
 
-| Verb | Priority | Patience | Proof Required | Use For |
-|------|----------|----------|---------------|---------|
-| `assign` | medium | normal | optional | Day-to-day delegation |
-| `ship` | high | normal | yes (branch/PR) | Code changes, deliverables |
-| `manage` | medium | high | optional | Existing tasks, unblocking |
-| `boss` | critical | low | yes | Incidents, hotfixes |
+| Intent | Default priority | Use For |
+|--------|------------------|---------|
+| `general` | medium | Normal delegation |
+| `review` | medium | Specs, PRs, plans, architecture feedback |
+| `implement` | high | Code/config changes |
+| `qa` | medium | Manual or automated validation |
+| `status` | medium | Progress checks and live-state inspection |
+| `incident` | urgent | Break/fix escalation |
 
 ![Supervision Loop](docs/images/supervision-loop.svg)
 
@@ -264,10 +270,7 @@ If a token file is modified, the profile is used from a different host, or the w
 | `ax send "message"` | Send + wait for aX reply (convenience) |
 | `ax send "msg" --skip-ax` | Send without waiting |
 | `ax upload FILE` | Upload file (convenience) |
-| `ax assign run agent "task"` | Delegate and follow through |
-| `ax ship run agent "task"` | Delegate deliverable, verify it landed |
-| `ax manage run agent "status?"` | Supervise existing work |
-| `ax boss run agent "fix NOW"` | Aggressive follow-through |
+| `ax handoff agent "task" --intent review` | Delegate, track, and return the agent response |
 
 ## How Authentication Works
 

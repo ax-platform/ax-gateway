@@ -8,12 +8,12 @@ import typer
 
 from .commands import (
     agents,
-    assign,
     auth,
     channel,
     context,
     credentials,
     events,
+    handoff,
     keys,
     listen,
     messages,
@@ -38,15 +38,10 @@ app.add_typer(context.app, name="context")
 app.add_typer(watch.app, name="watch")
 app.add_typer(upload.app, name="upload")
 app.add_typer(profile.app, name="profile")
-app.add_typer(assign.app, name="assign")
 app.add_typer(spaces.app, name="spaces")
 app.add_typer(channel.app, name="channel")
 app.add_typer(mint.app, name="token")
-
-# Work management aliases — same engine, different intent
-app.add_typer(assign.app, name="ship", help="Ship work through an agent")
-app.add_typer(assign.app, name="manage", help="Manage an agent's task to completion")
-app.add_typer(assign.app, name="boss", help="Boss an agent until they deliver")
+app.command("handoff")(handoff.run)
 
 
 @app.command("login")
