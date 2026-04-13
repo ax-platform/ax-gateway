@@ -49,8 +49,12 @@ It verifies:
 
 ```bash
 axctl qa contracts --space-id <space-id>
-axctl qa contracts --env dev --space-id <space-id> # future profile/env wrapper
+axctl qa contracts --env dev --space-id <space-id>
 ```
+
+`--env` selects a named user login created by `axctl login --env <name>`. It is
+intended for user-authored QA in dev/next/prod/customer environments without
+shell exports or active-profile switching.
 
 ### Explicit write mode
 
@@ -63,8 +67,8 @@ Write mode verifies:
 - optional context-backed message attachment
 
 ```bash
-axctl qa contracts --write --space-id <space-id>
-axctl qa contracts --write --upload-file ./probe.md --send-message --space-id <space-id>
+axctl qa contracts --env dev --write --space-id <space-id>
+axctl qa contracts --env dev --write --upload-file ./probe.md --send-message --space-id <space-id>
 ```
 
 Write checks should use temporary keys and clean up by default.
@@ -90,6 +94,7 @@ The harness must not hide the current principal.
 Output should include:
 
 - username
+- selected environment when `--env` is used
 - principal type when available
 - bound agent when available
 - target space ID
@@ -156,7 +161,6 @@ For example:
 
 ## Deferred Work
 
-- Add `--env` convenience once command-level env selection is standardized.
 - Add MCP Jam wrapper that consumes the same result envelope.
 - Add Playwright wrapper that records screenshots only after API/CLI pass.
 - Add space slug display once slug resolution is canonical across API responses.

@@ -97,6 +97,57 @@ def test_contract_smoke_read_only_passes_explicit_space_to_api_reads(monkeypatch
     assert ("list_messages", 10, "main", "space-1", None) in fake.calls
 
 
+def test_contract_smoke_env_uses_named_user_login_space(monkeypatch):
+    fake = FakeClient()
+    monkeypatch.setattr(
+        qa,
+        "_client_for_env",
+        lambda env_name: (
+            fake,
+            {
+                "environment": env_name,
+                "space_id": "dev-space",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        qa,
+        "resolve_space_id",
+        lambda client, explicit=None: (_ for _ in ()).throw(AssertionError("space should come from env config")),
+    )
+
+    result = runner.invoke(app, ["qa", "contracts", "--env", "dev", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = _json_output(result)
+    assert payload["ok"] is True
+    assert payload["environment"] == "dev"
+    assert payload["space_id"] == "dev-space"
+    assert ("list_agents", "dev-space", 10) in fake.calls
+    assert ("list_tasks", 10, "dev-space", None) in fake.calls
+
+
+def test_contract_smoke_env_requires_space_when_named_login_is_ambiguous(monkeypatch):
+    fake = FakeClient()
+    fake.list_spaces = lambda: {
+        "spaces": [
+            {"id": "space-1", "name": "One"},
+            {"id": "space-2", "name": "Two"},
+        ]
+    }
+    monkeypatch.setattr(qa, "_client_for_env", lambda env_name: (fake, {"environment": env_name}))
+    monkeypatch.setattr(
+        qa,
+        "resolve_space_id",
+        lambda client, explicit=None: (_ for _ in ()).throw(AssertionError("must not use runtime config fallback")),
+    )
+
+    result = runner.invoke(app, ["qa", "contracts", "--env", "dev", "--json"])
+
+    assert result.exit_code == 1
+    assert "No default space is configured for env 'dev'" in result.output
+
+
 def test_contract_smoke_write_roundtrip_sets_gets_and_deletes_context(monkeypatch):
     fake = FakeClient()
     monkeypatch.setattr(qa, "get_client", lambda: fake)

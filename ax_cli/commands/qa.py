@@ -11,7 +11,8 @@ from typing import Any, Callable, Optional
 import httpx
 import typer
 
-from ..config import get_client, resolve_space_id
+from ..client import AxClient
+from ..config import _load_user_config, _normalize_user_env, get_client, resolve_space_id
 from ..context_keys import build_upload_context_key
 from ..output import JSON_OPTION, console, print_json
 
@@ -139,8 +140,81 @@ def _attachment_ref(info: dict[str, Any], *, context_key: str) -> dict[str, Any]
     }
 
 
+def _client_for_env(env_name: str) -> tuple[AxClient, dict[str, Any]]:
+    """Return a user-authored client for a named login environment."""
+    normalized = _normalize_user_env(env_name)
+    cfg = _load_user_config(normalized)
+    if not cfg:
+        console.print(f"[red]No user login found for env '{normalized}'.[/red]")
+        console.print(f"Run: axctl login --env {normalized} --url <base-url>")
+        raise typer.Exit(1)
+
+    token = str(cfg.get("token") or "")
+    if not token:
+        console.print(f"[red]User login env '{normalized}' has no token.[/red]")
+        raise typer.Exit(1)
+    if token.startswith("axp_a_"):
+        console.print(f"[red]User login env '{normalized}' contains an agent PAT.[/red]")
+        console.print("`--env` selects user-authored QA credentials. Use an agent profile for agent runtime QA.")
+        raise typer.Exit(1)
+
+    base_url = str(cfg.get("base_url") or "http://localhost:8001")
+    return AxClient(base_url=base_url, token=token), {**cfg, "environment": normalized}
+
+
+def _space_id_from_item(item: dict[str, Any]) -> str | None:
+    value = item.get("id") or item.get("space_id")
+    return str(value) if value else None
+
+
+def _select_default_space_id(spaces_payload: Any) -> str | None:
+    items = _extract_items(spaces_payload, ("spaces", "items", "results"))
+    if len(items) == 1:
+        return _space_id_from_item(items[0])
+
+    for key in ("is_current", "current", "is_default", "default"):
+        matches = [item for item in items if item.get(key) is True]
+        if len(matches) == 1:
+            return _space_id_from_item(matches[0])
+
+    personal = [
+        item
+        for item in items
+        if item.get("is_personal") is True or str(item.get("space_mode", "")).lower() == "personal"
+    ]
+    if len(personal) == 1:
+        return _space_id_from_item(personal[0])
+    return None
+
+
+def _resolve_env_space_id(client: AxClient, env_cfg: dict[str, Any], *, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    if env_cfg.get("space_id"):
+        return str(env_cfg["space_id"])
+
+    spaces_payload = client.list_spaces()
+    selected = _select_default_space_id(spaces_payload)
+    if selected:
+        return selected
+
+    count = _count(spaces_payload, ("spaces", "items", "results"))
+    env_label = env_cfg.get("environment") or "selected"
+    console.print(f"[red]No default space is configured for env '{env_label}'.[/red]")
+    if count:
+        console.print(f"{count} visible spaces found; pass --space-id or rerun axctl login --env {env_label} --space-id <id>.")
+    else:
+        console.print("No visible spaces found for this credential.")
+    raise typer.Exit(1)
+
+
 @app.command("contracts")
 def contracts(
+    env_name: Optional[str] = typer.Option(
+        None,
+        "--env",
+        help="Use a named user-login environment created with `axctl login --env`",
+    ),
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override target space"),
     limit: int = typer.Option(10, "--limit", help="Small collection read limit"),
     write: bool = typer.Option(False, "--write", help="Run mutating round-trip checks"),
@@ -156,8 +230,14 @@ def contracts(
     that create temporary context, upload files, or emit visible message
     signals.
     """
-    client = get_client()
-    sid = resolve_space_id(client, explicit=space_id)
+    selected_env: str | None = None
+    if env_name:
+        client, env_cfg = _client_for_env(env_name)
+        selected_env = str(env_cfg.get("environment") or env_name)
+        sid = _resolve_env_space_id(client, env_cfg, explicit=space_id)
+    else:
+        client = get_client()
+        sid = resolve_space_id(client, explicit=space_id)
     checks: list[dict[str, Any]] = []
 
     whoami_payload = _run_check(checks, "auth.whoami", client.whoami)
@@ -276,6 +356,7 @@ def contracts(
     ok = all(check["ok"] for check in checks)
     result = {
         "ok": ok,
+        "environment": selected_env,
         "space_id": sid,
         "principal": {
             "username": whoami_payload.get("username") if isinstance(whoami_payload, dict) else None,
