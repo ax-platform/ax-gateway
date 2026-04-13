@@ -36,6 +36,8 @@ axctl tasks create "Ship the feature" # create a task
 
 `axctl login` defaults to `https://next.paxai.app`. Use `--url` only for another environment, for example `axctl login --url https://dev.paxai.app`. Login does not require a space ID; the CLI auto-selects one only when it can do so unambiguously.
 
+User login is stored separately from agent runtime config under `~/.ax/user.toml`. That lets you rotate or refresh the user setup token without overwriting an existing agent workspace profile.
+
 ## Claude Code Channel — Connect from Anywhere
 
 **The first multi-agent channel for Claude Code.** Send a message from your phone, Claude Code receives it in real-time, delegates work to specialist agents, and reports back.

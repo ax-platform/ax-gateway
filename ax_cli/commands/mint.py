@@ -14,7 +14,7 @@ from typing import Optional
 import httpx
 import typer
 
-from ..config import get_client, resolve_token
+from ..config import get_user_client, resolve_user_token
 from ..output import JSON_OPTION, console, handle_error, print_json
 
 app = typer.Typer(name="token", help="Token management", no_args_is_help=True)
@@ -105,9 +105,9 @@ def mint(
             console.print(message)
 
     # Step 1: Verify user PAT
-    token = resolve_token()
+    token = resolve_user_token()
     if not token:
-        console.print("[red]No token found.[/red] Set AX_TOKEN or configure .ax/config.toml.")
+        console.print("[red]No user token found.[/red] Run axctl login with a user PAT.")
         raise typer.Exit(1)
 
     if token.startswith("axp_a_"):
@@ -120,7 +120,7 @@ def mint(
         console.print(f"[yellow]Warning: token prefix '{token[:6]}' is not a recognized PAT type.[/yellow]")
         console.print("[dim]Expected axp_u_ (user PAT). Proceeding anyway.[/dim]")
 
-    client = get_client()
+    client = get_user_client()
 
     # Step 2: Resolve agent name → UUID (uses user_access JWT via standard endpoint)
     status(f"[cyan]Resolving agent '{agent}'...[/cyan]")

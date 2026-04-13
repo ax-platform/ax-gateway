@@ -8,8 +8,10 @@ import typer
 from ..config import (
     _global_config_dir,
     _load_local_config,
+    _load_user_config,
     _local_config_dir,
     _save_config,
+    _save_user_config,
     get_client,
     resolve_agent_name,
     resolve_token,
@@ -61,6 +63,79 @@ def _select_login_space(space_list: list[dict]) -> dict | None:
         return personal[0]
 
     return None
+
+
+def login_user(
+    token: str | None = None,
+    *,
+    base_url: str = DEFAULT_LOGIN_BASE_URL,
+    space_id: str | None = None,
+    agent: str | None = None,
+) -> None:
+    """Log in a human user without touching agent runtime config."""
+    token = _resolve_login_token(token)
+    if agent:
+        console.print("[yellow]Ignoring --agent for user login. Use an agent PAT/profile for agent runtime.[/yellow]")
+
+    cfg = _load_user_config()
+    cfg["token"] = token
+    cfg["base_url"] = base_url
+    cfg["principal_type"] = "user"
+    cfg.pop("agent_id", None)
+    cfg.pop("agent_name", None)
+
+    console.print(f"\n[cyan]Connecting to {base_url}...[/cyan]")
+    try:
+        from ..token_cache import TokenExchanger
+
+        exchanger = TokenExchanger(base_url, token)
+        exchanger.get_token(
+            "user_access",
+            scope="messages tasks context agents spaces search",
+            force_refresh=True,
+        )
+        console.print("[green]Token verified.[/green] Exchange successful.")
+    except Exception as e:
+        console.print(f"[red]Token verification failed:[/red] {e}")
+        console.print("Check that the token is valid and the URL is correct.")
+        raise typer.Exit(1)
+
+    try:
+        from ..client import AxClient
+
+        client = AxClient(base_url=base_url, token=token)
+        me = client.whoami()
+        username = me.get("username", "unknown")
+        console.print(f"[green]Identity:[/green] {username} ({me.get('email', '')})")
+
+        if space_id:
+            cfg["space_id"] = space_id
+        elif not cfg.get("space_id"):
+            spaces = client.list_spaces()
+            space_list = spaces.get("spaces", spaces) if isinstance(spaces, dict) else spaces
+            if isinstance(space_list, list):
+                selected_space = _select_login_space([s for s in space_list if isinstance(s, dict)])
+                if selected_space:
+                    selected_id = _candidate_space_id(selected_space)
+                    if selected_id:
+                        cfg["space_id"] = selected_id
+                        console.print(f"[green]Space:[/green] {selected_space.get('name', selected_id)}")
+                elif len(space_list) > 1:
+                    console.print(
+                        f"\n[yellow]{len(space_list)} spaces found.[/yellow] No default space selected during login."
+                    )
+    except Exception:
+        if space_id:
+            cfg["space_id"] = space_id
+
+    config_path = _save_user_config(cfg)
+    console.print(f"\n[green]Saved user login:[/green] {config_path}")
+    for k, v in cfg.items():
+        if k == "token":
+            v = v[:6] + "..." + v[-4:] if len(v) > 10 else "***"
+        console.print(f"  {k} = {v}")
+
+    console.print("\n[cyan]You're ready.[/cyan] Try: ax auth whoami")
 
 
 @app.command()

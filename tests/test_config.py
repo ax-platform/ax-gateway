@@ -6,10 +6,12 @@ from ax_cli.config import (
     _find_project_root,
     _global_config_dir,
     _load_config,
+    _save_user_config,
     resolve_agent_id,
     resolve_agent_name,
     resolve_base_url,
     resolve_token,
+    resolve_user_token,
 )
 
 
@@ -96,6 +98,53 @@ class TestLoadConfig:
         assert cfg["agent_id"] == "local-agent"  # local wins
         assert cfg["base_url"] == "https://global.example.com"  # global preserved
 
+    def test_user_login_config_is_fallback_without_local_config(self, tmp_path, monkeypatch):
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
+        _save_user_config(
+            {
+                "token": "axp_u_user.secret",
+                "base_url": "https://next.paxai.app",
+                "principal_type": "user",
+            }
+        )
+        isolated = tmp_path / "no-local"
+        isolated.mkdir()
+        monkeypatch.chdir(isolated)
+
+        cfg = _load_config()
+
+        assert cfg["token"] == "axp_u_user.secret"
+        assert cfg["principal_type"] == "user"
+
+    def test_local_agent_config_overrides_user_login_principal(self, tmp_path, monkeypatch):
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
+        _save_user_config(
+            {
+                "token": "axp_u_user.secret",
+                "base_url": "https://next.paxai.app",
+                "principal_type": "user",
+            }
+        )
+        local_ax = tmp_path / ".ax"
+        local_ax.mkdir()
+        (local_ax / "config.toml").write_text(
+            'token = "axp_a_agent.secret"\n'
+            'base_url = "https://next.paxai.app"\n'
+            'agent_name = "orion"\n'
+            'agent_id = "agent-orion"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        cfg = _load_config()
+
+        assert cfg["token"] == "axp_a_agent.secret"
+        assert cfg["principal_type"] == "agent"
+        assert cfg["agent_name"] == "orion"
+
 
 class TestResolveAgentId:
     def test_env_var_wins(self, monkeypatch):
@@ -174,6 +223,27 @@ class TestResolveToken:
     def test_returns_none_when_not_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         assert resolve_token() is None
+
+    def test_resolve_user_token_uses_user_login_even_with_local_agent(self, tmp_path, monkeypatch):
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
+        _save_user_config(
+            {
+                "token": "axp_u_user.secret",
+                "base_url": "https://next.paxai.app",
+                "principal_type": "user",
+            }
+        )
+        local_ax = tmp_path / ".ax"
+        local_ax.mkdir()
+        (local_ax / "config.toml").write_text(
+            'token = "axp_a_agent.secret"\nagent_name = "orion"\nagent_id = "agent-orion"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert resolve_token() == "axp_a_agent.secret"
+        assert resolve_user_token() == "axp_u_user.secret"
 
 
 class TestResolveBaseUrl:

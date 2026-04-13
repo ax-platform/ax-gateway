@@ -47,6 +47,35 @@ def _global_config_dir() -> Path:
     return Path.home() / ".ax"
 
 
+def _user_config_path() -> Path:
+    """User login credential store, separate from agent runtime config."""
+    return _global_config_dir() / "user.toml"
+
+
+def _load_user_config() -> dict:
+    """Load the user login config created by `axctl login`."""
+    cf = _user_config_path()
+    if cf.exists():
+        return tomllib.loads(cf.read_text())
+    return {}
+
+
+def _save_user_config(cfg: dict) -> Path:
+    """Save user login config without touching agent workspace config."""
+    d = _global_config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    cf = _user_config_path()
+    lines = []
+    for k, v in cfg.items():
+        if isinstance(v, str):
+            lines.append(f'{k} = "{v}"')
+        else:
+            lines.append(f"{k} = {v}")
+    cf.write_text("\n".join(lines) + "\n")
+    cf.chmod(0o600)
+    return cf
+
+
 def _load_local_config() -> dict:
     """Load project-local .ax/config.toml if it exists."""
     local = _local_config_dir()
@@ -128,12 +157,27 @@ def _load_active_profile_config() -> dict:
 def _load_config() -> dict:
     """Merge global -> active profile -> local. Local/env still win."""
     merged = _load_global_config()
-    merged.update(_load_active_profile_config())
+    user_cfg = _load_user_config()
+    if user_cfg:
+        merged.update(user_cfg)
+
+    active_profile = _load_active_profile_config()
+    if active_profile:
+        merged.update(active_profile)
+        if "principal_type" not in active_profile and (
+            active_profile.get("agent_id") or active_profile.get("agent_name")
+        ):
+            merged["principal_type"] = "agent"
+
     # When running from $HOME, the "local" config is the same ~/.ax/config.toml
     # already loaded as global. Do not let that stale file override the active
     # profile we just applied.
     if _local_config_dir() != _global_config_dir():
-        merged.update(_load_local_config())
+        local_cfg = _load_local_config()
+        if local_cfg:
+            merged.update(local_cfg)
+            if "principal_type" not in local_cfg and (local_cfg.get("agent_id") or local_cfg.get("agent_name")):
+                merged["principal_type"] = "agent"
     return merged
 
 
@@ -184,8 +228,28 @@ def resolve_token() -> str | None:
     return os.environ.get("AX_TOKEN") or _load_config().get("token")
 
 
+def resolve_user_token() -> str | None:
+    """Resolve the user login token, ignoring agent-local runtime config."""
+    token = os.environ.get("AX_USER_TOKEN")
+    if token:
+        return token
+    cfg = _load_user_config()
+    token = cfg.get("token")
+    if token:
+        return token
+    fallback = os.environ.get("AX_TOKEN") or _load_config().get("token")
+    if fallback and str(fallback).startswith("axp_u_"):
+        return fallback
+    return None
+
+
 def resolve_base_url() -> str:
     return os.environ.get("AX_BASE_URL") or _load_config().get("base_url", "http://localhost:8001")
+
+
+def resolve_user_base_url() -> str:
+    cfg = _load_user_config()
+    return os.environ.get("AX_USER_BASE_URL") or cfg.get("base_url") or resolve_base_url()
 
 
 def resolve_agent_name(*, explicit: str | None = None, client: AxClient | None = None) -> str | None:
@@ -317,3 +381,21 @@ def get_client() -> AxClient:
         agent_name=agent_name,
         agent_id=agent_id,
     )
+
+
+def get_user_client() -> AxClient:
+    """Return a user-authored client for setup/management operations."""
+    token = resolve_user_token()
+    if not token:
+        typer.echo(
+            "Error: No user login found. Run 'axctl login' with a user PAT.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if token.startswith("axp_a_"):
+        typer.echo(
+            "Error: User login is backed by an agent PAT. Run 'axctl login' with a user PAT.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return AxClient(base_url=resolve_user_base_url(), token=token)

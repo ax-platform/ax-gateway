@@ -8,11 +8,11 @@ from ax_cli.main import app
 runner = CliRunner()
 
 
-def test_login_alias_calls_auth_init(monkeypatch):
-    """`ax login` is a top-level alias that forwards to `ax auth init` with identical kwargs."""
+def test_login_calls_user_login(monkeypatch):
+    """`ax login` is the human login path, separate from local agent init."""
     called = {}
 
-    def fake_init(token, base_url, agent, space_id):
+    def fake_login_user(token, *, base_url, agent, space_id):
         called.update(
             {
                 "token": token,
@@ -22,7 +22,7 @@ def test_login_alias_calls_auth_init(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(auth, "init", fake_init)
+    monkeypatch.setattr(auth, "login_user", fake_login_user)
 
     result = runner.invoke(
         app,
@@ -52,7 +52,7 @@ def test_login_defaults_to_next_without_space_requirement(monkeypatch):
     """`ax login` is the user path: next URL by default, no space required."""
     called = {}
 
-    def fake_init(token, base_url, agent, space_id):
+    def fake_login_user(token, *, base_url, agent, space_id):
         called.update(
             {
                 "token": token,
@@ -62,7 +62,7 @@ def test_login_defaults_to_next_without_space_requirement(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(auth, "init", fake_init)
+    monkeypatch.setattr(auth, "login_user", fake_login_user)
 
     result = runner.invoke(app, ["login", "--token", "axp_u_test.token"])
 
@@ -108,8 +108,8 @@ def test_login_space_selection_uses_only_unambiguous_space():
     )
 
 
-def test_user_login_replaces_stale_agent_identity(monkeypatch, write_config, config_dir):
-    """A user PAT login must not inherit stale agent identity from prior local config."""
+def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config, config_dir):
+    """A user PAT login is stored separately and must not rewrite an agent config."""
     write_config(
         token="axp_a_old.secret",
         base_url="https://old.example.com",
@@ -151,10 +151,18 @@ def test_user_login_replaces_stale_agent_identity(monkeypatch, write_config, con
     result = runner.invoke(app, ["login", "--token", "axp_u_new.secret"])
 
     assert result.exit_code == 0
-    cfg = tomllib.loads((config_dir / "config.toml").read_text())
-    assert cfg == {
+    local_cfg = tomllib.loads((config_dir / "config.toml").read_text())
+    assert local_cfg == {
+        "token": "axp_a_old.secret",
+        "base_url": "https://old.example.com",
+        "agent_name": "orion",
+        "agent_id": "agent-orion",
+        "space_id": "old-space",
+    }
+    user_cfg = tomllib.loads((config_dir.parent / "_global_config" / "user.toml").read_text())
+    assert user_cfg == {
         "token": "axp_u_new.secret",
         "base_url": "https://next.paxai.app",
         "principal_type": "user",
-        "space_id": "old-space",
+        "space_id": "space-current",
     }

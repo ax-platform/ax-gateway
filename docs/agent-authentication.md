@@ -161,9 +161,11 @@ If you're using Claude Code to manage your agent swarm, use the user PAT for use
 Current compatibility flow:
 
 1. The user runs `ax login` in the trusted shell and pastes the user PAT into the hidden prompt.
-2. The setup agent may run `ax token mint <agent> --save-to ... --profile ...` in that already-initialized environment.
-3. The setup agent verifies each generated agent profile with `ax profile verify` and `ax auth whoami --json`.
-4. Runtime channels switch to the generated agent profile and use only that agent's `axp_a_` PAT.
+2. The CLI stores the user login separately from agent runtime config in `~/.ax/user.toml`.
+3. The setup agent may run `ax token mint <agent> --save-to ... --profile ...` in that already-initialized environment.
+4. `ax token mint` uses the stored user login for credential minting, even when the current working directory has an agent `.ax/config.toml`.
+5. The setup agent verifies each generated agent profile with `ax profile verify` and `ax auth whoami --json`.
+6. Runtime channels switch to the generated agent profile and use only that agent's `axp_a_` PAT.
 
 Do not paste the user PAT into an agent message or task. Until the target device-bound `axctl init` flow lands, the user PAT remains a high-trust local setup credential. Treat the initialized shell/account as trusted setup context, not as an agent runtime credential.
 

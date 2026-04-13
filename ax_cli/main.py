@@ -52,7 +52,7 @@ def login(
     space_id: str = typer.Option(None, "--space-id", "-s", help="Optional default space ID"),
 ):
     """Log in to aX. Prompts for a token securely when --token is omitted."""
-    auth.init(token=token, base_url=base_url, agent=agent, space_id=space_id)
+    auth.login_user(token=token, base_url=base_url, agent=agent, space_id=space_id)
 
 
 @app.command("send")
