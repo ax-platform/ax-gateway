@@ -10,11 +10,16 @@ app = typer.Typer(name="agents", help="Agent management", no_args_is_help=True)
 
 
 @app.command("list")
-def list_agents(as_json: bool = JSON_OPTION):
+def list_agents(
+    space_id: str = typer.Option(None, "--space-id", help="Override default space"),
+    limit: int = typer.Option(500, "--limit", help="Max agents to return"),
+    as_json: bool = JSON_OPTION,
+):
     """List agents in the current space."""
     client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
     try:
-        data = client.list_agents()
+        data = client.list_agents(space_id=sid, limit=limit)
     except httpx.HTTPStatusError as e:
         handle_error(e)
     agents = data if isinstance(data, list) else data.get("agents", [])

@@ -58,12 +58,14 @@ def create(
 @app.command("list")
 def list_tasks(
     limit: int = typer.Option(20, "--limit", help="Max tasks to return"),
+    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
     """List tasks."""
     client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
     try:
-        data = client.list_tasks(limit=limit)
+        data = client.list_tasks(limit=limit, space_id=sid)
     except httpx.HTTPStatusError as e:
         handle_error(e)
     tasks = data if isinstance(data, list) else data.get("tasks", [])

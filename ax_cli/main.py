@@ -19,6 +19,7 @@ from .commands import (
     messages,
     mint,
     profile,
+    qa,
     spaces,
     tasks,
     upload,
@@ -41,6 +42,7 @@ app.add_typer(profile.app, name="profile")
 app.add_typer(spaces.app, name="spaces")
 app.add_typer(channel.app, name="channel")
 app.add_typer(mint.app, name="token")
+app.add_typer(qa.app, name="qa")
 app.command("handoff")(handoff.run)
 
 

@@ -63,6 +63,23 @@ class TestTokenClassSelection:
         assert call_body["requested_token_class"] == "agent_access"
         assert call_body["agent_id"] == "some-agent-uuid"
 
+    def test_agent_pat_without_agent_id_uses_agent_access(self, tmp_path, monkeypatch, mock_exchange):
+        """Agent-bound PATs still request agent_access when server-side binding supplies the agent."""
+        mock_post = mock_exchange()
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".ax").mkdir()
+        (tmp_path / ".ax" / "config.toml").write_text("")
+
+        client = AxClient(
+            "https://example.com",
+            "axp_a_AgentKey.AgentSecret",
+        )
+        client._get_jwt()
+
+        call_body = mock_post.call_args[1]["json"]
+        assert call_body["requested_token_class"] == "agent_access"
+        assert "agent_id" not in call_body
+
     def test_user_pat_without_agent_id_uses_user_access(self, tmp_path, monkeypatch, mock_exchange):
         """User PAT without agent_id → user_access."""
         mock_post = mock_exchange()
@@ -118,6 +135,42 @@ def test_list_messages_passes_explicit_space_id():
         "limit": 5,
         "channel": "main",
         "space_id": "space-123",
+    }
+
+
+def test_list_tasks_passes_explicit_space_id():
+    client = AxClient("https://example.com", "legacy-token")
+    response = httpx.Response(
+        200,
+        json={"tasks": []},
+        request=httpx.Request("GET", "https://example.com/api/v1/tasks"),
+    )
+    client._http.get = MagicMock(return_value=response)
+
+    client.list_tasks(limit=7, space_id="space-123")
+
+    assert client._http.get.call_args.args[0] == "/api/v1/tasks"
+    assert client._http.get.call_args.kwargs["params"] == {
+        "limit": 7,
+        "space_id": "space-123",
+    }
+
+
+def test_list_agents_passes_explicit_space_id_and_limit():
+    client = AxClient("https://example.com", "legacy-token")
+    response = httpx.Response(
+        200,
+        json={"agents": []},
+        request=httpx.Request("GET", "https://example.com/api/v1/agents"),
+    )
+    client._http.get = MagicMock(return_value=response)
+
+    client.list_agents(space_id="space-123", limit=500)
+
+    assert client._http.get.call_args.args[0] == "/api/v1/agents"
+    assert client._http.get.call_args.kwargs["params"] == {
+        "space_id": "space-123",
+        "limit": 500,
     }
 
 
@@ -317,19 +370,3 @@ class TestCredentialManagement:
             "/api/v1/agents/manage/list",
             "/agents/manage/list",
         ]
-
-    def test_agent_pat_without_agent_id_uses_user_access(self, tmp_path, monkeypatch, mock_exchange):
-        """Agent PAT without agent_id falls back to user_access."""
-        mock_post = mock_exchange()
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".ax").mkdir()
-        (tmp_path / ".ax" / "config.toml").write_text("")
-
-        client = AxClient(
-            "https://example.com",
-            "axp_a_AgentKey.AgentSecret",
-        )
-        client._get_jwt()
-
-        call_body = mock_post.call_args[1]["json"]
-        assert call_body["requested_token_class"] == "user_access"

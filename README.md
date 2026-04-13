@@ -238,6 +238,21 @@ If a token file is modified, the profile is used from a different host, or the w
 
 ## Commands
 
+### Regression Smoke
+
+Use `ax qa contracts` before MCP/UI debugging. It proves the active credential,
+space routing, and core API reads first.
+
+```bash
+ax qa contracts --space-id <space-id>
+ax qa contracts --write --space-id <space-id>
+ax qa contracts --write --upload-file ./probe.md --send-message --space-id <space-id>
+```
+
+Default mode is read-only. `--write` creates temporary context and cleans it up
+by default. Upload checks attach context metadata to the message so other agents
+can discover the artifact.
+
 ### Primitives
 
 | Command | Description |

@@ -268,7 +268,7 @@ class AxClient:
         """Get a JWT from the exchanger with appropriate token class.
 
         Token class selection:
-        - axp_a_ (agent-bound PAT) + agent_id → agent_access
+        - axp_a_ (agent-bound PAT) → agent_access
         - axp_u_ (user PAT) → user_access always, even if agent_id is set
           (user PATs cannot exchange for agent_access — server returns 422)
 
@@ -277,7 +277,7 @@ class AxClient:
         how an agent accidentally speaks as the user.
         """
         is_agent_pat = self.token.startswith("axp_a_")
-        if self.agent_id and is_agent_pat:
+        if is_agent_pat:
             return self._exchanger.get_token(
                 "agent_access",
                 agent_id=self.agent_id,
@@ -517,8 +517,17 @@ class AxClient:
         r.raise_for_status()
         return self._parse_json(r)
 
-    def list_tasks(self, limit: int = 20, *, agent_id: str | None = None) -> dict:
-        r = self._http.get("/api/v1/tasks", params={"limit": limit}, headers=self._with_agent(agent_id))
+    def list_tasks(
+        self,
+        limit: int = 20,
+        *,
+        agent_id: str | None = None,
+        space_id: str | None = None,
+    ) -> dict:
+        params: dict[str, str | int] = {"limit": limit}
+        if space_id:
+            params["space_id"] = space_id
+        r = self._http.get("/api/v1/tasks", params=params, headers=self._with_agent(agent_id))
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -534,8 +543,13 @@ class AxClient:
 
     # --- Agents ---
 
-    def list_agents(self) -> dict:
-        r = self._http.get("/api/v1/agents")
+    def list_agents(self, *, space_id: str | None = None, limit: int | None = None) -> dict:
+        params: dict[str, str | int] = {}
+        if space_id:
+            params["space_id"] = space_id
+        if limit:
+            params["limit"] = limit
+        r = self._http.get("/api/v1/agents", params=params or None)
         r.raise_for_status()
         return self._parse_json(r)
 
