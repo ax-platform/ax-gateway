@@ -18,12 +18,15 @@ from .client import AxClient
 
 
 def _find_project_root() -> Path | None:
-    """Walk up from CWD looking for .ax/ config dir or .git directory."""
+    """Walk up from CWD looking for .ax/ config dir.
+
+    Does NOT use .git boundaries — identity is workspace-scoped, not
+    repo-scoped. The agent's working directory determines config, not
+    which git repo they happen to be inside.
+    """
     cur = Path.cwd()
     for parent in [cur, *cur.parents]:
         if (parent / ".ax").is_dir():
-            return parent
-        if (parent / ".git").exists():
             return parent
     return None
 
@@ -52,12 +55,33 @@ def _load_local_config() -> dict:
     return {}
 
 
+_global_config_warned = False
+
+
 def _load_global_config() -> dict:
-    """Load ~/.ax/config.toml."""
+    """Load ~/.ax/config.toml.
+
+    Warns (once) if global config contains credentials (token, agent_id,
+    agent_name). These should live in profiles or workspace config, not
+    the global fallback. Global config should only have base_url defaults.
+    """
+    global _global_config_warned
     cf = _global_config_dir() / "config.toml"
-    if cf.exists():
-        return tomllib.loads(cf.read_text())
-    return {}
+    if not cf.exists():
+        return {}
+    cfg = tomllib.loads(cf.read_text())
+    # Warn about credentials in global config
+    cred_keys = {"token", "token_file", "agent_id", "agent_name"}
+    found = cred_keys & set(cfg.keys())
+    if found and not _global_config_warned:
+        _global_config_warned = True
+        import sys
+        sys.stderr.write(
+            f"\033[33m⚠  Global config (~/.ax/config.toml) contains credentials: {', '.join(sorted(found))}\033[0m\n"
+            "   Move credentials to a profile (ax profile add) or workspace .ax/config.toml.\n"
+            "   Global config should only have defaults like base_url.\n\n"
+        )
+    return cfg
 
 
 def _load_active_profile_config() -> dict:
@@ -267,10 +291,19 @@ def get_client() -> AxClient:
             err=True,
         )
         raise typer.Exit(1)
+    base_url = resolve_base_url()
     agent_name = resolve_agent_name()
     agent_id = resolve_agent_id()
+
+    # Verbose environment indicator: show which API you're hitting
+    if os.environ.get("AX_VERBOSE", "").lower() in ("1", "true", "yes"):
+        import sys
+        from urllib.parse import urlparse
+        host = urlparse(base_url).hostname or base_url
+        sys.stderr.write(f"\033[2m[env: {host}]\033[0m\n")
+
     return AxClient(
-        base_url=resolve_base_url(),
+        base_url=base_url,
         token=token,
         agent_name=agent_name,
         agent_id=agent_id,
