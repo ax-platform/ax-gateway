@@ -38,21 +38,31 @@ def _resolve_agent_id(client, agent: str) -> tuple[str, str]:
             return agent, agent_data.get("name", agent)
         except Exception:
             return agent, agent
-    # Name lookup via the standard agents endpoint (user_access scope)
+    # Name lookup via the standard agents endpoint (user_access scope).
+    # Some agents may be hidden from list but still exist — if list fails,
+    # fall back to direct get_agent() lookup.
     try:
         agents_data = client.list_agents()
         agents = agents_data if isinstance(agents_data, list) else agents_data.get("agents", [])
         match = next((a for a in agents if a.get("name", "").lower() == agent.lower()), None)
-        if not match:
-            console.print(f"[red]Agent '{agent}' not found.[/red]")
-            console.print("[dim]Available agents:[/dim]")
-            for a in agents[:10]:
-                console.print(f"  {a.get('name', '?')}")
-            raise typer.Exit(1)
-        return match["id"], match.get("name", agent)
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
-        raise typer.Exit(1)
+        if match:
+            return match["id"], match.get("name", agent)
+    except httpx.HTTPStatusError:
+        pass  # list failed — try direct lookup below
+
+    # Fallback: direct agent lookup by name (handles agents hidden from list)
+    try:
+        data = client.get_agent(agent)
+        agent_data = data.get("agent", data) if isinstance(data, dict) else data
+        agent_id = agent_data.get("id")
+        if agent_id:
+            return agent_id, agent_data.get("name", agent)
+    except httpx.HTTPStatusError:
+        pass
+
+    console.print(f"[red]Agent '{agent}' not found in list or direct lookup.[/red]")
+    console.print("[dim]Try using the agent UUID directly, or check if the agent exists in your space.[/dim]")
+    raise typer.Exit(1)
 
 
 @app.command()

@@ -85,41 +85,27 @@ If you have a user PAT, you can set up an entire agent team autonomously.
 ax agents create my-agent --description "Handles backend tasks"
 ```
 
-### Mint an agent token for it
-This is a two-step process (the CLI handles the exchange automatically):
+### Mint an agent token — one command
 ```bash
-# Exchange your user PAT for an admin JWT, then issue an agent PAT
-# Currently requires curl — `ax token mint` is planned
-ADMIN_JWT=$(curl -s -X POST $BASE_URL/auth/exchange \
-  -H "Authorization: Bearer $USER_PAT" \
-  -H "Content-Type: application/json" \
-  -d '{"requested_token_class":"user_admin","audience":"ax-api","scope":"agents.create credentials.issue.agent"}' \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
-
-curl -s -X POST $BASE_URL/credentials/agent-pat \
-  -H "Authorization: Bearer $ADMIN_JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"agent_id":"<uuid>","name":"my-agent-cli","expires_in_days":90,"audience":"both"}'
+ax token mint my-agent --audience both
 ```
 
-Save the returned token — it's shown once.
+This resolves the agent, exchanges for admin JWT, issues the PAT, and prints it. Save the token — it's shown once.
 
-### Set up a profile for the agent
+### Mint + save + create profile — one command
 ```bash
-echo "$TOKEN" > ~/.ax/my_agent_token && chmod 600 ~/.ax/my_agent_token
-ax profile add my-agent \
-  --url https://next.paxai.app \
-  --token-file ~/.ax/my_agent_token \
-  --agent-name my-agent \
-  --agent-id <uuid> \
-  --space-id <space-uuid>
+ax token mint my-agent --audience both \
+  --save-to /home/my-agent \
+  --profile prod-my-agent
 ```
 
-### Repeat for the whole team
+This creates the token file, writes `.ax/config.toml`, and creates a named profile.
+
+### Bootstrap the whole team
 ```bash
-# Swarm bootstrap: one user token, multiple agent PATs
 for agent in backend-agent frontend-agent ops-agent; do
-  # create agent → mint PAT → save token → create profile
+  ax agents create $agent --description "$agent agent"
+  ax token mint $agent --audience both --save-to /home/$agent --profile $agent
 done
 ```
 
