@@ -1,15 +1,10 @@
 """Tests for config resolution — the cascade that burned us (2026-04-05)."""
-import os
 from pathlib import Path
-
-import pytest
 
 from ax_cli.config import (
     _find_project_root,
     _global_config_dir,
     _load_config,
-    _load_global_config,
-    _load_local_config,
     resolve_agent_id,
     resolve_base_url,
     resolve_token,
@@ -22,12 +17,15 @@ class TestFindProjectRoot:
         monkeypatch.chdir(tmp_path)
         assert _find_project_root() == tmp_path
 
-    def test_finds_git_dir(self, tmp_path, monkeypatch):
+    def test_ignores_git_dir(self, tmp_path, monkeypatch):
         (tmp_path / ".git").mkdir()
         monkeypatch.chdir(tmp_path)
-        assert _find_project_root() == tmp_path
+        result = _find_project_root()
+        assert result != tmp_path
+        if result is not None:
+            assert (result / ".ax").is_dir()
 
-    def test_prefers_ax_over_git(self, tmp_path, monkeypatch):
+    def test_finds_ax_even_when_git_exists(self, tmp_path, monkeypatch):
         (tmp_path / ".ax").mkdir()
         (tmp_path / ".git").mkdir()
         monkeypatch.chdir(tmp_path)
@@ -48,9 +46,9 @@ class TestFindProjectRoot:
         # May find something up the tree depending on environment,
         # but in an isolated tmp_path it should be None
         result = _find_project_root()
-        # If no .ax or .git anywhere up the tree
+        # If no .ax anywhere up the tree
         if result is not None:
-            assert (result / ".ax").is_dir() or (result / ".git").exists()
+            assert (result / ".ax").is_dir()
 
 
 class TestGlobalConfigDir:

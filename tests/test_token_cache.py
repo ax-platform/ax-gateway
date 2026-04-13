@@ -1,7 +1,4 @@
 """Tests for token exchange and caching (AUTH-SPEC-001 §13)."""
-import json
-import time
-from pathlib import Path
 
 import pytest
 
@@ -106,6 +103,7 @@ class TestTokenExchanger:
             nonlocal call_count
             call_count += 1
             from unittest.mock import MagicMock
+
             import httpx
             resp = MagicMock(spec=httpx.Response)
             resp.status_code = 200

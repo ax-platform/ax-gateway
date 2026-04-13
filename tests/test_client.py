@@ -1,5 +1,5 @@
 """Tests for AxClient auth and token class selection."""
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -10,10 +10,8 @@ from ax_cli.client import AxClient
 class TestTokenClassSelection:
     """Verify correct token class is requested based on PAT prefix + agent_id."""
 
-    def test_user_pat_with_agent_id_uses_user_access(self, tmp_path, monkeypatch, mock_exchange):
-        """User PATs (axp_u_) must always use user_access, even when agent_id is set.
-        This was the bug: axp_u_ + agent_id triggered agent_access, which the server rejects.
-        """
+    def test_user_pat_with_agent_id_is_blocked(self, tmp_path, monkeypatch, mock_exchange):
+        """User PATs exchange to user JWTs, so an agent-bound profile must not use one."""
         mock_post = mock_exchange()
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".ax").mkdir()
@@ -24,7 +22,41 @@ class TestTokenClassSelection:
             "axp_u_UserKey.UserSecret",
             agent_id="some-agent-uuid",
         )
-        # Trigger auth by making a request
+        with pytest.raises(SystemExit):
+            client._get_jwt()
+
+        mock_post.assert_not_called()
+
+    def test_user_pat_with_agent_name_is_blocked(self, tmp_path, monkeypatch, mock_exchange):
+        """Agent-name config plus user PAT is also an attribution boundary violation."""
+        mock_post = mock_exchange()
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".ax").mkdir()
+        (tmp_path / ".ax" / "config.toml").write_text("")
+
+        client = AxClient(
+            "https://example.com",
+            "axp_u_UserKey.UserSecret",
+            agent_name="some-agent",
+        )
+        with pytest.raises(SystemExit):
+            client._get_jwt()
+
+        mock_post.assert_not_called()
+
+    def test_user_pat_override_with_agent_id_uses_user_access(self, tmp_path, monkeypatch, mock_exchange):
+        """Escape hatch preserves explicit user-mode debugging without agent_access."""
+        mock_post = mock_exchange()
+        monkeypatch.setenv("AX_ALLOW_USER_TOKEN", "1")
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".ax").mkdir()
+        (tmp_path / ".ax" / "config.toml").write_text("")
+
+        client = AxClient(
+            "https://example.com",
+            "axp_u_UserKey.UserSecret",
+            agent_id="some-agent-uuid",
+        )
         client._get_jwt()
 
         call_body = mock_post.call_args[1]["json"]

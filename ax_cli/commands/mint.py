@@ -109,12 +109,6 @@ def mint(
 
     client = get_client()
 
-    # Suppress user-token guardrail — this IS a management operation.
-    # We need user_access for agent name resolution (user_admin lacks agents.list),
-    # but that shouldn't trigger the "don't use user tokens for routine work" warning.
-    from ..client import AxClient
-    AxClient._user_token_warned = True
-
     # Step 2: Resolve agent name → UUID (uses user_access JWT via standard endpoint)
     console.print(f"[cyan]Resolving agent '{agent}'...[/cyan]")
     agent_id, agent_name = _resolve_agent_id(client, agent)
@@ -210,6 +204,7 @@ def mint(
         try:
             import socket
             from datetime import datetime, timezone
+
             from .profile import _profile_path, _token_sha256, _workdir_hash, _write_toml
 
             profile_data = {
@@ -246,12 +241,12 @@ def mint(
             result["profile"] = profile_name
         print_json(result)
     else:
-        console.print(f"\n[bold green]Agent PAT minted successfully[/bold green]")
+        console.print("\n[bold green]Agent PAT minted successfully[/bold green]")
         console.print(f"  Agent: {agent_name} ({agent_id[:12]}...)")
         console.print(f"  Label: {pat_name}")
         console.print(f"  Audience: {audience}")
         console.print(f"  Expires: {data.get('expires_at', '?')[:10]}")
-        console.print(f"\n[bold]Token (save now — shown once):[/bold]")
+        console.print("\n[bold]Token (save now — shown once):[/bold]")
         console.print(f"  {new_token}")
         if token_file:
             console.print(f"\n[dim]Saved to {token_file}[/dim]")

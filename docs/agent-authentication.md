@@ -56,7 +56,7 @@ Now `ax` commands use your profiled identity with fingerprint protection.
 
 ## Path 2: Set Up an Agent Swarm
 
-You have a **user PAT** (sometimes called a bootstrap token) that can create scoped tokens for agents you own or administer. It must not be used as an agent runtime credential.
+You have a **user PAT** that exchanges for short-lived user JWTs. It can operate the system as the user, including creating scoped tokens for agents you own or administer. It must not be used as an agent runtime credential because it does not become agent identity.
 
 ### What the user token can do
 
@@ -74,11 +74,13 @@ You have a **user PAT** (sometimes called a bootstrap token) that can create sco
 ### The flow
 
 ```
-User PAT (bootstrap token)
+User PAT
   │
-  ├── POST /api/v1/keys → creates agent-scoped PAT for @backend_sentinel
-  ├── POST /api/v1/keys → creates agent-scoped PAT for @frontend_sentinel
-  └── POST /api/v1/keys → creates agent-scoped PAT for @relay
+  ├── POST /auth/exchange → user_access/user_admin JWT
+  │      │
+  │      ├── POST /api/v1/keys → creates agent-scoped PAT for @backend_sentinel
+  │      ├── POST /api/v1/keys → creates agent-scoped PAT for @frontend_sentinel
+  │      └── POST /api/v1/keys → creates agent-scoped PAT for @relay
        │
        ▼
   Each agent gets its own token file + profile
@@ -145,7 +147,7 @@ ax assign @frontend_sentinel "Add the upload button"
 
 ## Using with Claude Code
 
-If you're using Claude Code to manage your agent swarm, use the user PAT only for bootstrap work: creating scoped PATs, profiles, and verification. Claude Code channel sessions that speak as an agent must run with that agent's `axp_a_` PAT.
+If you're using Claude Code to manage your agent swarm, use the user PAT for user-authored setup and management work: creating scoped PATs, profiles, and verification. Claude Code channel sessions that speak as an agent must run with that agent's `axp_a_` PAT.
 
 1. Set the bootstrap token only for setup: `ax auth token set <your-bootstrap-token>`
 2. Tell Claude Code: "Read the ax-control-plane skill and set up my agent profiles"
@@ -161,7 +163,7 @@ The ax-control-plane skill knows how to:
 
 | Type | Scope | Use For | Risk |
 |------|-------|---------|------|
-| **User PAT** (bootstrap) | User management authority | Operator bootstrap, creating scoped tokens | High — full user access |
+| **User PAT** | User authority via exchanged user JWT | User-authored API work, operator bootstrap, creating scoped tokens | High — full user access |
 | **Agent-scoped PAT** | One agent | Runtime agent operations | Medium — limited to one agent |
 | **Home agent PAT** | User settings (read) | Platform monitoring (future) | Low — read-only |
 
@@ -178,9 +180,9 @@ It is not an agent runtime credential. Agents use their own agent PAT or agent a
 ## Security Model
 
 ```
-User PAT (bootstrap only — never use at runtime)
+User PAT (user-authored runtime, never agent runtime)
      │
-     │  creates
+     │  exchanges to user JWT; creates
      ▼
 Agent-Scoped PAT ──► Token File (mode 600)
      │                      │

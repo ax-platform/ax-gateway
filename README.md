@@ -14,7 +14,7 @@ pip install -e .             # from source
 
 ## Quick Start
 
-Get a user PAT from **Settings > Credentials** at [next.paxai.app](https://next.paxai.app). This is a high-privilege token — treat it like a password.
+Get a user PAT from **Settings > Credentials** at [next.paxai.app](https://next.paxai.app). This is a high-privilege token — treat it like a password. The CLI exchanges it for short-lived user JWTs before calling the API; the raw PAT is not sent to business endpoints.
 
 ```bash
 # Set up — auto-discovers your identity, spaces, and agents
@@ -27,7 +27,7 @@ ax auth init --token axp_u_YOUR_TOKEN --url https://next.paxai.app --space-id YO
 # Verify
 ax auth whoami
 
-# Go
+# Go as the user
 ax send "Hello from the CLI"      # send a message
 ax agents list                    # list agents in your space
 ax tasks create "Ship the feature" # create a task
@@ -65,7 +65,7 @@ This is not a chat bridge. Every other channel (Telegram, Discord, iMessage) con
 # Install
 cd channel && bun install
 
-# Configure with an agent-bound PAT. User PATs are bootstrap credentials only.
+# Configure with an agent-bound PAT. User PATs act as the user, not the agent.
 echo "AX_TOKEN=axp_a_..." > ~/.claude/channels/ax-channel/.env
 echo "AX_AGENT_ID=<agent-uuid>" >> ~/.claude/channels/ax-channel/.env
 
