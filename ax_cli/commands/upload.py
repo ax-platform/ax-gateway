@@ -112,16 +112,10 @@ def upload_file(
 
     try:
         if vault:
-            r = client._http.post(
-                f"/api/v1/spaces/{space_id}/intelligence/promote",
-                json={
-                    "key": context_key,
-                    "payload": context_value,
-                    "summary_snippet": f"Uploaded file: {original_name}",
-                    "artifact_type": "RESEARCH",
-                },
-            )
-            r.raise_for_status()
+            # Vault promotion is Redis -> Postgres. Store the context entry
+            # first, then promote that key into durable intelligence storage.
+            client.set_context(space_id, context_key, json.dumps(context_value))
+            client.promote_context(space_id, context_key, artifact_type="RESEARCH")
             storage_type = "vault"
         else:
             client.set_context(space_id, context_key, json.dumps(context_value))

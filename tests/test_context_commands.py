@@ -210,3 +210,54 @@ def test_default_upload_context_key_is_unique(monkeypatch):
     assert first == "upload:1775880839429:image.png:df9b1d15-e9c5-4e60-851e-53ea35b4f5e7"
     assert second == "upload:1775880839429:image.png:774758d4-8451-4570-bca4-e4c4d34706ac"
     assert first != second
+
+
+def test_context_upload_file_vault_stores_context_before_promote(monkeypatch, tmp_path):
+    calls = {}
+    sample = tmp_path / "vault.md"
+    sample.write_text("# Vault\nkeep this\n")
+
+    class FakeClient:
+        def upload_file(self, path, *, space_id=None):
+            calls["upload"] = {"path": path, "space_id": space_id}
+            return {
+                "attachment_id": "att-1",
+                "url": "/api/v1/uploads/files/vault.md",
+                "content_type": "text/markdown",
+                "size": sample.stat().st_size,
+                "original_filename": "vault.md",
+            }
+
+        def set_context(self, space_id, key, value, *, ttl=None):
+            calls["context"] = {"space_id": space_id, "key": key, "value": value, "ttl": ttl}
+            return {"status": "stored"}
+
+        def promote_context(self, space_id, key, *, artifact_type="RESEARCH", agent_id=None):
+            calls["promote"] = {
+                "space_id": space_id,
+                "key": key,
+                "artifact_type": artifact_type,
+                "agent_id": agent_id,
+            }
+            return {"status": "created", "key": key}
+
+    monkeypatch.setattr(context, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(context, "resolve_space_id", lambda client, explicit=None: "space-1")
+
+    result = runner.invoke(
+        app,
+        [
+            "context",
+            "upload-file",
+            str(sample),
+            "--vault",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["upload"]["space_id"] == "space-1"
+    assert calls["context"]["space_id"] == "space-1"
+    assert calls["promote"]["space_id"] == "space-1"
+    assert calls["promote"]["key"] == calls["context"]["key"]
+    assert calls["promote"]["artifact_type"] == "RESEARCH"

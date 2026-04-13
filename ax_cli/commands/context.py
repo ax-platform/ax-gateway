@@ -240,17 +240,10 @@ def upload_file(
 
     try:
         if vault:
-            # Promote to permanent vault storage
-            r = client._http.post(
-                f"/api/v1/spaces/{sid}/intelligence/promote",
-                json={
-                    "key": context_key,
-                    "payload": context_value,
-                    "summary_snippet": f"Uploaded file: {info.get('filename')}",
-                    "artifact_type": "RESEARCH",
-                },
-            )
-            r.raise_for_status()
+            # Vault promotion is Redis -> Postgres. Store the context entry
+            # first, then promote that key into durable intelligence storage.
+            client.set_context(sid, context_key, json.dumps(context_value), ttl=ttl)
+            client.promote_context(sid, context_key, artifact_type="RESEARCH")
             context_value["storage"] = "vault"
         else:
             # Ephemeral context (Redis)
@@ -354,16 +347,11 @@ def fetch_url(
 
     try:
         if vault:
-            r = client._http.post(
-                f"/api/v1/spaces/{sid}/intelligence/promote",
-                json={
-                    "key": context_key,
-                    "payload": {**context_value, "content": resp.text if is_text and not upload else None},
-                    "summary_snippet": f"Fetched from {url}",
-                    "artifact_type": "RESEARCH",
-                },
+            store_value = json.dumps(
+                {**context_value, "content": resp.text if is_text and not upload else context_value.get("content")}
             )
-            r.raise_for_status()
+            client.set_context(sid, context_key, store_value, ttl=ttl)
+            client.promote_context(sid, context_key, artifact_type="RESEARCH")
             context_value["storage"] = "vault"
         else:
             store_value = json.dumps(context_value) if upload or not is_text else resp.text

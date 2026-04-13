@@ -595,6 +595,22 @@ class AxClient:
         r.raise_for_status()
         return self._parse_json(r)
 
+    def promote_context(
+        self,
+        space_id: str,
+        key: str,
+        *,
+        artifact_type: str = "RESEARCH",
+        agent_id: str | None = None,
+    ) -> dict:
+        """POST /api/v1/spaces/{space_id}/intelligence/promote for an existing context key."""
+        body = {"key": key, "artifact_type": artifact_type}
+        if agent_id:
+            body["agent_id"] = agent_id
+        r = self._http.post(f"/api/v1/spaces/{space_id}/intelligence/promote", json=body)
+        r.raise_for_status()
+        return self._parse_json(r)
+
     def get_context(self, key: str, *, space_id: str | None = None) -> dict:
         params = {"space_id": space_id} if space_id else None
         r = self._http.get(f"/api/v1/context/{quote(key, safe='')}", params=params)
