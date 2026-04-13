@@ -60,9 +60,7 @@ def _resolve_agent_id(client, agent: str) -> tuple[str, str]:
     except httpx.HTTPStatusError:
         pass
 
-    console.print(f"[red]Agent '{agent}' not found in list or direct lookup.[/red]")
-    console.print("[dim]Try using the agent UUID directly, or check if the agent exists in your space.[/dim]")
-    raise typer.Exit(1)
+    return None, agent  # not found — caller decides whether to create
 
 
 @app.command()
@@ -71,6 +69,7 @@ def mint(
     name: str = typer.Option(None, "--name", "-n", help="Label for the PAT (default: <agent>-cli)"),
     expires_days: int = typer.Option(90, "--expires", help="PAT lifetime in days"),
     audience: str = typer.Option("both", "--audience", help="Target: cli, mcp, or both"),
+    create: bool = typer.Option(False, "--create", help="Create the agent if it doesn't exist"),
     save_to: Optional[str] = typer.Option(None, "--save-to", help="Directory to save token file (writes .ax/config.toml)"),
     profile_name: Optional[str] = typer.Option(None, "--profile", help="Create a named profile after minting"),
     as_json: bool = JSON_OPTION,
@@ -119,7 +118,38 @@ def mint(
     # Step 2: Resolve agent name → UUID (uses user_access JWT via standard endpoint)
     console.print(f"[cyan]Resolving agent '{agent}'...[/cyan]")
     agent_id, agent_name = _resolve_agent_id(client, agent)
-    console.print(f"[green]Found:[/green] {agent_name} ({agent_id[:12]}...)")
+
+    if agent_id is None:
+        if create:
+            console.print(f"[yellow]Agent '{agent}' not found. Creating...[/yellow]")
+            try:
+                data = client.mgmt_create_agent(agent)
+                agent_data = data.get("agent", data) if isinstance(data, dict) else data
+                agent_id = agent_data.get("id", "")
+                agent_name = agent_data.get("name", agent)
+                console.print(f"[green]Created:[/green] {agent_name} ({agent_id[:12]}...)")
+            except httpx.HTTPStatusError as e:
+                handle_error(e)
+                raise typer.Exit(1)
+        elif not as_json and sys.stdin.isatty():
+            console.print(f"[yellow]Agent '{agent}' not found.[/yellow]")
+            if typer.confirm("Create it?"):
+                try:
+                    data = client.mgmt_create_agent(agent)
+                    agent_data = data.get("agent", data) if isinstance(data, dict) else data
+                    agent_id = agent_data.get("id", "")
+                    agent_name = agent_data.get("name", agent)
+                    console.print(f"[green]Created:[/green] {agent_name} ({agent_id[:12]}...)")
+                except httpx.HTTPStatusError as e:
+                    handle_error(e)
+                    raise typer.Exit(1)
+            else:
+                raise typer.Exit(1)
+        else:
+            console.print(f"[red]Agent '{agent}' not found.[/red] Use --create to create it.")
+            raise typer.Exit(1)
+    else:
+        console.print(f"[green]Found:[/green] {agent_name} ({agent_id[:12]}...)")
 
     # Step 3+4: Issue agent PAT (uses user_admin JWT via mgmt endpoint)
     pat_name = name or f"{agent_name}-cli"
