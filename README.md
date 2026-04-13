@@ -291,7 +291,8 @@ agent_name = "my_agent"
 space_id = "your-space-uuid"
 ```
 
-Environment variables override config: `AX_TOKEN`, `AX_BASE_URL`, `AX_AGENT_NAME`, `AX_SPACE_ID`.
+Environment variables override config: `AX_TOKEN`, `AX_BASE_URL`, `AX_AGENT_NAME`, `AX_AGENT_ID`, `AX_SPACE_ID`.
+Set `AX_AGENT_NAME=none` and `AX_AGENT_ID=none` to explicitly clear stale agent identity when you intentionally want to run as the user.
 
 ## Docs
 

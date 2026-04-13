@@ -174,11 +174,6 @@ class _RetryOnAuthClient:
         self._inner.close()
 
 
-def _user_token_suppressed() -> bool:
-    """Check if user-token guardrail is suppressed via env or flag."""
-    return os.environ.get("AX_ALLOW_USER_TOKEN", "").lower() in ("1", "true", "yes")
-
-
 def _block_user_token(context: str) -> None:
     """Hard-block user tokens when they are mixed with agent identity config.
 
@@ -195,7 +190,6 @@ def _block_user_token(context: str) -> None:
         "   Get an agent token first:\n"
         "     ax token mint <agent-name> --create      # mint agent PAT (requires user PAT)\n"
         "\n"
-        "   Override: AX_ALLOW_USER_TOKEN=1 (not recommended)\n\n"
     )
     sys.stderr.flush()
     raise SystemExit(1)
@@ -263,7 +257,7 @@ class AxClient:
                 scope="messages tasks context agents spaces search",
                 force_refresh=force_refresh,
             )
-        if self.token.startswith("axp_u_") and (self.agent_id or self.agent_name) and not _user_token_suppressed():
+        if self.token.startswith("axp_u_") and (self.agent_id or self.agent_name):
             _block_user_token("user PAT with agent identity configured")
         return self._exchanger.get_token(
             "user_access",

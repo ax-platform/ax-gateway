@@ -44,25 +44,6 @@ class TestTokenClassSelection:
 
         mock_post.assert_not_called()
 
-    def test_user_pat_override_with_agent_id_uses_user_access(self, tmp_path, monkeypatch, mock_exchange):
-        """Escape hatch preserves explicit user-mode debugging without agent_access."""
-        mock_post = mock_exchange()
-        monkeypatch.setenv("AX_ALLOW_USER_TOKEN", "1")
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".ax").mkdir()
-        (tmp_path / ".ax" / "config.toml").write_text("")
-
-        client = AxClient(
-            "https://example.com",
-            "axp_u_UserKey.UserSecret",
-            agent_id="some-agent-uuid",
-        )
-        client._get_jwt()
-
-        call_body = mock_post.call_args[1]["json"]
-        assert call_body["requested_token_class"] == "user_access"
-        assert "agent_id" not in call_body
-
     def test_agent_pat_with_agent_id_uses_agent_access(self, tmp_path, monkeypatch, mock_exchange):
         """Agent-bound PATs (axp_a_) with agent_id should use agent_access."""
         mock_post = mock_exchange()

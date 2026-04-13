@@ -51,6 +51,14 @@ Check the output:
 
 **If wrong environment:** Check the URL. `https://next.paxai.app` = production. `http://localhost:8002` = staging. Don't mix them.
 
+**If stale agent config is forcing agent mode:** clear it explicitly for user-authored work:
+
+```bash
+export AX_AGENT_NAME=none
+export AX_AGENT_ID=none
+ax auth whoami
+```
+
 **If wrong agent:** Your config is pointing to a different identity. Check `.ax/config.toml` or switch profiles:
 ```bash
 ax profile list        # see available profiles

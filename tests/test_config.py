@@ -6,6 +6,7 @@ from ax_cli.config import (
     _global_config_dir,
     _load_config,
     resolve_agent_id,
+    resolve_agent_name,
     resolve_base_url,
     resolve_token,
 )
@@ -122,6 +123,33 @@ class TestResolveAgentId:
     def test_returns_none_when_not_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         assert resolve_agent_id() is None
+
+
+class TestResolveAgentName:
+    def test_env_var_wins(self, monkeypatch):
+        monkeypatch.setenv("AX_AGENT_NAME", "env-agent")
+        assert resolve_agent_name() == "env-agent"
+
+    def test_env_none_clears(self, monkeypatch):
+        monkeypatch.setenv("AX_AGENT_NAME", "none")
+        assert resolve_agent_name() is None
+
+    def test_env_empty_clears(self, monkeypatch):
+        monkeypatch.setenv("AX_AGENT_NAME", "")
+        assert resolve_agent_name() is None
+
+    def test_env_null_clears(self, monkeypatch):
+        monkeypatch.setenv("AX_AGENT_NAME", "null")
+        assert resolve_agent_name() is None
+
+    def test_falls_back_to_config(self, tmp_path, monkeypatch, write_config):
+        write_config(agent_name="config-agent")
+        monkeypatch.chdir(tmp_path)
+        assert resolve_agent_name() == "config-agent"
+
+    def test_returns_none_when_not_set(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert resolve_agent_name() is None
 
 
 class TestResolveToken:

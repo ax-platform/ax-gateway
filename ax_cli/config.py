@@ -192,7 +192,7 @@ def resolve_agent_name(*, explicit: str | None = None, client: AxClient | None =
 
     Resolution order:
     1. --agent flag (explicit)
-    2. AX_AGENT_NAME env var
+    2. AX_AGENT_NAME env var; set to none/null/empty to explicitly clear
     3. Auto-detect: if PAT is scoped to exactly 1 agent, use that
     4. Project-local .ax/config.toml agent_name
     5. None (send as user)
@@ -200,7 +200,9 @@ def resolve_agent_name(*, explicit: str | None = None, client: AxClient | None =
     if explicit:
         return explicit
     env = os.environ.get("AX_AGENT_NAME")
-    if env:
+    if env is not None:
+        if env.lower() in ("", "none", "null"):
+            return None
         return env
 
     # Project-local config (no API calls needed — fastest path)
