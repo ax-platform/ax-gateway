@@ -98,6 +98,39 @@ def _wait_for_reply(client, message_id: str, timeout: int = 60) -> dict | None:
     )
 
 
+def _message_items(data) -> list[dict]:
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("messages", [])
+    return []
+
+
+def _resolve_message_id(client, message_id: str) -> str:
+    """Resolve table-friendly short message IDs against recent messages."""
+    candidate = message_id.strip()
+    if not candidate or "-" in candidate or len(candidate) >= 32:
+        return candidate
+
+    data = client.list_messages(limit=100)
+    matches = [
+        str(message.get("id") or "")
+        for message in _message_items(data)
+        if str(message.get("id") or "").startswith(candidate)
+    ]
+    matches = [match for match in matches if match]
+
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        typer.echo(
+            f"Error: message ID prefix '{candidate}' is ambiguous. Use the full ID from --json.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return candidate
+
+
 def _attachment_ref(
     *,
     attachment_id: str,
@@ -294,11 +327,12 @@ def send(
         final_content = f"{mention} {content}"
 
     try:
+        parent_id = _resolve_message_id(client, parent) if parent else None
         data = client.send_message(
             sid,
             final_content,
             channel=channel,
-            parent_id=parent,
+            parent_id=parent_id,
             attachments=attachments or None,
         )
     except httpx.HTTPStatusError as e:
@@ -341,7 +375,7 @@ def list_messages(
         data = client.list_messages(limit=limit, channel=channel)
     except httpx.HTTPStatusError as e:
         handle_error(e)
-    messages = data if isinstance(data, list) else data.get("messages", [])
+    messages = _message_items(data)
     if as_json:
         print_json(messages)
     else:
@@ -366,7 +400,7 @@ def get(
     """Get a single message."""
     client = get_client()
     try:
-        data = client.get_message(message_id)
+        data = client.get_message(_resolve_message_id(client, message_id))
     except httpx.HTTPStatusError as e:
         handle_error(e)
     if as_json:
@@ -384,7 +418,7 @@ def edit(
     """Edit a message."""
     client = get_client()
     try:
-        data = client.edit_message(message_id, content)
+        data = client.edit_message(_resolve_message_id(client, message_id), content)
     except httpx.HTTPStatusError as e:
         handle_error(e)
     if as_json:
@@ -401,11 +435,12 @@ def delete(
     """Delete a message."""
     client = get_client()
     try:
-        client.delete_message(message_id)
+        resolved_message_id = _resolve_message_id(client, message_id)
+        client.delete_message(resolved_message_id)
     except httpx.HTTPStatusError as e:
         handle_error(e)
     if as_json:
-        print_json({"status": "deleted", "message_id": message_id})
+        print_json({"status": "deleted", "message_id": resolved_message_id})
     else:
         typer.echo("Deleted.")
 
