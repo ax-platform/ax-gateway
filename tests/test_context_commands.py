@@ -62,6 +62,8 @@ def test_context_download_uses_base_url_and_auth_headers(monkeypatch, tmp_path):
     result = runner.invoke(app, ["context", "download", "image.png", "--output", str(output)])
 
     assert result.exit_code == 0
+    assert "Downloaded:" in result.output
+    assert "[green]" not in result.output
     assert output.read_bytes() == b"png-bytes"
     assert calls["url"] == "https://next.paxai.app/api/v1/uploads/files/image.png"
     assert calls["params"] == {"space_id": "space-1"}

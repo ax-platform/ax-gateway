@@ -483,14 +483,14 @@ def download_file(
         payload = _context_file_payload(data, key)
         content = _fetch_context_file(client, sid, payload)
     except ValueError as exc:
-        typer.echo(f"[red]{exc}[/red]")
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
     except httpx.HTTPStatusError as e:
         handle_error(e)
 
     filename = output or payload.get("filename", key)
     Path(filename).write_bytes(content)
-    typer.echo(f"[green]Downloaded:[/green] {filename} ({len(content)} bytes)")
+    typer.echo(f"Downloaded: {filename} ({len(content)} bytes)")
 
 
 @app.command("load")
@@ -520,7 +520,7 @@ def load_file(
             max_content_bytes=max_content_bytes,
         )
     except ValueError as exc:
-        typer.echo(f"[red]{exc}[/red]")
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
     except httpx.HTTPStatusError as exc:
         handle_error(exc)

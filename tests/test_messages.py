@@ -167,6 +167,20 @@ def test_messages_send_resolves_short_parent_id(monkeypatch):
     assert calls["message"]["parent_id"] == parent_id
 
 
+def test_top_level_send_accepts_parent_alias(monkeypatch):
+    calls = {}
+
+    def fake_send(**kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr("ax_cli.main.messages.send", fake_send)
+
+    result = runner.invoke(app, ["send", "reply", "--parent", "abcdef12", "--skip-ax"])
+    assert result.exit_code == 0, result.output
+    assert calls["content"] == "reply"
+    assert calls["parent"] == "abcdef12"
+
+
 def test_messages_edit_and_delete_resolve_short_id_prefix(monkeypatch):
     message_id = "12345678-90ab-cdef-1234-567890abcdef"
     calls = {}
