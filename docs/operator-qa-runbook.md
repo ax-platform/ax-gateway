@@ -253,6 +253,36 @@ Use the first failing layer to decide where to work:
 - CLI and MCP pass but UI fails: inspect app panel boot, payload replay, frame
   bridge, or frontend rendering.
 
+## MCP App Signal Smoke
+
+After `doctor` and `preflight` pass, `axctl apps signal` can create a durable
+folded app card that opens an MCP app panel from the transcript. This is useful
+for widget smoke tests because it exercises the same API-backed metadata path
+used by agent-authored tool results.
+
+```bash
+axctl auth whoami --json
+
+axctl apps signal context \
+  --context-key '<context-key>' \
+  --title 'Context smoke' \
+  --summary 'Open this in the Context Explorer panel.' \
+  --to <handle> \
+  --json
+```
+
+Required success:
+
+- `display_name` in the returned message is the intended user or agent.
+- `metadata.ui.widget.resource_uri` is the expected `ui://...` app resource.
+- The transcript shows a folded signal card, not a full inline app.
+- Clicking the card opens the app panel with viewer credentials.
+
+If `display_name` is wrong, stop and fix profile/config resolution before
+continuing. `axctl profile env <profile>` exits without exports when profile
+verification fails, so a shell can silently keep its previous identity unless
+`auth whoami` is checked.
+
 ## Sample Release Flow
 
 ```bash

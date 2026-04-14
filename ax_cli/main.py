@@ -8,6 +8,7 @@ import typer
 
 from .commands import (
     agents,
+    apps,
     auth,
     channel,
     context,
@@ -31,6 +32,7 @@ app.add_typer(auth.app, name="auth")
 app.add_typer(keys.app, name="keys")
 app.add_typer(credentials.app, name="credentials")
 app.add_typer(agents.app, name="agents")
+app.add_typer(apps.app, name="apps")
 app.add_typer(messages.app, name="messages")
 app.add_typer(tasks.app, name="tasks")
 app.add_typer(events.app, name="events")

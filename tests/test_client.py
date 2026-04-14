@@ -164,6 +164,33 @@ def test_list_messages_can_request_unread_and_mark_read():
     }
 
 
+def test_send_message_allows_metadata_and_message_type():
+    client = AxClient("https://example.com", "legacy-token")
+    response = httpx.Response(
+        200,
+        json={"id": "msg-1"},
+        request=httpx.Request("POST", "https://example.com/api/v1/messages"),
+    )
+    client._http.post = MagicMock(return_value=response)
+
+    client.send_message(
+        "space-123",
+        "context signal",
+        channel="automation-alerts",
+        metadata={"ui": {"widget": {"resource_uri": "ui://context/explorer"}}},
+        message_type="system",
+    )
+
+    assert client._http.post.call_args.args[0] == "/api/v1/messages"
+    assert client._http.post.call_args.kwargs["json"] == {
+        "content": "context signal",
+        "space_id": "space-123",
+        "channel": "automation-alerts",
+        "message_type": "system",
+        "metadata": {"ui": {"widget": {"resource_uri": "ui://context/explorer"}}},
+    }
+
+
 def test_mark_message_read_calls_backend_read_endpoint():
     client = AxClient("https://example.com", "legacy-token")
     response = httpx.Response(

@@ -388,6 +388,11 @@ Use `ax qa matrix` before promotion or cross-environment debugging; it runs
 Do not debug MCP Jam, widgets, Playwright, or release drift until preflight
 passes for the target environment.
 
+Use `ax apps signal` when the CLI should create a durable folded app signal that
+opens an existing MCP app panel in the UI. This is an API-backed adapter over
+`/api/v1/messages`, not a direct MCP iframe call. See
+[docs/mcp-app-signal-adapter.md](docs/mcp-app-signal-adapter.md).
+
 GitHub Actions can run the same path through the reusable
 `operator-qa.yml` workflow. Configure repository variables such as
 `AX_QA_DEV_BASE_URL` and `AX_QA_DEV_SPACE_ID`, plus matching secrets such as
@@ -415,6 +420,8 @@ present and fail if `matrix.ok` is false.
 | `ax context upload-file FILE` | Upload file to context only |
 | `ax context load KEY` | Load a context file into the private preview cache |
 | `ax context download KEY` | Download file from context |
+| `ax apps list` | List MCP app surfaces the CLI can signal |
+| `ax apps signal context --context-key KEY --to @agent` | Write a folded Context Explorer app signal |
 
 Use `ax send --file` or `ax upload file` when another human or agent should
 notice the artifact. Those commands create the visible message signal and attach
