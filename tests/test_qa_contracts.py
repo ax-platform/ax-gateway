@@ -11,6 +11,7 @@ runner = CliRunner()
 class FakeClient:
     def __init__(self):
         self.calls = []
+        self.context = {}
 
     def whoami(self):
         self.calls.append(("whoami",))
@@ -50,11 +51,12 @@ class FakeClient:
 
     def set_context(self, space_id, key, value, *, ttl=None):
         self.calls.append(("set_context", space_id, key, value, ttl))
+        self.context[key] = value
         return {"ok": True, "key": key}
 
     def get_context(self, key, *, space_id=None):
         self.calls.append(("get_context", key, space_id))
-        return {"key": key, "value": "stored"}
+        return {"key": key, "value": self.context.get(key, "stored")}
 
     def delete_context(self, key, *, space_id=None):
         self.calls.append(("delete_context", key, space_id))
@@ -73,6 +75,19 @@ class FakeClient:
     def send_message(self, space_id, content, *, attachments=None, **kwargs):
         self.calls.append(("send_message", space_id, content, attachments, kwargs))
         return {"id": "msg-upload"}
+
+    def create_task(
+        self,
+        space_id,
+        title,
+        *,
+        description=None,
+        priority="medium",
+        assignee_id=None,
+        agent_id=None,
+    ):
+        self.calls.append(("create_task", space_id, title, description, priority, assignee_id, agent_id))
+        return {"id": "task-created", "title": title, "status": "open", "priority": priority}
 
 
 def _json_output(result):
@@ -238,6 +253,102 @@ def test_preflight_writes_ci_artifact(monkeypatch, tmp_path):
     assert payload["summary"]["checks_failed"] == 0
     assert payload["details"] == payload["checks"]
     assert saved == payload
+
+
+def test_widgets_generates_current_signal_fixture_contract(monkeypatch):
+    fake = FakeClient()
+    monkeypatch.setattr(qa, "get_client", lambda: fake)
+    monkeypatch.setattr(qa, "resolve_space_id", lambda client, explicit=None: explicit or "space-1")
+
+    result = runner.invoke(
+        app,
+        [
+            "qa",
+            "widgets",
+            "--run-id",
+            "fixture-1",
+            "--alert-to",
+            "cipher",
+            "--no-media-message",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _json_output(result)
+    assert payload["ok"] is True
+    assert payload["summary"]["command"] == "ax qa widgets"
+    assert payload["run_id"] == "fixture-1"
+    assert payload["alert_target"] == "cipher"
+    assert payload["context_key"] == "qa:widgets:fixture-1:artifact.md"
+    assert payload["created_task_id"] == "task-created"
+    assert [fixture["name"] for fixture in payload["fixtures"]] == [
+        "whoami",
+        "tasks",
+        "agents",
+        "spaces",
+        "context",
+        "alert:qa_widget_smoke",
+    ]
+
+    send_calls = [call for call in fake.calls if call[0] == "send_message"]
+    assert len(send_calls) == 6
+
+    by_title = {
+        call[4]["metadata"]["ui"]["widget"]["title"]: call[4]["metadata"]
+        for call in send_calls
+        if call[4].get("metadata", {}).get("ui", {}).get("widget")
+    }
+    whoami = by_title["QA whoami identity fixture-1"]["ui"]["widget"]
+    assert whoami["resource_uri"] == "ui://whoami/identity"
+    assert whoami["initial_data"]["kind"] == "whoami_profile"
+
+    tasks = by_title["QA task board fixture-1"]["ui"]["widget"]
+    assert tasks["resource_uri"] == "ui://tasks/board"
+    assert tasks["initial_data"]["kind"] == "tasks"
+    assert tasks["initial_data"]["items"][0]["id"] == "task-1"
+
+    context = by_title["QA context artifact fixture-1"]["ui"]["widget"]
+    assert context["resource_uri"] == "ui://context/explorer"
+    assert context["initial_data"]["selected_key"] == "qa:widgets:fixture-1:artifact.md"
+    assert "Run: `fixture-1`" in context["initial_data"]["items"][0]["file_content"]
+
+    alert_metadata = by_title["QA alert evidence fixture-1"]
+    assert alert_metadata["alert"]["kind"] == "qa_widget_smoke"
+    assert alert_metadata["alert"]["target_agent"] == "cipher"
+    assert alert_metadata["alert"]["response_required"] is True
+    assert alert_metadata["ui"]["widget"]["resource_uri"] == "ui://context/explorer"
+    assert alert_metadata["ui"]["widget"]["initial_data"]["selected_key"] == "qa:widgets:fixture-1:artifact.md"
+
+    passive_metadata = by_title["QA whoami identity fixture-1"]
+    assert passive_metadata["top_level_ingress"] is False
+    assert passive_metadata["signal_only"] is True
+
+
+def test_widgets_can_send_media_sidecar_probe(monkeypatch):
+    fake = FakeClient()
+    monkeypatch.setattr(qa, "get_client", lambda: fake)
+    monkeypatch.setattr(qa, "resolve_space_id", lambda client, explicit=None: "space-1")
+
+    result = runner.invoke(
+        app,
+        [
+            "qa",
+            "widgets",
+            "--run-id",
+            "media-1",
+            "--no-create-task",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _json_output(result)
+    assert payload["fixtures"][-1]["name"] == "link_media_sidecar"
+    media_call = [call for call in fake.calls if call[0] == "send_message"][-1]
+    assert "https://example.com/" in media_call[2]
+    assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ" in media_call[2]
+    assert media_call[4]["metadata"]["qa_fixture"] == {"kind": "link_media_sidecar", "run_id": "media-1"}
 
 
 def test_matrix_runs_doctor_and_preflight_for_each_env_and_writes_artifacts(monkeypatch, tmp_path):

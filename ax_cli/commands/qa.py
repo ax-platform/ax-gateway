@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import time
 import uuid
 from pathlib import Path
@@ -24,6 +25,14 @@ from ..config import (
 )
 from ..context_keys import build_upload_context_key
 from ..output import EXIT_NOT_OK, EXIT_SKIPPED, JSON_OPTION, apply_envelope, console, print_json
+from .apps import (
+    APP_SPECS,
+    _build_signal_metadata,
+    _context_item_from_response,
+    _default_signal_message,
+    _is_passive_signal,
+    _mention_prefix,
+)
 
 app = typer.Typer(name="qa", help="Regression and contract smoke checks", no_args_is_help=True)
 
@@ -149,6 +158,21 @@ def _attachment_ref(info: dict[str, Any], *, context_key: str) -> dict[str, Any]
     }
 
 
+def _message_from_response(data: Any) -> dict[str, Any]:
+    if isinstance(data, dict):
+        message = data.get("message")
+        if isinstance(message, dict):
+            return message
+        return data
+    return {}
+
+
+def _message_id(data: Any) -> str | None:
+    message = _message_from_response(data)
+    value = message.get("id") or message.get("message_id")
+    return str(value) if value else None
+
+
 def _client_for_env(env_name: str) -> tuple[AxClient, dict[str, Any]]:
     """Return a user-authored client for a named login environment."""
     normalized = _normalize_user_env(env_name)
@@ -215,6 +239,346 @@ def _resolve_env_space_id(client: AxClient, env_cfg: dict[str, Any], *, explicit
     else:
         console.print("No visible spaces found for this credential.")
     raise typer.Exit(1)
+
+
+def _default_alert_target(whoami_payload: dict[str, Any]) -> str | None:
+    bound_agent = whoami_payload.get("bound_agent") if isinstance(whoami_payload.get("bound_agent"), dict) else {}
+    for value in (
+        bound_agent.get("agent_name"),
+        whoami_payload.get("resolved_agent"),
+        whoami_payload.get("username"),
+    ):
+        if value:
+            return str(value)
+    return None
+
+
+def _fixture_context_value(*, run_id: str, context_key: str, filename: str, content: str) -> dict[str, Any]:
+    return {
+        "type": "file_upload",
+        "source": "axctl_qa_widgets",
+        "context_key": context_key,
+        "filename": filename,
+        "content_type": "text/markdown",
+        "size": len(content.encode()),
+        "summary": f"QA widget fixture artifact {run_id}",
+        "content": content,
+        "file_content": content,
+        "file_upload": {
+            "filename": filename,
+            "content_type": "text/markdown",
+            "size": len(content.encode()),
+            "context_key": context_key,
+        },
+    }
+
+
+def _read_evidence_file(path: str, *, content_type_hint: str | None = None) -> tuple[str, str, str]:
+    evidence_path = Path(path).expanduser().resolve()
+    content_type = content_type_hint or mimetypes.guess_type(evidence_path.name)[0] or "application/octet-stream"
+    is_text = content_type.startswith("text/") or content_type in {"application/json", "application/xml"}
+    content = evidence_path.read_text(errors="replace") if is_text and evidence_path.stat().st_size <= 100_000 else ""
+    return evidence_path.name, content_type, content
+
+
+def _send_widget_fixture(
+    *,
+    client: AxClient,
+    space_id: str,
+    app_name: str,
+    action: str,
+    title: str,
+    summary: str,
+    channel: str,
+    message: str | None = None,
+    context_key: str | None = None,
+    context_item: dict[str, Any] | None = None,
+    whoami_payload: dict[str, Any] | None = None,
+    collection_payload: Any | None = None,
+    target: str | None = None,
+    alert_kind: str | None = None,
+    severity: str = "info",
+    attachments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    spec = APP_SPECS[app_name]
+    metadata, tool_call_id = _build_signal_metadata(
+        app_name=app_name,
+        resource_uri=spec["resource_uri"],
+        title=title,
+        action=action,
+        space_id=space_id,
+        context_key=context_key,
+        context_item=context_item,
+        whoami_payload=whoami_payload,
+        collection_payload=collection_payload,
+        summary=summary,
+        target=target,
+        alert_kind=alert_kind,
+        severity=severity,
+    )
+    if _is_passive_signal(to=target, alert_kind=alert_kind):
+        metadata["top_level_ingress"] = False
+        metadata["signal_only"] = True
+        metadata["app_signal"]["signal_only"] = True
+
+    body = message or _default_signal_message(title=title, summary=summary, context_key=context_key)
+    prefix = _mention_prefix(target)
+    if prefix:
+        body = f"{prefix} {body}"
+
+    data = client.send_message(
+        space_id,
+        body,
+        channel=channel,
+        metadata=metadata,
+        message_type="system",
+        attachments=attachments,
+    )
+    message_data = _message_from_response(data)
+    return {
+        "name": app_name if not alert_kind else f"alert:{alert_kind}",
+        "message_id": _message_id(data),
+        "title": title,
+        "app": app_name,
+        "resource_uri": spec["resource_uri"],
+        "tool_call_id": tool_call_id,
+        "context_key": context_key,
+        "target": _mention_prefix(target).lstrip("@") or None,
+        "alert_kind": alert_kind,
+        "message_type": message_data.get("message_type") or "system",
+        "expected": [
+            "one transcript object",
+            "relative time in the card header",
+            "card body remains selectable",
+            "Open launches the widget panel",
+        ],
+    }
+
+
+def _run_widget_fixtures(
+    *,
+    space_id: str | None,
+    channel: str,
+    run_id: str | None,
+    ttl: int,
+    alert_to: str | None,
+    create_task: bool,
+    include_media_message: bool,
+    evidence_file: str | None,
+) -> dict[str, Any]:
+    client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
+    whoami_payload = client.whoami()
+    resolved_run_id = run_id or f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
+    target = alert_to or _default_alert_target(whoami_payload)
+
+    context_key = f"qa:widgets:{resolved_run_id}:artifact.md"
+    filename = f"qa-widget-{resolved_run_id}.md"
+    content = (
+        f"# QA Widget Fixture\n\n"
+        f"Run: `{resolved_run_id}`\n\n"
+        "This artifact backs the Context widget and alert evidence fixtures.\n\n"
+        "- Context Open should use the immersive artifact viewer.\n"
+        "- Alert Open should route to Context, not Identity.\n"
+        "- Details should hold raw ids; the card header should use relative time.\n"
+    )
+    attachment_refs: list[dict[str, Any]] = []
+    if evidence_file:
+        upload_info = _normalize_upload(client.upload_file(evidence_file, space_id=sid))
+        context_key = build_upload_context_key(upload_info.get("filename") or filename, upload_info["attachment_id"])
+        filename, content_type, content = _read_evidence_file(
+            evidence_file,
+            content_type_hint=upload_info.get("content_type") or None,
+        )
+        context_value: dict[str, Any] = {
+            "type": "file_upload",
+            "source": "axctl_qa_widgets",
+            "attachment_id": upload_info["attachment_id"],
+            "context_key": context_key,
+            "filename": filename,
+            "content_type": content_type or upload_info.get("content_type"),
+            "size": upload_info.get("size"),
+            "url": upload_info.get("url"),
+            "summary": f"QA widget fixture evidence {resolved_run_id}",
+            "file_upload": {
+                "filename": filename,
+                "content_type": content_type or upload_info.get("content_type"),
+                "size": upload_info.get("size"),
+                "context_key": context_key,
+                "url": upload_info.get("url"),
+            },
+        }
+        if content:
+            context_value["content"] = content
+            context_value["file_content"] = content
+        attachment_refs.append(_attachment_ref(upload_info, context_key=context_key))
+    else:
+        context_value = _fixture_context_value(
+            run_id=resolved_run_id,
+            context_key=context_key,
+            filename=filename,
+            content=content,
+        )
+
+    client.set_context(sid, context_key, json.dumps(context_value), ttl=ttl)
+    context_item = _context_item_from_response(context_key, client.get_context(context_key, space_id=sid))
+
+    task_payload: Any | None = None
+    created_task_id: str | None = None
+    if create_task:
+        task_data = client.create_task(
+            sid,
+            f"QA widget fixture task {resolved_run_id}",
+            description=(
+                "Generated by `axctl qa widgets` so the Tasks widget has a fresh, "
+                "non-empty board during browser QA."
+            ),
+            priority="medium",
+        )
+        created_task = task_data.get("task") if isinstance(task_data.get("task"), dict) else _message_from_response(task_data)
+        created_task_id = str(created_task.get("id") or created_task.get("task_id") or "") or None
+    task_payload = client.list_tasks(limit=50, space_id=sid)
+    agents_payload = client.list_agents(space_id=sid, limit=500)
+    spaces_payload = client.list_spaces()
+
+    fixtures: list[dict[str, Any]] = []
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="whoami",
+            action="get",
+            title=f"QA whoami identity {resolved_run_id}",
+            summary="Identity widget should hydrate the signal subject, not User / Unknown.",
+            channel=channel,
+            whoami_payload=whoami_payload,
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="tasks",
+            action="list",
+            title=f"QA task board {resolved_run_id}",
+            summary="Task board should hydrate from fresh task list initial_data.",
+            channel=channel,
+            collection_payload=task_payload,
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="agents",
+            action="list",
+            title=f"QA agents dashboard {resolved_run_id}",
+            summary="Agents dashboard should show real agent rows without nested chrome.",
+            channel=channel,
+            collection_payload=agents_payload,
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="spaces",
+            action="list",
+            title=f"QA spaces navigator {resolved_run_id}",
+            summary="Spaces navigator should show real spaces and stable controls.",
+            channel=channel,
+            collection_payload=spaces_payload,
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="context",
+            action="get",
+            title=f"QA context artifact {resolved_run_id}",
+            summary="Context Open should use the immersive artifact viewer.",
+            channel=channel,
+            context_key=context_key,
+            context_item=context_item,
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="context",
+            action="get",
+            title=f"QA alert evidence {resolved_run_id}",
+            summary="Wake-up alert with context evidence; Open should route to Context.",
+            channel=channel,
+            context_key=context_key,
+            context_item=context_item,
+            target=target,
+            alert_kind="qa_widget_smoke",
+            severity="warn",
+            attachments=attachment_refs or None,
+        )
+    )
+
+    media_message_id: str | None = None
+    if include_media_message:
+        media_data = client.send_message(
+            sid,
+            (
+                f"QA link/media sidecar {resolved_run_id}\n\n"
+                "Plain URL should open in a new tab: https://example.com/\n"
+                "YouTube should render as a sidecar: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            ),
+            channel=channel,
+            metadata={"qa_fixture": {"kind": "link_media_sidecar", "run_id": resolved_run_id}},
+            message_type="text",
+        )
+        media_message_id = _message_id(media_data)
+        fixtures.append(
+            {
+                "name": "link_media_sidecar",
+                "message_id": media_message_id,
+                "title": f"QA link/media sidecar {resolved_run_id}",
+                "app": None,
+                "resource_uri": None,
+                "tool_call_id": None,
+                "context_key": None,
+                "target": None,
+                "alert_kind": None,
+                "message_type": "text",
+                "expected": [
+                    "plain URL opens in a new tab",
+                    "YouTube URL renders as a message sidecar",
+                    "sidecar remains visible without expanding the message summary",
+                ],
+            }
+        )
+
+    result = {
+        "ok": True,
+        "command": "ax qa widgets",
+        "space_id": sid,
+        "channel": channel,
+        "run_id": resolved_run_id,
+        "context_key": context_key,
+        "created_task_id": created_task_id,
+        "alert_target": _mention_prefix(target).lstrip("@") or None,
+        "fixtures": fixtures,
+    }
+    apply_envelope(
+        result,
+        summary={
+            "command": "ax qa widgets",
+            "space_id": sid,
+            "channel": channel,
+            "run_id": resolved_run_id,
+            "fixtures": len(fixtures),
+            "message_ids": [fixture["message_id"] for fixture in fixtures],
+        },
+        details=fixtures,
+    )
+    return result
 
 
 def _base_url_env_label(base_url: str | None) -> str | None:
@@ -602,6 +966,55 @@ def preflight(
         result["preflight"]["artifact"] = str(artifact_path)
         _write_artifact(artifact_path, result)
     _emit_result(result, as_json=as_json, artifact_path=artifact_path)
+
+
+@app.command("widgets")
+def widgets(
+    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override target space"),
+    channel: str = typer.Option("main", "--channel", help="Message channel for visible fixture messages"),
+    run_id: Optional[str] = typer.Option(None, "--run-id", help="Stable fixture run id; defaults to timestamp-random"),
+    ttl: int = typer.Option(86400, "--ttl", help="TTL for generated context evidence"),
+    alert_to: Optional[str] = typer.Option(
+        None,
+        "--alert-to",
+        "--to",
+        help="Agent/user to wake with the alert fixture; defaults to the active bound agent when available",
+    ),
+    create_task: bool = typer.Option(
+        True,
+        "--create-task/--no-create-task",
+        help="Create one QA task before emitting the task-board fixture so the board is non-empty",
+    ),
+    include_media_message: bool = typer.Option(
+        True,
+        "--media-message/--no-media-message",
+        help="Also send a normal message containing a plain URL and YouTube URL for sidecar QA",
+    ),
+    evidence_file: Optional[str] = typer.Option(
+        None,
+        "--evidence-file",
+        help="Optional local file to upload and attach to the alert/context evidence fixture",
+    ),
+    as_json: bool = JSON_OPTION,
+):
+    """Generate fresh browser-QA fixtures for the current widget/signal contract."""
+    result = _run_widget_fixtures(
+        space_id=space_id,
+        channel=channel,
+        run_id=run_id,
+        ttl=ttl,
+        alert_to=alert_to,
+        create_task=create_task,
+        include_media_message=include_media_message,
+        evidence_file=evidence_file,
+    )
+    if as_json:
+        print_json(result)
+    else:
+        console.print(f"[green]Widget QA fixtures sent.[/green] run_id={result['run_id']}")
+        console.print(f"space_id={result['space_id']} channel={result['channel']}")
+        for fixture in result["fixtures"]:
+            console.print(f"  {fixture['name']}: {fixture['message_id']}")
 
 
 @app.command("matrix")
