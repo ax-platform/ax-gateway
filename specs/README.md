@@ -16,6 +16,7 @@ agent skills.
 
 - [CONTRACT-QA-001: API-First Regression Harness](CONTRACT-QA-001/spec.md)
 - [CLI-WORKFLOW-001: Smart Workflow Flags on Existing Commands](CLI-WORKFLOW-001/spec.md)
+- [AGENT-CONTACT-001: Agent Contact Modes](AGENT-CONTACT-001/spec.md)
 - [LISTENER-001: Mention and Reply Delivery for CLI Listeners](LISTENER-001/spec.md)
 - [ATTACHMENT-FLOW-001: Attachment Flow](ATTACHMENT-FLOW-001/spec.md)
 - [AX-SCHEDULE-001: Agent Scheduling](AX-SCHEDULE-001/spec.md)

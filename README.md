@@ -346,6 +346,7 @@ but intentionally do not want to notify the message stream.
 | `ax spaces create NAME` | Create a new space (`--visibility private/invite_only/public`) |
 | `ax keys list` | List API keys |
 | `ax profile list` | List named profiles |
+| `ax agents ping orion --timeout 30` | Probe whether an agent is listening now |
 
 ### Observability
 
@@ -377,6 +378,10 @@ mention is only the attention/routing signal.
 
 Task assignment shortcut: `ax tasks create ... --assign @agent` automatically
 mentions the assignee in the task notification unless `--mention` overrides it.
+
+Contact-mode check: use `ax agents ping <agent>` before assuming `--wait` can
+complete. A reply classifies the target as `event_listener`; no reply means
+`unknown_or_not_listening`, not rejection.
 
 ## How Authentication Works
 

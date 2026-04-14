@@ -1,12 +1,51 @@
 """ax agents — agent listing, creation, and management."""
 
+import time
+import uuid
+from typing import Any
+
 import httpx
 import typer
 
-from ..config import get_client, resolve_space_id
+from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
+from .handoff import _wait_for_handoff_reply
 
 app = typer.Typer(name="agents", help="Agent management", no_args_is_help=True)
+
+
+def _agent_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("agents", "items", "results"):
+        items = payload.get(key)
+        if isinstance(items, list):
+            return [item for item in items if isinstance(item, dict)]
+    return []
+
+
+def _agent_name_candidates(agent: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    for key in ("id", "name", "username", "handle", "agent_name", "display_name"):
+        value = agent.get(key)
+        if isinstance(value, str) and value.strip():
+            values.add(value.strip().lower().removeprefix("@"))
+    return values
+
+
+def _find_agent(agents: list[dict[str, Any]], identifier: str) -> dict[str, Any] | None:
+    target = identifier.strip().lower().removeprefix("@")
+    return next((agent for agent in agents if target in _agent_name_candidates(agent)), None)
+
+
+def _agent_mention_name(agent: dict[str, Any], fallback: str) -> str:
+    for key in ("handle", "username", "agent_name", "name", "display_name", "id"):
+        value = agent.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().removeprefix("@")
+    return fallback.strip().removeprefix("@")
 
 
 @app.command("list")
@@ -31,6 +70,92 @@ def list_agents(
             agents,
             keys=["id", "name", "status"],
         )
+
+
+@app.command("ping")
+def ping_agent(
+    agent: str = typer.Argument(..., help="Agent name, @handle, or UUID"),
+    timeout: int = typer.Option(30, "--timeout", "-t", help="Seconds to wait for a reply"),
+    space_id: str = typer.Option(None, "--space-id", help="Override default space"),
+    as_json: bool = JSON_OPTION,
+):
+    """Probe whether an agent is currently listening for mention events."""
+    client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
+
+    try:
+        agents_data = client.list_agents(space_id=sid, limit=500)
+    except httpx.HTTPStatusError as exc:
+        handle_error(exc)
+    target = _find_agent(_agent_items(agents_data), agent)
+    if not target:
+        typer.echo(f"Error: No visible agent found for '{agent}'.", err=True)
+        raise typer.Exit(1)
+
+    agent_name = _agent_mention_name(target, agent)
+    token = f"ping:{uuid.uuid4().hex[:8]}"
+    content = (
+        f"@{agent_name} Contact-mode ping from axctl. "
+        f"Please reply with `{token}` if this mention reached a live listener."
+    )
+    started_at = time.time()
+
+    try:
+        sent_data = client.send_message(sid, content)
+    except httpx.HTTPStatusError as exc:
+        handle_error(exc)
+
+    sent = sent_data.get("message", sent_data)
+    sent_message_id = str(sent.get("id") or sent_data.get("id") or "")
+    current_agent_name = resolve_agent_name(client=client) or ""
+    reply = None
+    if sent_message_id and timeout > 0:
+        reply = _wait_for_handoff_reply(
+            client,
+            space_id=sid,
+            agent_name=agent_name,
+            sent_message_id=sent_message_id,
+            token=token,
+            current_agent_name=current_agent_name,
+            started_at=started_at,
+            timeout=timeout,
+            require_completion=True,
+        )
+
+    result = {
+        "agent": agent_name,
+        "agent_id": target.get("id"),
+        "origin": target.get("origin"),
+        "agent_type": target.get("agent_type"),
+        "roster_status": target.get("status"),
+        "sent_message_id": sent_message_id,
+        "ping_token": token,
+        "listener_status": "replied" if reply else "no_reply",
+        "contact_mode": "event_listener" if reply else "unknown_or_not_listening",
+        "reply": reply,
+    }
+
+    if as_json:
+        print_json(result)
+        return
+
+    if reply:
+        console.print(f"[green]@{agent_name} replied.[/green] contact_mode=event_listener")
+    else:
+        console.print(
+            f"[yellow]No @{agent_name} reply within {timeout}s.[/yellow] "
+            "contact_mode=unknown_or_not_listening"
+        )
+    print_kv(
+        {
+            "agent_id": result["agent_id"],
+            "origin": result["origin"],
+            "agent_type": result["agent_type"],
+            "roster_status": result["roster_status"],
+            "sent_message_id": sent_message_id,
+            "ping_token": token,
+        }
+    )
 
 
 @app.command("create")
