@@ -200,6 +200,64 @@ def test_top_level_send_accepts_parent_alias(monkeypatch):
     assert calls["parent"] == "abcdef12"
 
 
+def test_send_to_prepends_missing_mention(monkeypatch):
+    calls = {}
+
+    class FakeClient:
+        _base_headers = {}
+
+        def send_message(self, space_id, content, *, channel="main", parent_id=None, attachments=None):
+            calls["message"] = {
+                "space_id": space_id,
+                "content": content,
+                "channel": channel,
+                "parent_id": parent_id,
+                "attachments": attachments,
+            }
+            return {"id": "msg-1"}
+
+    monkeypatch.setattr("ax_cli.commands.messages.get_client", lambda: FakeClient())
+    monkeypatch.setattr("ax_cli.commands.messages.resolve_space_id", lambda client, explicit=None: "space-1")
+    monkeypatch.setattr("ax_cli.commands.messages.resolve_agent_name", lambda client=None: None)
+
+    result = runner.invoke(app, ["send", "checkpoint", "--to", "orion", "--no-wait", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["message"]["content"] == "@orion checkpoint"
+
+
+def test_send_to_does_not_duplicate_existing_mention_and_waits_for_target(monkeypatch):
+    calls = {}
+
+    class FakeClient:
+        _base_headers = {}
+
+        def send_message(self, space_id, content, *, channel="main", parent_id=None, attachments=None):
+            calls["message"] = {
+                "space_id": space_id,
+                "content": content,
+                "channel": channel,
+                "parent_id": parent_id,
+                "attachments": attachments,
+            }
+            return {"id": "msg-1"}
+
+    def fake_wait(client, message_id, timeout=60, wait_label="reply"):
+        calls["wait"] = {"message_id": message_id, "timeout": timeout, "wait_label": wait_label}
+        return {"id": "reply-1", "content": "ack"}
+
+    monkeypatch.setattr("ax_cli.commands.messages.get_client", lambda: FakeClient())
+    monkeypatch.setattr("ax_cli.commands.messages.resolve_space_id", lambda client, explicit=None: "space-1")
+    monkeypatch.setattr("ax_cli.commands.messages.resolve_agent_name", lambda client=None: None)
+    monkeypatch.setattr("ax_cli.commands.messages._wait_for_reply", fake_wait)
+
+    result = runner.invoke(app, ["send", "@orion checkpoint", "--to", "orion", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["message"]["content"] == "@orion checkpoint"
+    assert calls["wait"]["wait_label"] == "@orion"
+
+
 def test_messages_edit_and_delete_resolve_short_id_prefix(monkeypatch):
     message_id = "12345678-90ab-cdef-1234-567890abcdef"
     calls = {}

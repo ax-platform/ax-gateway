@@ -15,9 +15,9 @@ from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, p
 app = typer.Typer(name="messages", help="Message operations", no_args_is_help=True)
 
 
-def _print_wait_status(remaining: int, last_remaining: int | None) -> int:
+def _print_wait_status(remaining: int, last_remaining: int | None, wait_label: str = "reply") -> int:
     if remaining != last_remaining:
-        console.print(f"  [dim]waiting for aX... ({remaining}s remaining)[/dim]", end="\r")
+        console.print(f"  [dim]waiting for {wait_label}... ({remaining}s remaining)[/dim]", end="\r")
     return remaining
 
 
@@ -58,6 +58,7 @@ def _wait_for_reply_polling(
     *,
     deadline: float,
     seen_ids: set[str],
+    wait_label: str = "reply",
     poll_interval: float = 2.0,
 ) -> dict | None:
     """Poll for a reply as a fallback when SSE is unavailable."""
@@ -65,7 +66,7 @@ def _wait_for_reply_polling(
 
     while time.time() < deadline:
         remaining = int(deadline - time.time())
-        last_remaining = _print_wait_status(remaining, last_remaining)
+        last_remaining = _print_wait_status(remaining, last_remaining, wait_label)
 
         try:
             data = client.list_replies(message_id)
@@ -84,7 +85,7 @@ def _wait_for_reply_polling(
     return None
 
 
-def _wait_for_reply(client, message_id: str, timeout: int = 60) -> dict | None:
+def _wait_for_reply(client, message_id: str, timeout: int = 60, wait_label: str = "reply") -> dict | None:
     """Wait for a reply by polling list_replies."""
     deadline = time.time() + timeout
     seen_ids: set[str] = {message_id}
@@ -94,6 +95,7 @@ def _wait_for_reply(client, message_id: str, timeout: int = 60) -> dict | None:
         message_id,
         deadline=deadline,
         seen_ids=seen_ids,
+        wait_label=wait_label,
         poll_interval=1.0,
     )
 
@@ -130,6 +132,14 @@ def _resolve_message_id(client, message_id: str, *, space_id: str | None = None)
         )
         raise typer.Exit(1)
     return candidate
+
+
+def _target_mention(to: str) -> str:
+    return to if to.startswith("@") else f"@{to}"
+
+
+def _starts_with_mention(content: str, mention: str) -> bool:
+    return content.lstrip().lower().startswith(mention.lower())
 
 
 def _attachment_ref(
@@ -338,8 +348,9 @@ def send(
     # --to: prepend @mention to content for targeting another agent
     final_content = content
     if to:
-        mention = to if to.startswith("@") else f"@{to}"
-        final_content = f"{mention} {content}"
+        mention = _target_mention(to)
+        if not _starts_with_mention(content, mention):
+            final_content = f"{mention} {content}"
 
     try:
         parent_id = _resolve_message_id(client, parent, space_id=sid) if parent else None
@@ -364,7 +375,8 @@ def send(
         return
 
     console.print(f"[green]Sent.[/green] id={msg_id}")
-    reply = _wait_for_reply(client, msg_id, timeout=timeout)
+    wait_label = _target_mention(to) if to else "reply"
+    reply = _wait_for_reply(client, msg_id, timeout=timeout, wait_label=wait_label)
 
     if reply:
         if as_json:
