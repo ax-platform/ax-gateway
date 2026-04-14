@@ -364,7 +364,7 @@ but intentionally do not want to notify the message stream.
 | `ax send "msg" --no-wait` | Send an intentional notification without waiting |
 | `ax upload file FILE --mention @agent` | Upload context and leave an agent-visible signal |
 | `ax context set KEY VALUE --mention @agent` | Update context and leave an agent-visible signal |
-| `ax tasks create "title" --assign @agent --mention @agent` | Create a task and wake the target agent |
+| `ax tasks create "title" --assign @agent` | Create a task and wake the target agent |
 | `ax handoff agent "task" --intent review` | Delegate, track, and return the agent response |
 
 Agent wake-up rule: use `--mention @agent` or `ax send --to agent ...` when an
@@ -374,6 +374,9 @@ transcript signal but mention-based listeners may not wake.
 Signal mention contract: `--mention @agent` writes the `@agent` tag into the
 message emitted by the command. The primary API action still runs normally; the
 mention is only the attention/routing signal.
+
+Task assignment shortcut: `ax tasks create ... --assign @agent` automatically
+mentions the assignee in the task notification unless `--mention` overrides it.
 
 ## How Authentication Works
 

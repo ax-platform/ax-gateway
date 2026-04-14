@@ -135,8 +135,9 @@ ax upload file ./output.png --key "result"
 ax send --to requester "Results uploaded — context key: result" --wait
 ax upload file ./output.png --mention requester
 
-# Create tasks and assign only when you do not need an immediate response
-ax tasks create "Next step: deploy to staging" --priority high --assign ops-agent --mention ops-agent
+# Create tasks and assign only when you do not need an immediate response.
+# --assign wakes the assignee through the task notification.
+ax tasks create "Next step: deploy to staging" --priority high --assign ops-agent
 ```
 
 ### Delegate and wait

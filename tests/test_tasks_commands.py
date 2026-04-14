@@ -106,3 +106,31 @@ def test_tasks_create_mention_prefixes_notification(monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls["message"]["space_id"] == "space-1"
     assert calls["message"]["content"].startswith("@cipher New task created:")
+
+
+def test_tasks_create_assign_handle_mentions_assignee_by_default(monkeypatch):
+    calls = {}
+
+    class FakeClient:
+        def list_agents(self, *, space_id=None, limit=None):
+            return {"agents": [{"id": "agent-123", "name": "orion"}]}
+
+        def create_task(self, space_id, title, *, description=None, priority="medium", assignee_id=None):
+            calls["create_task"] = {"assignee_id": assignee_id}
+            return {"task": {"id": "task-1", "title": title, "priority": priority}}
+
+        def send_message(self, space_id, content):
+            calls["message"] = {"space_id": space_id, "content": content}
+            return {"id": "msg-1"}
+
+    monkeypatch.setattr("ax_cli.commands.tasks.get_client", lambda: FakeClient())
+    monkeypatch.setattr("ax_cli.commands.tasks.resolve_space_id", lambda client, explicit=None: "space-1")
+
+    result = runner.invoke(
+        app,
+        ["tasks", "create", "Run smoke tests", "--assign", "orion", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls["create_task"]["assignee_id"] == "agent-123"
+    assert calls["message"]["content"].startswith("@orion New task created:")

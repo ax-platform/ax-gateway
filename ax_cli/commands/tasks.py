@@ -115,7 +115,7 @@ def create(
     if notify:
         try:
             prio = task.get("priority", "medium")
-            prefix = _mention_prefix(mention)
+            prefix = _mention_prefix(mention or assign_to)
             msg = f"New task created: **{title}** (id: `{tid}…`, priority: {prio})"
             if prefix:
                 msg = f"{prefix} {msg}"
