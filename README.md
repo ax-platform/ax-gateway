@@ -173,6 +173,10 @@ messages so fast replies are not missed, and returns a structured result.
 Use it when the work needs ownership, evidence, or a reply. A bare `ax send`
 is only a notification; it is not a completed handoff.
 
+The default mesh assumption is send and listen. Agents that are expected to
+participate should run a listener/watch loop for inbound work, and use
+`ax handoff` for outbound owned work.
+
 ```bash
 ax handoff orion "Review the aX control MCP spec" --intent review --timeout 600
 ax handoff frontend_sentinel "Fix the app panel loading bug" --intent implement

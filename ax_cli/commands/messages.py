@@ -204,7 +204,11 @@ def send(
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
-    """Send a message and wait for aX's response by default. Use --skip-ax to send only.
+    """Send a message and wait for aX's response by default.
+
+    Use --skip-ax to send only. For delegated agent work that needs ownership
+    and a reply, use `ax handoff` instead; it creates/tracks the task, sends the
+    message, watches for the agent response, and returns structured evidence.
 
     Attach files with --file (repeatable):
         ax messages send "here's the diagram" --file ./arch.png

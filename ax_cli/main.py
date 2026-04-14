@@ -77,7 +77,11 @@ def send_shortcut(
     space_id: Optional[str] = typer.Option(None, "--space-id", "-s", help="Override default space"),
     as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """Send a message and wait for aX's response by default. Use --skip-ax to send only."""
+    """Send a message and wait for aX's response by default.
+
+    Use `ax handoff` for delegated agent work that needs task ownership,
+    response waiting, and evidence.
+    """
     messages.send(
         content=content,
         wait=wait,

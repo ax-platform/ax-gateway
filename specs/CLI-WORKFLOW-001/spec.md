@@ -45,6 +45,11 @@ channel, and return the reply/evidence in one result. Future `--assign`,
 `--notify`, and `--wait` flags should preserve that same composition instead of
 making operators hand-roll each primitive.
 
+The mesh model is bidirectional by default: agents listen for inbound work and
+use composed handoffs for outbound owned work. Sending and listening should be
+part of the runtime posture, not an optional afterthought that each operator has
+to remember.
+
 ## Goals
 
 - No new top-level verbs for orchestration.
