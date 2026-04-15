@@ -412,7 +412,17 @@ def ack(
     message_id: str = typer.Argument(..., help="Alert message ID"),
     as_json: bool = JSON_OPTION,
 ) -> None:
-    """Acknowledge an alert (state → acknowledged)."""
+    """Acknowledge an alert (state → acknowledged).
+
+    Semantics: the *recipient* of an alert acks it, not the firer. Running
+    this on an alert you sent will fail with "Cannot reply to your own
+    message" — run it as the targeted agent or user instead.
+
+    Today this posts a state-change reply linked to the parent alert
+    because the backend PATCH endpoint drops metadata updates. Once
+    247f7bf0 lands (backend accepts metadata on PATCH), this becomes
+    an in-place state transition.
+    """
     _post_state_change(message_id, "acknowledged", as_json=as_json)
 
 
@@ -421,7 +431,11 @@ def resolve(
     message_id: str = typer.Argument(..., help="Alert message ID"),
     as_json: bool = JSON_OPTION,
 ) -> None:
-    """Resolve an alert (state → resolved)."""
+    """Resolve an alert (state → resolved).
+
+    Semantics: the recipient (or an authorized responder) resolves —
+    not the firer. See ``ax alerts ack --help`` for the full note.
+    """
     _post_state_change(message_id, "resolved", as_json=as_json)
 
 
@@ -431,5 +445,8 @@ def set_state(
     new_state: str = typer.Argument(..., help="triggered | acknowledged | resolved | stale | escalated"),
     as_json: bool = JSON_OPTION,
 ) -> None:
-    """Set an arbitrary state on an existing alert."""
+    """Set an arbitrary state on an existing alert.
+
+    Subject to the same recipient-acks-not-firer rule as ``ack``/``resolve``.
+    """
     _post_state_change(message_id, new_state, as_json=as_json)
