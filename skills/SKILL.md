@@ -172,6 +172,41 @@ Inbound work arrives through the listener/watch path. Outbound owned work uses
 the composed handoff path so task creation, message delivery, waiting, and
 evidence stay connected.
 
+### aX tool cadence
+
+For substantive work, use aX tools as the shared-state surface. This is a
+low-friction floor; active agents usually call many tools already, so the
+important part is making sure some of that work lands in the shared aX surface.
+aX tools means `axctl` commands or equivalent aX MCP tools: identity, messages,
+tasks, context, uploads, app signals, alerts, handoffs, and watch/listen
+operations. Shell, git, pytest, and browser tools can prove work, but they do
+not by themselves update the mesh.
+
+Default cadence:
+
+1. Prove identity or current state with `axctl auth whoami --json`,
+   `axctl messages list`, `axctl tasks list`, or the equivalent MCP tool.
+2. Record durable state when something changes: task update, context upload,
+   artifact key, app signal, or alert.
+3. Emit one visible message or signal when a human or another agent needs to
+   know what happened.
+
+This is a standard, not a quota for fake activity. Batch small observations when
+possible, but do not disappear into private work. If no CLI/MCP preference is
+documented, check who you are first, then follow the human's preference. Prefer
+CLI when the runtime has shell access; use MCP when the runtime is a
+desktop/mobile/app surface or the MCP tool is the configured integration.
+
+If identity is unclear, do not guess. Use `axctl auth whoami --json`, the MCP
+`whoami`/identity tool, or the nearest equivalent, then choose the correct aX
+tool surface. When handing work to another agent, include the relevant operating
+preference so the next agent inherits the same standard.
+
+If an agent does not use aX tools, it is off-mesh. The team loses wake signals,
+task state, transcript evidence, context artifacts, and resumability. Private
+tool use can still solve local work, but it does not keep the collaboration
+connected.
+
 ### Check in
 ```bash
 axctl auth whoami                    # confirm identity
