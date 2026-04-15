@@ -52,6 +52,7 @@ def _print_kv(data: dict, *, title: str | None = None) -> None:
         console.print(f"[bold cyan]{title}[/bold cyan]")
     print_kv(data)
 
+
 app = typer.Typer(name="alerts", help="Activity Stream alerts and task reminders", no_args_is_help=True)
 
 
@@ -90,9 +91,7 @@ def _normalize_kind(value: str) -> str:
 def _normalize_state(value: str) -> str:
     value = (value or "triggered").strip().lower()
     if value not in _ALLOWED_STATES:
-        raise typer.BadParameter(
-            f"state must be one of: {', '.join(sorted(_ALLOWED_STATES))}"
-        )
+        raise typer.BadParameter(f"state must be one of: {', '.join(sorted(_ALLOWED_STATES))}")
     return value
 
 
@@ -128,9 +127,7 @@ def _build_alert_metadata(
     reminder fields ChatGPT flagged (source_task_id, due_at, remind_at,
     state) and no task-board widget hydration.
     """
-    card_title = title or (
-        f"Reminder: {reason[:80]}" if kind == "reminder" else f"Alert: {reason[:80]}"
-    )
+    card_title = title or (f"Reminder: {reason[:80]}" if kind == "reminder" else f"Alert: {reason[:80]}")
     fired_at = _iso_utc_now()
     card_id = f"alert:{uuid.uuid4()}"
 
@@ -324,9 +321,7 @@ def send(
         return
 
     # Response is either {"id": ...} or {"message": {"id": ...}}
-    msg: dict[str, Any] = (
-        result.get("message", result) if isinstance(result, dict) else {}
-    )
+    msg: dict[str, Any] = result.get("message", result) if isinstance(result, dict) else {}
     target_label = target_n or "-"
     if target_resolved_from:
         target_label = f"{target_n} (from task {target_resolved_from})"
