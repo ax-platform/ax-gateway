@@ -562,7 +562,7 @@ def load_file(
         print_kv(result)
 
 
-@app.command("preview", hidden=True)
+@app.command("preview")
 def preview_file(
     key: str = typer.Argument(..., help="Context key to preview"),
     cache_dir: Optional[str] = typer.Option(
@@ -574,7 +574,12 @@ def preview_file(
     space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
     as_json: bool = JSON_OPTION,
 ):
-    """Backward-compatible alias for `context load`."""
+    """Preview a context artifact from the private local cache.
+
+    This is an agent-friendly alias for `context load`: it resolves protected
+    upload URLs with the active profile, writes the artifact under the preview
+    cache, and returns the local path.
+    """
     load_file(
         key=key,
         cache_dir=cache_dir,

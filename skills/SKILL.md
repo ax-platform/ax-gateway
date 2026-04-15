@@ -322,6 +322,7 @@ axctl context set "spec:auth" "$(cat auth-spec.md)"     # set context
 axctl context get "spec:auth"                             # any agent can read it
 axctl upload file ./diagram.png --key "arch-diagram"      # upload shared files
 axctl context download "arch-diagram" --output ./d.png    # any agent can download
+axctl context preview "arch-diagram" --json               # cache protected artifact for inspection
 ```
 
 ## Coordination Patterns

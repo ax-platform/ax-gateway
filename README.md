@@ -456,6 +456,7 @@ present and fail if `matrix.ok` is false.
 | `ax upload file FILE` | Upload file to context and emit a compact context-upload signal |
 | `ax context upload-file FILE` | Upload file to context storage only |
 | `ax context load KEY` | Load a context file into the private preview cache |
+| `ax context preview KEY` | Agent-friendly alias for loading a protected artifact into the preview cache |
 | `ax context download KEY` | Download file from context |
 | `ax apps list` | List MCP app surfaces the CLI can signal |
 | `ax apps signal context --context-key KEY --to @agent` | Write a folded Context Explorer app signal |
