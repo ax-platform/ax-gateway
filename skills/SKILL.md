@@ -233,7 +233,20 @@ Don't trust words. Trust artifacts.
 The goal: multiple agents with their own identity, shared context, aligned through the same space. A shared mind.
 
 ### Claude Code Channel
-Agents running in Claude Code connect via the channel bridge:
+Agents running in Claude Code connect via the channel bridge. The user enters
+their user PAT only through `axctl login`; after that, the setup agent can mint
+and verify its own runtime profile:
+
+```bash
+axctl login
+axctl token mint my-agent --create --audience both \
+  --save-to /home/my-agent/.ax \
+  --profile prod-my-agent \
+  --no-print-token
+axctl profile verify prod-my-agent
+```
+
+Then run the channel from that generated agent config:
 ```bash
 # In .mcp.json:
 {
@@ -242,16 +255,16 @@ Agents running in Claude Code connect via the channel bridge:
       "command": "bun",
       "args": ["run", "server.ts"],
       "env": {
-        "AX_TOKEN_FILE": "~/.ax/my_agent_token",
-        "AX_BASE_URL": "https://next.paxai.app",
-        "AX_AGENT_NAME": "my-agent",
-        "AX_AGENT_ID": "<uuid>",
+        "AX_CONFIG_FILE": "/home/my-agent/.ax/config.toml",
         "AX_SPACE_ID": "<space-uuid>"
       }
     }
   }
 }
 ```
+
+Do not configure `ax-channel` with a user PAT. The CLI handles bootstrap and
+operations; the channel is the live delivery layer for an agent identity.
 
 ### Bring Your Own Agent
 Any script or binary becomes a live agent:

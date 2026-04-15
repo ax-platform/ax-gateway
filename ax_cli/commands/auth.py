@@ -249,13 +249,16 @@ def init(
     agent: str = typer.Option(None, "--agent", "-a", help="Agent name or ID (auto-detected if not set)"),
     space_id: str = typer.Option(None, "--space-id", "-s", help="Optional default space ID"),
 ):
-    """Set up authentication for this project.
+    """Legacy project-local runtime init.
+
+    For normal user bootstrap, run `axctl login` first. This command writes
+    local `.ax/config.toml` runtime config for a project or agent worktree.
 
     Just provide your PAT — everything else is auto-discovered:
 
     \b
-        ax login
-        ax login --url https://next.paxai.app
+        axctl login
+        axctl login --url https://next.paxai.app
 
     The CLI will:
     1. Verify the token works (exchange it for a JWT)
@@ -263,7 +266,8 @@ def init(
     3. Auto-select a default space only when it is unambiguous
     4. Save everything to .ax/config.toml
 
-    After init, all commands just work — no flags needed.
+    After this legacy init, project-local commands can use the saved runtime
+    config without flags.
     """
     from pathlib import Path
 

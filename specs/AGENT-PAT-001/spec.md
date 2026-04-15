@@ -28,7 +28,7 @@ route, header, profile field, or MCP URL.
 
 | Credential | Created By | Used By | Purpose | Retrieval |
 |------------|------------|---------|---------|-----------|
-| User bootstrap token | aX UI | `axctl init` | Enroll a trusted device | Shown once |
+| User PAT | aX UI | `axctl login` | Bootstrap CLI setup and mint agent PATs | Shown once |
 | Device credential | Backend during init | `axctl` | Request user/device JWTs and mint agent PATs by policy | Stored locally only |
 | Agent PAT | Backend | agent runtime / CLI profile / MCP headless | Exchange for short-lived agent JWTs | Shown once or written to local secret store |
 | Access JWT | Backend exchange endpoint | API/MCP/CLI runtime | Short-lived API authorization | Never stored long-term |
@@ -53,7 +53,7 @@ flowchart TD
 The primary team setup workflow is:
 
 ```text
-user axctl login today / axctl init target -> trusted setup context -> axctl token mint/profile setup -> agent runtimes
+user axctl login -> trusted setup context -> axctl token mint/profile setup -> agent runtimes
 ```
 
 This allows a trusted local automation agent to help provision a team without

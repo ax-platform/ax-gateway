@@ -7,12 +7,15 @@
 
 ## Summary
 
-Define the v1 bootstrap flow for `axctl init`.
+Define a proposed future device-bound bootstrap flow. This is not the current
+user setup path. Current product instructions use `axctl login` for user
+bootstrap.
 
-The user starts with a user bootstrap token created in the aX UI. `axctl init`
-uses that token once to enroll a local trusted device, then discards the raw
-bootstrap token. After enrollment, normal CLI operation should use a
-device-bound credential and agent-scoped PATs, not a reusable user token.
+In the future flow, the user starts with a one-time bootstrap token created in
+the aX UI. A device-enrollment command uses that token once to enroll a local
+trusted device, then discards the raw bootstrap token. After enrollment, normal
+CLI operation should use a device-bound credential and agent-scoped PATs, not a
+reusable user token.
 
 Critical rule:
 
@@ -23,7 +26,7 @@ Critical rule:
 
 | Term | Meaning |
 |------|---------|
-| User bootstrap token | One-time or short-lived token shown once in the aX UI and pasted into `axctl init`. |
+| User bootstrap token | Future one-time or short-lived token shown once in the aX UI and pasted into a device-enrollment command. |
 | Device credential | Long-lived local credential created during init and bound to a local device keypair. |
 | Device keypair | Locally generated asymmetric keypair. Public key is registered with aX; private key remains local. |
 | Trusted setup agent | A local automation agent explicitly trusted by the user to run setup commands on the enrolled device. It may invoke `axctl`, but it must not receive raw user bootstrap token material. |
@@ -53,7 +56,7 @@ Critical rule:
 sequenceDiagram
     actor User
     participant UI as aX UI
-    participant CLI as axctl init
+    participant CLI as Future device enrollment
     participant OS as OS Secret Store
     participant API as aX API
 
@@ -71,14 +74,15 @@ sequenceDiagram
 
 ## Agent Team Setup Flow
 
-After `axctl init`, the enrolled device can become the local credential broker
-for setting up agent teams.
+Current product instructions use `axctl login` as the local credential broker
+for setting up agent teams. This spec captures a proposed future
+device-enrollment flow, not the current CLI bootstrap command.
 
 Implementation status:
 
 - Current shipped CLI supports the compatibility setup path through
   `axctl login` plus `axctl token mint`.
-- The device-bound top-level `axctl init` flow in this spec is the target v1
+- The device-bound flow in this spec is the target v1
   security model, not the current implementation.
 - Current trusted setup agents may invoke `axctl token mint --save-to --profile`
   only inside a user-approved local setup context. They still must not receive
@@ -102,7 +106,7 @@ sequenceDiagram
     participant API as aX API
     participant FS as Local secret store / mode 0600 files
 
-    User->>CLI: axctl login today / axctl init target
+    User->>CLI: axctl login
     CLI->>API: Verify user setup credential
     API-->>CLI: User/device authorization
     User->>Agent: Set up @orion, @cipher, @sentinel
@@ -118,7 +122,8 @@ sequenceDiagram
 
 Rules:
 
-- The user bootstrap token is consumed by `axctl init` and then discarded.
+- The user bootstrap token is consumed by the future device-enrollment command
+  and then discarded.
 - The trusted setup agent can ask `axctl` to create profiles and scoped agent
   PATs, but it must not read the user bootstrap token.
 - If the CLI stores a newly minted agent PAT, command output should default to
@@ -135,9 +140,11 @@ security boundary is backend policy plus avoiding raw user-token storage. OS
 secret storage, device signing, and hardware-backed keys should progressively
 reduce local credential exposure.
 
-## `axctl init` UX
+## Future Device Enrollment UX
 
-`axctl init` should become the primary bootstrap entry point.
+If device-bound bootstrap is implemented later, it should be a separate
+device-enrollment flow. Current user instructions should continue to say
+`axctl login` until that command exists and is shipped.
 
 Minimum prompt flow:
 
@@ -154,7 +161,7 @@ Minimum prompt flow:
 Example:
 
 ```text
-axctl init
+future device-enrollment command
 
 aX URL: https://next.paxai.app
 Bootstrap token: ********
@@ -257,15 +264,16 @@ Recommended v1:
 - Bootstrap tokens can be explicitly revoked from Settings.
 - Bootstrap tokens may be one-time use when practical.
 
-If a longer-lived user PAT still exists for compatibility, `axctl init` should
-classify it as a bootstrap credential and migrate the user toward device trust.
+If a future device-enrollment command accepts a longer-lived user PAT for
+compatibility, it should classify it as a bootstrap credential and migrate the
+user toward device trust.
 
 ## Security Properties
 
 Non-negotiable v1 properties:
 
 - User bootstrap token shown once in UI.
-- `axctl init` uses masked input.
+- The device-enrollment command uses masked input.
 - Bootstrap token is discarded after device enrollment.
 - Agents cannot read bootstrap token material.
 - Device credential is stored in OS secure storage when available.
@@ -276,8 +284,9 @@ Non-negotiable v1 properties:
 
 ## Acceptance Criteria
 
-- `axctl init` can enroll a device from a bootstrap token.
-- `axctl init` never writes the bootstrap token to `.ax/config.toml`.
+- The device-enrollment command can enroll a device from a bootstrap token.
+- The device-enrollment command never writes the bootstrap token to
+  `.ax/config.toml`.
 - `axctl auth whoami` works after enrollment without re-pasting the bootstrap token.
 - `axctl profile env` never prints a user bootstrap token.
 - The backend records `device_id`, public key fingerprint, user id, and created time.

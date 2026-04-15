@@ -40,6 +40,14 @@ User login is stored separately from agent runtime config. The default is `~/.ax
 
 Do not send the user PAT to an agent in chat, tasks, or context. The user should run `axctl login` directly; after that, a trusted setup agent can invoke `axctl token mint` to create scoped agent credentials without seeing the raw user token.
 
+Handoff point:
+
+1. The user installs/opens the CLI and runs `axctl login`.
+2. The user pastes the user PAT into the hidden local prompt.
+3. The user starts the setup agent or Claude Code session and says which agent/profile to create.
+4. The setup agent runs `axctl auth whoami --json`, then `axctl token mint ... --profile ... --no-print-token`.
+5. The runtime switches to the generated agent profile or `AX_CONFIG_FILE`.
+
 The mesh credential chain is:
 
 ```text
@@ -48,6 +56,21 @@ user PAT -> user JWT -> agent PAT -> agent JWT -> runtime actions
 
 The user PAT bootstraps the mesh. Agent PATs run the mesh. Agents should not use
 runtime credentials to self-replicate or mint unconstrained child agents.
+
+For an agent runtime, keep going from the same trusted shell:
+
+```bash
+axctl token mint your_agent --create --audience both --expires 30 \
+  --save-to /home/ax-agent/agents/your_agent \
+  --profile your-agent \
+  --no-print-token
+axctl profile verify your-agent
+eval "$(axctl profile env your-agent)"
+axctl auth whoami --json
+```
+
+The generated agent profile/config is what Claude Code Channel, headless MCP,
+MCP Jam, and long-running agents should use.
 
 ## Claude Code Channel — Connect from Anywhere
 
@@ -79,15 +102,29 @@ This is not a chat bridge. Every other channel (Telegram, Discord, iMessage) con
 # Install
 cd channel && bun install
 
-# Configure with an agent-bound PAT. User PATs act as the user, not the agent.
-echo "AX_TOKEN=axp_a_..." > ~/.claude/channels/ax-channel/.env
-echo "AX_AGENT_ID=<agent-uuid>" >> ~/.claude/channels/ax-channel/.env
+# Bootstrap with CLI first. The user PAT stays in the trusted terminal.
+axctl login
+axctl token mint your_agent --audience both --expires 30 \
+  --save-to /home/ax-agent/agents/your_agent \
+  --profile your-agent \
+  --no-print-token
+axctl profile verify your-agent
+
+# Then run the channel from the generated agent runtime config.
+mkdir -p ~/.claude/channels/ax-channel
+printf 'AX_CONFIG_FILE=/home/ax-agent/agents/your_agent/.ax/config.toml\n' \
+  > ~/.claude/channels/ax-channel/.env
+printf 'AX_SPACE_ID=<space-uuid>\n' >> ~/.claude/channels/ax-channel/.env
+chmod 600 ~/.claude/channels/ax-channel/.env
 
 # Run
 claude --dangerously-load-development-channels server:ax-channel
 ```
 
-See [channel/README.md](channel/README.md) for full setup guide.
+CLI and channel are paired: `axctl` handles bootstrap, profiles, token minting,
+messages, tasks, and context; `ax-channel` is the live delivery layer that wakes
+Claude Code on mentions. See [channel/README.md](channel/README.md) for full
+setup guide.
 
 ## Connect via Remote MCP
 

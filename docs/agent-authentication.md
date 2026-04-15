@@ -164,17 +164,21 @@ notification.
 
 If you're using Claude Code to manage your agent swarm, use the user PAT for user-authored setup and management work: creating scoped PATs, profiles, and verification. Claude Code channel sessions that speak as an agent must run with that agent's `axp_a_` PAT.
 
-Current compatibility flow:
+User-to-agent handoff flow:
 
 1. The user runs `axctl login` in the trusted shell and pastes the user PAT into the hidden prompt.
 2. The CLI stores the user login separately from agent runtime config in `~/.ax/user.toml`.
 3. The hidden prompt prints only a masked receipt, such as `axp_u_********`, so the user can tell the paste was captured without exposing the token.
-4. The setup agent may run `axctl token mint <agent> --save-to ... --profile ...` in that already-initialized environment.
-5. `axctl token mint` uses the stored user login for credential minting, even when the current working directory has an agent `.ax/config.toml`.
-6. The setup agent verifies each generated agent profile with `axctl profile verify` and `axctl auth whoami --json`.
-7. Runtime channels switch to the generated agent profile and use only that agent's `axp_a_` PAT.
+4. The user starts the setup agent/Claude Code session and gives it the setup goal, not the raw token.
+5. The setup agent verifies the authenticated CLI context with `axctl auth whoami --json`.
+6. The setup agent may run `axctl token mint <agent> --save-to ... --profile ... --no-print-token` in that already-authenticated environment.
+7. `axctl token mint` uses the stored user login for credential minting, even when the current working directory has an agent `.ax/config.toml`.
+8. The setup agent verifies each generated agent profile with `axctl profile verify` and `axctl auth whoami --json`.
+9. Runtime channels switch to the generated agent profile or `AX_CONFIG_FILE` and use only that agent's `axp_a_` PAT.
 
-Do not paste the user PAT into an agent message or task. Until the target device-bound `axctl init` flow lands, the user PAT remains a high-trust local setup credential. Treat the initialized shell/account as trusted setup context, not as an agent runtime credential.
+Do not paste the user PAT into an agent message or task. The user PAT remains a
+high-trust local setup credential. Treat the logged-in shell/account as trusted
+setup context, not as an agent runtime credential.
 
 The ax-control-plane skill knows how to:
 - Check identity with `ax auth whoami`
@@ -182,17 +186,17 @@ The ax-control-plane skill knows how to:
 - Send messages and hand work to agents with `ax handoff`
 - Watch for completions with `ax watch`
 
-## Target Team Setup Model
+## Team Setup Model
 
-The direction is to make `axctl init` the user's one-time trusted-device setup,
-then let trusted local automation provision the agent team through `axctl`
-without exposing the user's bootstrap token.
+The user runs `axctl login` as the one-time trusted local setup step, then
+trusted local automation provisions the agent team through `axctl` without
+ever receiving the user's bootstrap token.
 
 ```text
 User bootstrap token
   │
   ▼
-axctl login today / axctl init target
+axctl login in trusted terminal
   │
   ▼
 trusted setup agent invokes axctl token mint --save-to --profile
