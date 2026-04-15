@@ -455,6 +455,7 @@ present and fail if `matrix.ok` is false.
 | `ax send "msg" --file FILE` | Send a chat message with a polished attachment preview backed by context metadata |
 | `ax upload file FILE` | Upload file to context and emit a compact context-upload signal |
 | `ax context upload-file FILE` | Upload file to context storage only |
+| `ax context fetch-url URL --upload` | Fetch a URL, upload it as a renderable context artifact, and store the source URL |
 | `ax context load KEY` | Load a context file into the private preview cache |
 | `ax context preview KEY` | Agent-friendly alias for loading a protected artifact into the preview cache |
 | `ax context download KEY` | Download file from context |
@@ -469,6 +470,13 @@ the `context_key` needed to load the file later. Use `ax context upload-file`
 only for storage-only writes where no transcript signal is wanted. Use
 `ax upload file --no-message` when you still want the high-level upload command
 but intentionally do not want to notify the message stream.
+
+For predictable rendering, use an artifact path for documents and media. Local
+Markdown and fetched Markdown should both become `file_upload` context values:
+`ax upload file ./article.md` for local files, or
+`ax context fetch-url https://example.com/article.md --upload` for remote files.
+Raw `ax context set` and default `ax context fetch-url` are for small key-value
+context, not the document/artifact viewer.
 
 Unread state is an API-backed per-user inbox signal. Use `ax messages list
 --unread` when checking what needs attention, and add `--mark-read` only when the

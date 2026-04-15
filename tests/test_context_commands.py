@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from ax_cli.commands import context
@@ -326,3 +329,60 @@ def test_context_set_mention_sends_context_signal(monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls["message"]["content"] == "@mcp_sentinel Context updated: `spec:cli`"
     assert '"message_id": "msg-1"' in result.output
+
+
+def test_context_fetch_url_upload_stores_renderable_file_upload(monkeypatch):
+    calls = {}
+
+    class FakeResponse:
+        headers = {"content-type": "text/markdown; charset=utf-8"}
+        content = b"# Article\nFetched markdown.\n"
+        text = "# Article\nFetched markdown.\n"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def upload_file(self, path, *, space_id=None):
+            calls["upload"] = {"path": path, "space_id": space_id}
+            assert Path(path).name == "article.md"
+            assert Path(path).read_bytes() == FakeResponse.content
+            return {
+                "attachment_id": "att-1",
+                "url": "/api/v1/uploads/files/article.md",
+                "content_type": "text/markdown",
+                "size": len(FakeResponse.content),
+                "original_filename": "article.md",
+            }
+
+        def set_context(self, space_id, key, value, *, ttl=None):
+            calls["context"] = {"space_id": space_id, "key": key, "value": value, "ttl": ttl}
+            return {"status": "stored"}
+
+    monkeypatch.setattr(context, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(context, "resolve_space_id", lambda client, explicit=None: "space-1")
+    monkeypatch.setattr(context.httpx, "get", lambda *args, **kwargs: FakeResponse())
+
+    result = runner.invoke(
+        app,
+        [
+            "context",
+            "fetch-url",
+            "https://example.com/article.md",
+            "--upload",
+            "--key",
+            "article",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    stored = json.loads(calls["context"]["value"])
+    assert stored["type"] == "file_upload"
+    assert stored["filename"] == "article.md"
+    assert stored["source"] == "url_fetch"
+    assert stored["source_url"] == "https://example.com/article.md"
+    assert stored["content"] == FakeResponse.text
+    assert calls["context"]["key"] == "article"
+    output = json.loads(result.output[result.output.index("{") :])
+    assert output["type"] == "file_upload"
