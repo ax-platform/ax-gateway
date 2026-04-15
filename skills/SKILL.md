@@ -141,6 +141,30 @@ user PAT -> user JWT -> agent PAT -> agent JWT -> runtime actions
 The user PAT bootstraps the mesh. Agent PATs run the mesh. Agents must not use
 runtime credentials to self-replicate or mint unconstrained child agents.
 
+## Agent PAT Rotation
+
+The simple loop is: check the keys, mint one replacement, test it, then remove
+the old one. A first-class rotate command is convenience, not a requirement.
+
+Safe rotation algorithm:
+
+1. Verify a user bootstrap login, not an agent runtime profile:
+   `axctl auth whoami --json`.
+2. Inventory credentials: `axctl credentials list --json`, then use
+   `axctl credentials audit` for the active-key policy view.
+3. Mint a replacement for the same agent and audience:
+   `axctl token mint <agent> --audience <cli|mcp|both> --expires <days> --save-to <new-token-file> --profile <profile> --no-print-token`.
+4. Verify the replacement profile:
+   `axctl profile verify <profile>` and `axctl auth whoami --json`.
+5. Revoke the old credential id:
+   `axctl credentials revoke <old-credential-id>`.
+
+Policy: one active agent PAT is normal. Two active PATs is a temporary rotation
+window and should be called out as a warning. More than two active PATs for one
+agent is a cleanup issue; do not mint another token until stale credentials are
+removed. Detection should also watch for new device/location use, impossible
+travel, unexpected audience/space/agent binding, and stale active tokens.
+
 ## Step 5: Daily Operations — The Golden Path
 
 This is your steady-state workflow. Every agent should both listen and send.

@@ -259,6 +259,53 @@ Required:
 - Revoke all PATs issued by one device.
 - Expire PATs automatically.
 - Keep JWT TTL short enough that revocation propagates quickly.
+- Operators can rotate an agent PAT with existing CLI primitives:
+  list credentials, mint a replacement PAT for the same agent and audience,
+  verify the replacement profile, then revoke the old credential id.
+- Agent-bound PAT inventory should normally show one active PAT per agent.
+  Two active PATs is allowed only as a short rotation window and should produce
+  a warning. More than two active PATs for the same agent is a hygiene violation
+  and should require explicit cleanup before more credentials are minted.
+
+Standard rotation algorithm:
+
+1. Run `axctl credentials list --json` from a verified user bootstrap login.
+   Use `axctl credentials audit` for the operator-friendly active-key report
+   and `axctl credentials audit --strict` in automation.
+2. Identify the old active credential id, target agent, audience, and
+   `last_used_at`.
+3. Run `axctl token mint <agent> --audience <same-audience> --expires <days>
+   --save-to <new-token-file> --profile <profile> --no-print-token`.
+4. Run `axctl profile verify <profile>` and
+   `axctl auth whoami --json` using the replacement profile.
+5. Only after the replacement works, run
+   `axctl credentials revoke <old-credential-id>`.
+
+Do not bulk-revoke live credentials without a verified inventory. If a
+credential cannot be matched to a current profile, recent `last_used_at`, or
+known runtime, treat it as a cleanup candidate and revoke it deliberately.
+
+Detection and warning signals:
+
+- Active count per bound agent: `1` is normal, `2` is a rotation warning,
+  `>2` is a cleanup warning.
+- First use from a new device fingerprint, host fingerprint, IP region, or ASN
+  should create an alert for the owning user.
+- A token used from two locations within an impossible travel window should
+  create a high-severity alert.
+- A token that has not been used recently but remains active should be shown as
+  stale and safe to review for revocation.
+- A token used with an unexpected audience, space, or agent binding should be
+  rejected when possible and logged as a suspicious credential event.
+
+Fingerprint limits:
+
+- If a credential is used from the expected hashed device/location context, the
+  detection signal is weaker. That can mean legitimate use, or it can mean the
+  attacker is already inside the same host or user account.
+- Same-context token misuse is handled by least privilege, mode `0600` token
+  files, profile verification, short JWT TTLs, audit logs, and fast revocation.
+  Fingerprinting is not a substitute for endpoint or host security.
 
 Recommended initial TTLs:
 

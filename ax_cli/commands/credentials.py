@@ -8,9 +8,79 @@ import httpx
 import typer
 
 from ..config import get_client
-from ..output import JSON_OPTION, console, handle_error, print_json
+from ..output import EXIT_NOT_OK, JSON_OPTION, console, handle_error, print_json, print_table
 
 app = typer.Typer(name="credentials", help="Credential management (PATs, enrollment tokens)", no_args_is_help=True)
+
+
+def _active_agent_credentials(credentials: list[dict]) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for credential in credentials:
+        if credential.get("lifecycle_state") != "active":
+            continue
+        agent_id = credential.get("bound_agent_id")
+        if not agent_id:
+            continue
+        grouped.setdefault(agent_id, []).append(credential)
+    return grouped
+
+
+def build_credential_audit(credentials: list[dict]) -> dict:
+    """Build the non-destructive agent PAT hygiene report."""
+    agents: list[dict] = []
+    for agent_id, active in sorted(_active_agent_credentials(credentials).items()):
+        active = sorted(active, key=lambda c: str(c.get("created_at") or ""))
+        count = len(active)
+        if count == 1:
+            status = "ok"
+            severity = "ok"
+            recommendation = "one active PAT"
+        elif count == 2:
+            status = "rotation_window"
+            severity = "warning"
+            recommendation = "verify the replacement works, then revoke the older PAT"
+        else:
+            status = "cleanup_required"
+            severity = "violation"
+            recommendation = "revoke stale PATs before minting another token"
+
+        agents.append(
+            {
+                "agent_id": agent_id,
+                "active_count": count,
+                "status": status,
+                "severity": severity,
+                "recommendation": recommendation,
+                "credentials": [
+                    {
+                        "credential_id": c.get("credential_id"),
+                        "key_id": c.get("key_id"),
+                        "name": c.get("name"),
+                        "audience": c.get("audience"),
+                        "created_at": c.get("created_at"),
+                        "expires_at": c.get("expires_at"),
+                        "last_used_at": c.get("last_used_at"),
+                    }
+                    for c in active
+                ],
+            }
+        )
+
+    summary = {
+        "agents_checked": len(agents),
+        "ok": sum(1 for agent in agents if agent["status"] == "ok"),
+        "rotation_windows": sum(1 for agent in agents if agent["status"] == "rotation_window"),
+        "cleanup_required": sum(1 for agent in agents if agent["status"] == "cleanup_required"),
+    }
+    return {
+        "policy": {
+            "normal_active_agent_pats": 1,
+            "rotation_window_active_agent_pats": 2,
+            "max_active_agent_pats": 2,
+        },
+        "summary": summary,
+        "agents": agents,
+    }
 
 
 @app.command("issue-agent-pat")
@@ -123,6 +193,49 @@ def revoke(
     except httpx.HTTPStatusError as e:
         handle_error(e)
     console.print(f"[red]Revoked:[/red] {credential_id}")
+
+
+@app.command("audit")
+def audit(
+    as_json: bool = JSON_OPTION,
+    strict: bool = typer.Option(False, "--strict", help="Exit non-zero when any agent has more than two active PATs"),
+):
+    """Audit active agent PAT counts without minting or revoking credentials."""
+    client = get_client()
+    try:
+        creds = client.mgmt_list_credentials()
+    except httpx.HTTPStatusError as e:
+        handle_error(e)
+
+    report = build_credential_audit(creds)
+    if as_json:
+        print_json(report)
+    else:
+        summary = report["summary"]
+        console.print(
+            "[bold]Agent PAT audit[/bold] "
+            f"ok={summary['ok']} rotation_windows={summary['rotation_windows']} "
+            f"cleanup_required={summary['cleanup_required']}"
+        )
+        if not report["agents"]:
+            console.print("[dim]No active agent-bound PATs found.[/dim]")
+        else:
+            print_table(
+                ["Agent", "Active", "Status", "Recommendation"],
+                [
+                    {
+                        "agent": agent["agent_id"],
+                        "active": agent["active_count"],
+                        "status": agent["status"],
+                        "recommendation": agent["recommendation"],
+                    }
+                    for agent in report["agents"]
+                ],
+                keys=["agent", "active", "status", "recommendation"],
+            )
+
+    if strict and report["summary"]["cleanup_required"]:
+        raise typer.Exit(EXIT_NOT_OK)
 
 
 @app.command("list")

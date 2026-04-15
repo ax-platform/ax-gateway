@@ -264,6 +264,8 @@ ax profile use ──► verifies all three ──► ax commands
 4. Tokens live in files (mode 600), never in config.toml
 5. Setup automation stores scoped agent PATs without printing them unless
    explicitly requested with `--print-token`
+6. One active agent PAT is the normal state. Two active PATs is only a rotation
+   window; revoke the old one after the replacement profile verifies.
 
 ## Profile Verification
 
@@ -285,6 +287,27 @@ Register Agent → Create Scoped PAT → Save Token File
      → Rotate (when needed) → ax profile add (rebind)
      → Revoke (when decommissioning)
 ```
+
+### Rotation With Existing CLI Commands
+
+You do not need a special rotate endpoint to rotate an agent PAT safely. The
+simple loop is: check the keys, mint one replacement, test it, then remove the
+old one. Use the credential-management commands as a transaction:
+
+1. From a verified user bootstrap login, inventory credentials:
+   `axctl credentials list --json`. Use `axctl credentials audit` for the
+   active-key policy view and `axctl credentials audit --strict` in automation.
+2. Mint the replacement for the same agent and audience:
+   `axctl token mint <agent> --audience <cli|mcp|both> --expires <days> --save-to <path> --profile <profile> --no-print-token`.
+3. Verify the new profile:
+   `axctl profile verify <profile>` and `axctl auth whoami --json`.
+4. Revoke the old credential id:
+   `axctl credentials revoke <old-credential-id>`.
+
+Do not revoke first. A rotation is complete only when the replacement token
+works and the previous credential is revoked. If an agent has two active PATs,
+show that as a warning; if it has more than two, stop and clean up stale keys
+before issuing more.
 
 ## Troubleshooting
 

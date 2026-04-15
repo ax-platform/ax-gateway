@@ -121,6 +121,50 @@ The safe pattern is:
 `axctl token mint` hides newly minted PATs by default when it stores them locally.
 Use `--print-token` only when a human explicitly needs to copy the token.
 
+## Agent PAT Rotation
+
+The simple loop is: check the keys, mint one replacement, test it, then remove
+the old one. Rotation is built from the existing CLI commands instead of
+relying on a separate rotate API:
+
+1. `axctl credentials list --json`
+2. `axctl credentials audit`
+3. `axctl token mint <agent> --audience <same-audience> --expires <days> --save-to <new-token-file> --profile <profile> --no-print-token`
+4. `axctl profile verify <profile>`
+5. `axctl auth whoami --json`
+6. `axctl credentials revoke <old-credential-id>`
+
+The normal target is one active PAT per agent. Two active PATs is acceptable
+only during the rotation window. More than two active PATs for one agent should
+be treated as a security hygiene issue and cleaned up before issuing another
+token.
+
+## Credential Detection Signals
+
+Warnings should come from credential metadata, not guesswork:
+
+- Active keys per agent: warn at two active keys, block or require cleanup above
+  two.
+- New device or host fingerprint for an existing token.
+- New location, IP region, or ASN for an existing token.
+- Impossible travel between two token uses.
+- Active token with old `last_used_at`.
+- Token used against an unexpected audience, space, or bound agent.
+
+These should become normal alerts in the product: tell the user what changed,
+which token/agent is involved, when it happened, and the recommended action,
+usually "verify this was you" or "revoke the inactive key."
+
+### Same-Location Limit
+
+Device and location fingerprints are useful when a token appears somewhere new.
+They are much less useful when a token is used from the expected hashed
+location. In that case the hard question is whether the runtime host or user
+account is compromised. That is a different threat class: we reduce blast radius
+with one agent PAT per agent, mode `0600` token files, profile verification,
+short-lived exchanged JWTs, audit logs, and fast revocation, but we should not
+claim fingerprinting can detect every same-host compromise.
+
 Local isolation note: a fully trusted shell agent running as the same OS user can
 generally read files that the user can read. Device trust and OS secret storage
 reduce exposure, but untrusted code still needs process/user-level isolation.
