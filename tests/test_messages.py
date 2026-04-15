@@ -1,10 +1,16 @@
 import json
+import re
 
 from typer.testing import CliRunner
 
 from ax_cli.main import app
 
 runner = CliRunner()
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text)
 
 
 def test_send_file_stores_context_and_includes_context_key(monkeypatch, tmp_path):
@@ -199,11 +205,13 @@ def test_messages_read_all_marks_space_read(monkeypatch):
 
 def test_send_help_prefers_no_wait_language(monkeypatch):
     result = runner.invoke(app, ["send", "--help"], terminal_width=80)
+    output = _strip_ansi(result.output)
 
     assert result.exit_code == 0, result.output
-    assert "--skip-ax" not in result.output
-    assert "--to" in result.output
-    assert "intercom" in result.output
+    assert "--no-wait" in output
+    assert "--skip-ax" not in output
+    assert "--to" in output
+    assert "intercom" in output
 
     calls = {}
 
