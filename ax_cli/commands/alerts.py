@@ -148,12 +148,20 @@ def _build_alert_metadata(
     triggered_by_agent: str | None,
     title: str | None,
     state: str = "triggered",
+    task_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the ``metadata`` block the frontend's AlertCardBody reads.
 
     Shape mirrors the dogfood message 1942cc2c but with the compact
     reminder fields ChatGPT flagged (source_task_id, due_at, remind_at,
     state) and no task-board widget hydration.
+
+    When ``task_snapshot`` is provided (task-aware reminders per task
+    ``e55be7c8``), embed a trimmed task block at ``alert.task`` +
+    ``card_payload.task`` so the frontend can render task title / priority /
+    status / assignee without a second round-trip. Keys follow the backend
+    task shape: ``id``, ``title``, ``priority``, ``status``, ``assignee_id``,
+    ``assignee_name``, ``creator_id``, ``deadline``.
     """
     card_title = title or (f"Reminder: {reason[:80]}" if kind == "reminder" else f"Alert: {reason[:80]}")
     fired_at = _iso_utc_now()
@@ -185,6 +193,8 @@ def _build_alert_metadata(
         alert["context_key"] = evidence
     if triggered_by_agent:
         alert["triggered_by_agent_name"] = triggered_by_agent
+    if task_snapshot:
+        alert["task"] = task_snapshot
 
     card_payload: dict[str, Any] = {
         "title": card_title,
@@ -196,6 +206,8 @@ def _build_alert_metadata(
     if source_task_id:
         card_payload["source_task_id"] = source_task_id
         card_payload["resource_uri"] = f"ui://tasks/{source_task_id}"
+    if task_snapshot:
+        card_payload["task"] = task_snapshot
 
     return {
         "alert": alert,
@@ -210,6 +222,59 @@ def _build_alert_metadata(
             ]
         },
     }
+
+
+_TASK_SNAPSHOT_KEYS = ("id", "title", "priority", "status", "assignee_id", "creator_id", "deadline")
+
+
+def _fetch_task_snapshot(client: Any, task_id: str) -> dict[str, Any] | None:
+    """Fetch a compact task snapshot for embedding in reminder/alert metadata.
+
+    Returns a dict with the task's human-readable fields plus ``assignee_name``
+    resolved via the agent roster (best-effort). Returns ``None`` on any
+    failure so callers can fall back to the source_task_id link alone.
+    """
+    try:
+        r = client._http.get(
+            f"/api/v1/tasks/{task_id}",
+            headers=client._with_agent(None),
+        )
+        r.raise_for_status()
+        wrapper = client._parse_json(r)
+    except Exception:
+        return None
+
+    task = wrapper.get("task", wrapper) if isinstance(wrapper, dict) else {}
+    if not isinstance(task, dict):
+        return None
+
+    snapshot: dict[str, Any] = {k: task[k] for k in _TASK_SNAPSHOT_KEYS if task.get(k) is not None}
+    if not snapshot.get("id"):
+        snapshot["id"] = task_id
+
+    assignee_id = snapshot.get("assignee_id")
+    if assignee_id:
+        name = _agent_name_for(client, str(assignee_id))
+        if name:
+            snapshot["assignee_name"] = name
+
+    return snapshot
+
+
+def _agent_name_for(client: Any, agent_id: str) -> str | None:
+    """Best-effort resolution of agent_id → handle via the agent roster."""
+    try:
+        rr = client._http.get(
+            f"/api/v1/agents/{agent_id}",
+            headers=client._with_agent(None),
+        )
+        rr.raise_for_status()
+        agent_wrapper = client._parse_json(rr)
+    except Exception:
+        return None
+    agent = agent_wrapper.get("agent", agent_wrapper) if isinstance(agent_wrapper, dict) else {}
+    name = agent.get("name") or agent.get("username") or agent.get("handle")
+    return name.strip().lstrip("@") if isinstance(name, str) else None
 
 
 def _resolve_target_from_task(client: Any, task_id: str) -> tuple[str | None, str | None]:
@@ -230,31 +295,19 @@ def _resolve_target_from_task(client: Any, task_id: str) -> tuple[str | None, st
         return None, None
 
     task = wrapper.get("task", wrapper) if isinstance(wrapper, dict) else {}
+    if not isinstance(task, dict):
+        return None, None
 
-    # The backend returns ids, not names. Try to resolve via the agent
-    # roster — best-effort, skip if unreachable.
-    def _name_for(agent_id: str | None) -> str | None:
-        if not agent_id:
-            return None
-        try:
-            rr = client._http.get(
-                f"/api/v1/agents/{agent_id}",
-                headers=client._with_agent(None),
-            )
-            rr.raise_for_status()
-            agent_wrapper = client._parse_json(rr)
-            agent = agent_wrapper.get("agent", agent_wrapper) if isinstance(agent_wrapper, dict) else {}
-            name = agent.get("name") or agent.get("username") or agent.get("handle")
-            return name.strip().lstrip("@") if isinstance(name, str) else None
-        except Exception:
-            return None
-
-    assignee_name = _name_for(task.get("assignee_id"))
-    if assignee_name:
-        return assignee_name, "assignee"
-    creator_name = _name_for(task.get("creator_id"))
-    if creator_name:
-        return creator_name, "creator"
+    assignee_id = task.get("assignee_id")
+    if assignee_id:
+        assignee_name = _agent_name_for(client, str(assignee_id))
+        if assignee_name:
+            return assignee_name, "assignee"
+    creator_id = task.get("creator_id")
+    if creator_id:
+        creator_name = _agent_name_for(client, str(creator_id))
+        if creator_name:
+            return creator_name, "creator"
     return None, None
 
 

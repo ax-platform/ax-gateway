@@ -22,6 +22,7 @@ from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..output import JSON_OPTION, console, print_json, print_table
 from .alerts import (
     _build_alert_metadata,
+    _fetch_task_snapshot,
     _format_mention_content,
     _normalize_severity,
     _resolve_target_from_task,
@@ -255,6 +256,8 @@ def _fire_policy(client: Any, policy: dict[str, Any], *, now: _dt.datetime) -> d
     except Exception:
         triggered_by = None
 
+    task_snapshot = _fetch_task_snapshot(client, source_task) if source_task else None
+
     fired_at = _iso(now)
     metadata = _build_alert_metadata(
         kind="reminder",
@@ -269,6 +272,7 @@ def _fire_policy(client: Any, policy: dict[str, Any], *, now: _dt.datetime) -> d
         evidence=policy.get("evidence"),
         triggered_by_agent=triggered_by,
         title=policy.get("title"),
+        task_snapshot=task_snapshot,
     )
     metadata["reminder_policy"] = {
         "policy_id": policy.get("id"),
