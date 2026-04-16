@@ -104,9 +104,7 @@ def _short_id() -> str:
 
 def _find_policy(store: dict[str, Any], policy_id: str) -> dict[str, Any]:
     matches = [
-        p
-        for p in store.get("policies", [])
-        if isinstance(p, dict) and str(p.get("id", "")).startswith(policy_id)
+        p for p in store.get("policies", []) if isinstance(p, dict) and str(p.get("id", "")).startswith(policy_id)
     ]
     if not matches:
         typer.echo(f"Error: reminder policy not found: {policy_id}", err=True)

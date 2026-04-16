@@ -699,7 +699,9 @@ def _check_config_permissions() -> None:
 
 def resolve_token() -> str | None:
     _check_config_permissions()
-    return os.environ.get("AX_TOKEN") or _read_token_file(os.environ.get("AX_TOKEN_FILE")) or _load_config().get("token")
+    return (
+        os.environ.get("AX_TOKEN") or _read_token_file(os.environ.get("AX_TOKEN_FILE")) or _load_config().get("token")
+    )
 
 
 def resolve_user_token() -> str | None:
