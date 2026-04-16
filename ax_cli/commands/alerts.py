@@ -311,6 +311,90 @@ def _resolve_target_from_task(client: Any, task_id: str) -> tuple[str | None, st
     return None, None
 
 
+_TERMINAL_TASK_STATUSES = frozenset({"completed", "closed", "done", "cancelled", "canceled", "archived", "resolved"})
+
+
+def _task_lifecycle(client: Any, task_id: str) -> dict[str, Any] | None:
+    """Classify a task for reminder-lifecycle routing.
+
+    Returns a dict with:
+      - ``status`` — raw status string (lower-cased) or ``None``
+      - ``is_terminal`` — reminder should STOP entirely (disable policy)
+      - ``is_pending_review`` — reminder should reroute to a review owner
+      - ``review_owner`` — resolved handle of the review owner (may be ``None``)
+      - ``creator_name`` — resolved handle of the task creator (fallback target)
+      - ``assignee_name`` — resolved handle of the assignee (default target)
+      - ``snapshot`` — task snapshot compatible with ``_fetch_task_snapshot``
+
+    Returns ``None`` on fetch failure; callers should fall through to the
+    pre-lifecycle default behavior (fire to assignee, do not disable).
+    """
+    try:
+        r = client._http.get(
+            f"/api/v1/tasks/{task_id}",
+            headers=client._with_agent(None),
+        )
+        r.raise_for_status()
+        wrapper = client._parse_json(r)
+    except Exception:
+        return None
+
+    task = wrapper.get("task", wrapper) if isinstance(wrapper, dict) else {}
+    if not isinstance(task, dict):
+        return None
+
+    status_raw = task.get("status")
+    status = str(status_raw).strip().lower() if isinstance(status_raw, str) else None
+
+    requirements = task.get("requirements") if isinstance(task.get("requirements"), dict) else {}
+    tags = task.get("tags") if isinstance(task.get("tags"), (list, tuple)) else []
+    tag_set = {str(t).strip().lower() for t in tags if isinstance(t, str)}
+
+    is_terminal = bool(status and status in _TERMINAL_TASK_STATUSES)
+    if not is_terminal and isinstance(task.get("completed_at"), str) and task.get("completed_at"):
+        is_terminal = True
+
+    pending_flag = False
+    if status == "pending_review":
+        pending_flag = True
+    elif "pending_review" in tag_set:
+        pending_flag = True
+    elif bool(requirements.get("pending_review")):
+        pending_flag = True
+    elif requirements.get("review_owner") or requirements.get("review_owner_id"):
+        pending_flag = True
+
+    review_owner_name: str | None = None
+    raw_owner = requirements.get("review_owner") if isinstance(requirements.get("review_owner"), str) else None
+    if raw_owner:
+        review_owner_name = raw_owner.strip().lstrip("@") or None
+    if not review_owner_name:
+        owner_id = requirements.get("review_owner_id")
+        if isinstance(owner_id, str) and owner_id:
+            review_owner_name = _agent_name_for(client, owner_id)
+
+    assignee_id = task.get("assignee_id")
+    assignee_name = _agent_name_for(client, str(assignee_id)) if isinstance(assignee_id, str) and assignee_id else None
+    creator_id = task.get("creator_id")
+    creator_name = _agent_name_for(client, str(creator_id)) if isinstance(creator_id, str) and creator_id else None
+
+    snapshot = {k: task[k] for k in _TASK_SNAPSHOT_KEYS if task.get(k) is not None}
+    if not snapshot.get("id"):
+        snapshot["id"] = task_id
+    if assignee_name:
+        snapshot["assignee_name"] = assignee_name
+
+    return {
+        "status": status,
+        "is_terminal": is_terminal,
+        "is_pending_review": pending_flag and not is_terminal,
+        "review_owner": review_owner_name,
+        "creator_name": creator_name,
+        "assignee_name": assignee_name,
+        "snapshot": snapshot,
+    }
+
+
 def _format_mention_content(target: str | None, reason: str, kind: str) -> str:
     label = "Reminder" if kind == "reminder" else "Alert"
     prefix = f"@{target} " if target else ""

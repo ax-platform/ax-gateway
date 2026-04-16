@@ -311,3 +311,213 @@ def test_run_once_without_task_snapshot_still_fires(monkeypatch, tmp_path):
     metadata = fake.sent[0]["metadata"]
     assert "task" not in metadata["alert"], "fallback: no task snapshot embedded on failure"
     assert metadata["alert"]["source_task_id"] == "task-nope", "source_task_id link still present"
+
+
+def _http_stub(routes: dict[str, dict]):
+    """Build a minimal _http stub that serves fixed responses per path suffix."""
+
+    class _R:
+        def __init__(self, data):
+            self._data = data
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._data
+
+    class _Stub:
+        def get(self, path: str, *, headers: dict) -> Any:
+            for suffix, payload in routes.items():
+                if path.endswith(suffix):
+                    return _R(payload)
+            return _R({})
+
+    return _Stub()
+
+
+def _install_task_aware_client(monkeypatch, routes: dict[str, dict]) -> _FakeClient:
+    fake = _FakeClient()
+    fake._http = _http_stub(routes)  # type: ignore[attr-defined]
+    fake._with_agent = lambda _: {}  # type: ignore[attr-defined]
+    fake._parse_json = lambda r: r.json()  # type: ignore[attr-defined]
+    _install_fake_runtime(monkeypatch, fake)
+    return fake
+
+
+def test_run_once_skips_and_disables_when_source_task_is_terminal(monkeypatch, tmp_path):
+    """Task e032bc49: if source task is completed/closed/done/cancelled,
+    reminder must not fire and the policy must be disabled so it stops
+    flooding the Activity Stream."""
+    fake = _install_task_aware_client(
+        monkeypatch,
+        {
+            "/tasks/task-done": {
+                "task": {
+                    "id": "task-done",
+                    "title": "Already shipped",
+                    "status": "completed",
+                    "assignee_id": "agent-orion",
+                    "creator_id": "agent-chatgpt",
+                }
+            },
+            "/agents/agent-orion": {"agent": {"id": "agent-orion", "name": "orion"}},
+        },
+    )
+
+    policy_file = tmp_path / "reminders.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "policies": [
+                    {
+                        "id": "rem-done",
+                        "enabled": True,
+                        "space_id": "space-abc",
+                        "source_task_id": "task-done",
+                        "reason": "old reminder for a finished task",
+                        "target": "orion",
+                        "severity": "info",
+                        "cadence_seconds": 300,
+                        "next_fire_at": "2026-04-16T00:00:00Z",
+                        "max_fires": 5,
+                        "fired_count": 0,
+                        "fired_keys": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["reminders", "run", "--once", "--file", str(policy_file), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert fake.sent == [], "terminal task must not produce a reminder message"
+
+    payload = json.loads(result.output)
+    assert len(payload["fired"]) == 1
+    skipped = payload["fired"][0]
+    assert skipped.get("skipped") is True
+    assert skipped.get("reason") == "source_task_terminal:completed"
+
+    stored = _load(policy_file)["policies"][0]
+    assert stored["enabled"] is False
+    assert stored["disabled_reason"] == "source task task-done is completed"
+    assert stored["fired_count"] == 0, "disabled skip must NOT advance fired_count"
+
+
+def test_run_once_reroutes_pending_review_to_review_owner(monkeypatch, tmp_path):
+    """Task f00e36ac: if task is pending_review with a review_owner in
+    requirements, reminder must route to the reviewer — not the worker/assignee."""
+    fake = _install_task_aware_client(
+        monkeypatch,
+        {
+            "/tasks/task-review": {
+                "task": {
+                    "id": "task-review",
+                    "title": "PR awaiting review",
+                    "status": "pending_review",
+                    "assignee_id": "agent-orion",
+                    "creator_id": "agent-chatgpt",
+                    "requirements": {"review_owner": "madtank"},
+                }
+            },
+            "/agents/agent-orion": {"agent": {"id": "agent-orion", "name": "orion"}},
+            "/agents/agent-chatgpt": {"agent": {"id": "agent-chatgpt", "name": "chatgpt"}},
+        },
+    )
+
+    policy_file = tmp_path / "reminders.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "policies": [
+                    {
+                        "id": "rem-review",
+                        "enabled": True,
+                        "space_id": "space-abc",
+                        "source_task_id": "task-review",
+                        "reason": "merge this PR",
+                        "severity": "info",
+                        "cadence_seconds": 300,
+                        "next_fire_at": "2026-04-16T00:00:00Z",
+                        "max_fires": 2,
+                        "fired_count": 0,
+                        "fired_keys": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["reminders", "run", "--once", "--file", str(policy_file), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert len(fake.sent) == 1, "reminder still fires — just reroutes to reviewer"
+    sent = fake.sent[0]
+    assert sent["content"].startswith("@madtank Reminder:")
+    assert "[pending review]" in sent["content"], "reason should be prefixed with [pending review]"
+    metadata = sent["metadata"]
+    assert metadata["alert"]["target_agent"] == "madtank"
+    assert metadata["reminder_policy"]["target_resolved_from"] == "review_owner"
+    # Policy continues (not disabled) — the review owner can still be reminded
+    stored = _load(policy_file)["policies"][0]
+    assert stored["enabled"] is True
+    assert stored["fired_count"] == 1
+
+
+def test_run_once_pending_review_falls_back_to_creator_when_no_owner(monkeypatch, tmp_path):
+    """Task f00e36ac: if pending_review is flagged but no review_owner is
+    listed, fall back to the task creator (per spec escalation ladder)."""
+    fake = _install_task_aware_client(
+        monkeypatch,
+        {
+            "/tasks/task-review2": {
+                "task": {
+                    "id": "task-review2",
+                    "title": "PR awaiting review — no owner",
+                    "status": "in_progress",
+                    "assignee_id": "agent-orion",
+                    "creator_id": "agent-chatgpt",
+                    "requirements": {"pending_review": True},
+                }
+            },
+            "/agents/agent-orion": {"agent": {"id": "agent-orion", "name": "orion"}},
+            "/agents/agent-chatgpt": {"agent": {"id": "agent-chatgpt", "name": "chatgpt"}},
+        },
+    )
+
+    policy_file = tmp_path / "reminders.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "policies": [
+                    {
+                        "id": "rem-review2",
+                        "enabled": True,
+                        "space_id": "space-abc",
+                        "source_task_id": "task-review2",
+                        "reason": "review this",
+                        "severity": "info",
+                        "cadence_seconds": 300,
+                        "next_fire_at": "2026-04-16T00:00:00Z",
+                        "max_fires": 2,
+                        "fired_count": 0,
+                        "fired_keys": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["reminders", "run", "--once", "--file", str(policy_file), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert len(fake.sent) == 1
+    sent = fake.sent[0]
+    assert sent["content"].startswith("@chatgpt Reminder:"), "falls back to creator"
+    metadata = sent["metadata"]
+    assert metadata["reminder_policy"]["target_resolved_from"] == "creator_fallback"

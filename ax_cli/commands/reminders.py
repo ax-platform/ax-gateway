@@ -27,6 +27,7 @@ from .alerts import (
     _normalize_severity,
     _resolve_target_from_task,
     _strip_at,
+    _task_lifecycle,
     _validate_timestamp,
 )
 
@@ -248,15 +249,47 @@ def _fire_policy(client: Any, policy: dict[str, Any], *, now: _dt.datetime) -> d
     reason = str(policy.get("reason") or "Please review this task.")
     target = _strip_at(policy.get("target"))
     target_resolved_from = None
-    if source_task and not target:
-        target, target_resolved_from = _resolve_target_from_task(client, source_task)
+
+    lifecycle = _task_lifecycle(client, source_task) if source_task else None
+
+    if lifecycle and lifecycle.get("is_terminal"):
+        policy["enabled"] = False
+        policy["disabled_reason"] = f"source task {source_task} is {lifecycle.get('status')}"
+        policy["updated_at"] = _iso(now)
+        return {
+            "policy_id": policy.get("id"),
+            "skipped": True,
+            "reason": f"source_task_terminal:{lifecycle.get('status')}",
+            "source_task_id": source_task,
+            "fired_at": None,
+        }
+
+    if lifecycle and lifecycle.get("is_pending_review"):
+        review_target = lifecycle.get("review_owner") or lifecycle.get("creator_name")
+        if review_target:
+            target = review_target
+            target_resolved_from = "review_owner" if lifecycle.get("review_owner") else "creator_fallback"
+            reason = f"[pending review] {reason}"
+        elif not target:
+            target, target_resolved_from = (lifecycle.get("assignee_name"), "assignee")
+    elif source_task and not target:
+        if lifecycle and lifecycle.get("assignee_name"):
+            target, target_resolved_from = lifecycle["assignee_name"], "assignee"
+        elif lifecycle and lifecycle.get("creator_name"):
+            target, target_resolved_from = lifecycle["creator_name"], "creator"
+        else:
+            target, target_resolved_from = _resolve_target_from_task(client, source_task)
 
     try:
         triggered_by = resolve_agent_name(client=client)
     except Exception:
         triggered_by = None
 
-    task_snapshot = _fetch_task_snapshot(client, source_task) if source_task else None
+    task_snapshot = (
+        lifecycle.get("snapshot")
+        if lifecycle and lifecycle.get("snapshot")
+        else (_fetch_task_snapshot(client, source_task) if source_task else None)
+    )
 
     fired_at = _iso(now)
     metadata = _build_alert_metadata(
@@ -380,7 +413,7 @@ def run(
                 }
             except (httpx.ConnectError, httpx.ReadError) as exc:
                 result = {"policy_id": policy.get("id"), "error": str(exc)}
-            if not result.get("error"):
+            if not result.get("error") and not result.get("skipped"):
                 _advance_policy(policy, now=now, message_id=result.get("message_id"))
             pass_results.append(result)
             all_results.append(result)
@@ -403,6 +436,10 @@ def run(
             for item in pass_results:
                 if item.get("error"):
                     console.print(f"[red]{item['policy_id']}[/red]: {item['error']}")
+                elif item.get("skipped"):
+                    console.print(
+                        f"[yellow]{item['policy_id']}[/yellow] skipped ({item.get('reason')}) — policy disabled"
+                    )
                 else:
                     console.print(
                         f"[green]{item['policy_id']}[/green] fired "
