@@ -59,6 +59,101 @@ class MentionEvent:
     created_at: str | None
     space_id: str
     attachments: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+def _string_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float)):
+        text = str(value).strip()
+        return text or None
+    return None
+
+
+def _format_shared_object(metadata: dict[str, Any] | None, *, space_id: str) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    forward = metadata.get("forward")
+    if not isinstance(forward, dict):
+        return None
+
+    fields = [
+        ("resource_type", "resource_type"),
+        ("resource_id", "resource_id"),
+        ("task_id", "task_id"),
+        ("context_key", "context_key"),
+        ("resource_uri", "resource_uri"),
+        ("source_message_id", "source_message_id"),
+        ("source_card_id", "source_card_id"),
+        ("title", "title"),
+    ]
+    lines = ["Shared object:"]
+    for label, key in fields:
+        value = _string_value(forward.get(key))
+        if value:
+            lines.append(f"- {label}: {value}")
+
+    summary = _string_value(forward.get("summary"))
+    if summary:
+        lines.append(f"- summary: {summary}")
+
+    task_id = _string_value(forward.get("task_id"))
+    context_key = _string_value(forward.get("context_key"))
+    if task_id or context_key:
+        lines.append("")
+        lines.append("Suggested inspection:")
+        if task_id:
+            lines.append(f"- axctl tasks get {task_id} --space-id {space_id} --json")
+        if context_key:
+            lines.append(f"- axctl context get '{context_key}' --space-id {space_id} --json")
+
+    return "\n".join(lines) if len(lines) > 1 else None
+
+
+def _format_attachments(attachments: list[dict[str, Any]] | None, *, space_id: str) -> str | None:
+    if not attachments:
+        return None
+    lines = ["Attachments:"]
+    context_keys: list[str] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        filename = _string_value(attachment.get("filename")) or "attachment"
+        content_type = _string_value(attachment.get("content_type"))
+        attachment_id = _string_value(attachment.get("id") or attachment.get("attachment_id"))
+        context_key = _string_value(attachment.get("context_key") or attachment.get("key"))
+        details = [part for part in (content_type, f"id={attachment_id}" if attachment_id else None) if part]
+        if context_key:
+            details.append(f"context_key={context_key}")
+            context_keys.append(context_key)
+        lines.append(f"- {filename}" + (f" ({', '.join(details)})" if details else ""))
+    if context_keys:
+        lines.append("")
+        lines.append("Suggested attachment inspection:")
+        for key in context_keys:
+            lines.append(f"- axctl context get '{key}' --space-id {space_id} --json")
+    return "\n".join(lines) if len(lines) > 1 else None
+
+
+def _enrich_prompt_for_agent(
+    prompt: str,
+    *,
+    metadata: dict[str, Any] | None,
+    attachments: list[dict[str, Any]] | None,
+    space_id: str,
+) -> str:
+    blocks = [
+        block
+        for block in (
+            _format_shared_object(metadata, space_id=space_id),
+            _format_attachments(attachments, space_id=space_id),
+        )
+        if block
+    ]
+    if not blocks:
+        return prompt
+    return prompt.rstrip() + "\n\n---\n" + "\n\n".join(blocks)
 
 
 class ChannelBridge:
@@ -180,6 +275,10 @@ class ChannelBridge:
                     meta["parent_id"] = event.parent_id
                 if event.attachments:
                     meta["attachments"] = event.attachments
+                if isinstance(event.metadata, dict):
+                    forward = event.metadata.get("forward")
+                    if isinstance(forward, dict):
+                        meta["forward"] = forward
                 await self.send_notification(
                     "notifications/claude/channel",
                     {
@@ -273,6 +372,8 @@ class ChannelBridge:
                         "content": event.prompt,
                         "parent_id": event.parent_id,
                         "ts": event.created_at,
+                        "attachments": event.attachments or [],
+                        "metadata": event.metadata or {},
                     }
                     for event in pending
                 ],
@@ -526,12 +627,14 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             or (author_raw if isinstance(author_raw, str) else "unknown")
                         )
 
-                    # Extract attachment metadata.  SSE events often omit
-                    # the full metadata.attachments that the REST API returns,
-                    # so we first check the SSE payload and fall back to a
-                    # lightweight GET /messages/{id} call when needed.
+                    # Extract share + attachment metadata.  SSE events often
+                    # omit the full metadata.attachments that the REST API
+                    # returns, so we first check the SSE payload and fall back
+                    # to a lightweight GET /messages/{id} call when needed.
                     attachments = None
                     msg_metadata = data.get("metadata") or {}
+                    if not isinstance(msg_metadata, dict):
+                        msg_metadata = {}
                     if isinstance(msg_metadata, dict):
                         raw_attachments = msg_metadata.get("attachments") or msg_metadata.get("accepted_attachments")
                         if raw_attachments and isinstance(raw_attachments, list):
@@ -547,12 +650,23 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             if isinstance(full_msg, dict):
                                 full_msg = full_msg.get("message", full_msg)
                             full_meta = (full_msg or {}).get("metadata") or {}
+                            if not isinstance(full_meta, dict):
+                                full_meta = {}
+                            merged_meta = dict(full_meta)
+                            merged_meta.update(msg_metadata)
+                            msg_metadata = merged_meta
                             api_attachments = full_meta.get("attachments") or full_meta.get("accepted_attachments")
                             if api_attachments and isinstance(api_attachments, list):
                                 attachments = api_attachments
                                 bridge.log(f"  fetched {len(attachments)} attachment(s) from REST API")
                         except Exception as exc:
                             bridge.log(f"  attachment fetch failed: {exc}")
+                    prompt = _enrich_prompt_for_agent(
+                        prompt,
+                        metadata=msg_metadata,
+                        attachments=attachments,
+                        space_id=bridge.space_id,
+                    )
 
                     bridge.enqueue_from_thread(
                         MentionEvent(
@@ -565,6 +679,7 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             created_at=data.get("created_at"),
                             space_id=bridge.space_id,
                             attachments=attachments,
+                            metadata=msg_metadata,
                         )
                     )
                     if reconnect_after_event:

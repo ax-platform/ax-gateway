@@ -170,6 +170,107 @@ def test_channel_processes_idle_event_before_jwt_reconnect(monkeypatch):
     assert delivered[0].prompt == "please check this"
 
 
+def test_channel_materializes_shared_task_metadata_for_agent_prompt(monkeypatch):
+    class FakeSseClient(FakeClient):
+        def connect_sse(self, *, space_id):
+            assert space_id == "space-123"
+            return FakeSseResponse(
+                {
+                    "id": "incoming-share",
+                    "content": "@anvil can you see what I shared?",
+                    "author": {"id": "user-123", "name": "madtank", "type": "user"},
+                    "mentions": ["anvil"],
+                    "metadata": {
+                        "forward": {
+                            "intent": "share",
+                            "resource_type": "task",
+                            "resource_id": "task-123",
+                            "task_id": "task-123",
+                            "source_message_id": "source-msg-123",
+                            "source_card_id": "task-signal:task-123",
+                            "title": "Fix Share delivery context",
+                            "summary": "The recipient should know this is a task.",
+                        }
+                    },
+                }
+            )
+
+        def get_message(self, message_id):
+            raise AssertionError("SSE metadata was already complete")
+
+    client = FakeSseClient()
+    bridge = CaptureBridge(client)
+    delivered: list[MentionEvent] = []
+
+    def capture_delivery(event):
+        delivered.append(event)
+        bridge.shutdown.set()
+
+    bridge.enqueue_from_thread = capture_delivery
+    monkeypatch.setattr(channel_mod.time, "monotonic", lambda: 0)
+
+    channel_mod._sse_loop(bridge)
+
+    assert [event.message_id for event in delivered] == ["incoming-share"]
+    assert "can you see what I shared?" in delivered[0].prompt
+    assert "Shared object:" in delivered[0].prompt
+    assert "- resource_type: task" in delivered[0].prompt
+    assert "- task_id: task-123" in delivered[0].prompt
+    assert "axctl tasks get task-123 --space-id space-123 --json" in delivered[0].prompt
+    assert delivered[0].metadata["forward"]["resource_type"] == "task"
+
+
+def test_channel_fetches_attachment_metadata_and_adds_inspection_hint(monkeypatch):
+    class FakeSseClient(FakeClient):
+        def connect_sse(self, *, space_id):
+            assert space_id == "space-123"
+            return FakeSseResponse(
+                {
+                    "id": "incoming-image",
+                    "content": "@anvil please inspect this image",
+                    "author": {"id": "user-123", "name": "madtank", "type": "user"},
+                    "mentions": ["anvil"],
+                    "metadata": {},
+                }
+            )
+
+        def get_message(self, message_id):
+            assert message_id == "incoming-image"
+            attachment = {
+                "id": "att-123",
+                "filename": "image.png",
+                "content_type": "image/png",
+                "context_key": "upload:image.png:att-123",
+            }
+            return {"message": {"metadata": {"accepted_attachments": [attachment]}}}
+
+    client = FakeSseClient()
+    bridge = CaptureBridge(client)
+    delivered: list[MentionEvent] = []
+
+    def capture_delivery(event):
+        delivered.append(event)
+        bridge.shutdown.set()
+
+    bridge.enqueue_from_thread = capture_delivery
+    monkeypatch.setattr(channel_mod.time, "monotonic", lambda: 0)
+
+    channel_mod._sse_loop(bridge)
+
+    assert [event.message_id for event in delivered] == ["incoming-image"]
+    assert "Attachments:" in delivered[0].prompt
+    assert "image.png (image/png, id=att-123, context_key=upload:image.png:att-123)" in delivered[0].prompt
+    assert "axctl context get 'upload:image.png:att-123' --space-id space-123 --json" in delivered[0].prompt
+    assert delivered[0].attachments == [
+        {
+            "id": "att-123",
+            "filename": "image.png",
+            "content_type": "image/png",
+            "context_key": "upload:image.png:att-123",
+        }
+    ]
+
+
 def test_channel_processing_status_can_be_disabled():
     client = FakeClient("axp_a_AgentKey.Secret")
     bridge = CaptureBridge(client, processing_status=False)
@@ -217,6 +318,8 @@ def test_channel_get_messages_returns_pending_mentions():
             raw_content="@anvil please check this",
             created_at="2026-04-15T23:00:00Z",
             space_id="space-123",
+            attachments=[{"id": "att-1", "filename": "notes.md"}],
+            metadata={"forward": {"resource_type": "context"}},
         )
     )
 
@@ -225,6 +328,8 @@ def test_channel_get_messages_returns_pending_mentions():
     result = bridge.writes[0]["result"]
     assert "incoming-123" in result["content"][0]["text"]
     assert "please check this" in result["content"][0]["text"]
+    assert "notes.md" in result["content"][0]["text"]
+    assert "resource_type" in result["content"][0]["text"]
     assert bridge._pending_mentions == []
 
 
@@ -243,6 +348,7 @@ def test_channel_notification_metadata_matches_claude_channel_contract():
                 raw_content="@anvil please check this",
                 created_at=None,
                 space_id="space-123",
+                metadata={"forward": {"resource_type": "task", "task_id": "task-123"}},
             )
         )
         task = asyncio.create_task(bridge.emit_mentions())
@@ -265,6 +371,7 @@ def test_channel_notification_metadata_matches_claude_channel_contract():
     assert "raw_content" not in meta
     assert "conversation_id" not in meta
     assert "parent_id" not in meta
+    assert meta["forward"] == {"resource_type": "task", "task_id": "task-123"}
 
 
 def test_channel_env_file_sets_missing_runtime_env(monkeypatch, tmp_path):
