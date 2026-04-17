@@ -285,14 +285,18 @@ def test_widgets_generates_current_signal_fixture_contract(monkeypatch):
     assert [fixture["name"] for fixture in payload["fixtures"]] == [
         "whoami",
         "tasks",
+        "task:detail",
+        "alert:task_reminder",
+        "notice:task_completed",
         "agents",
         "spaces",
+        "review:agent_creation",
         "context",
         "alert:qa_widget_smoke",
     ]
 
     send_calls = [call for call in fake.calls if call[0] == "send_message"]
-    assert len(send_calls) == 6
+    assert len(send_calls) == 10
 
     by_title = {
         call[4]["metadata"]["ui"]["widget"]["title"]: call[4]["metadata"]
@@ -307,6 +311,29 @@ def test_widgets_generates_current_signal_fixture_contract(monkeypatch):
     assert tasks["resource_uri"] == "ui://tasks/board"
     assert tasks["initial_data"]["kind"] == "tasks"
     assert tasks["initial_data"]["items"][0]["id"] == "task-1"
+
+    task_detail = by_title["QA task detail fixture-1"]
+    assert task_detail["ui"]["cards"][0]["type"] == "task"
+    assert task_detail["ui"]["cards"][0]["payload"]["task_id"] == "task-created"
+    assert task_detail["ui"]["widget"]["resource_uri"] == "ui://tasks/detail"
+    assert task_detail["ui"]["widget"]["initial_data"]["selected_task_id"] == "task-created"
+
+    reminder = by_title["QA task reminder fixture-1"]
+    assert reminder["alert"]["kind"] == "task_reminder"
+    assert reminder["alert"]["target_agent"] == "cipher"
+    assert reminder["alert"]["task_id"] == "task-created"
+    assert reminder["ui"]["widget"]["resource_uri"] == "ui://tasks/detail"
+
+    completion = by_title["QA task completion notice fixture-1"]
+    assert completion["alert"]["kind"] == "task_completed"
+    assert completion["alert"]["task_status"] == "done"
+    assert completion["ui"]["widget"]["initial_data"]["items"][0]["status"] == "done"
+
+    review = by_title["Approve agent creation fixture-1"]
+    assert review["ui"]["cards"][0]["type"] == "confirmation"
+    assert review["ui"]["cards"][0]["payload"]["intent"] == "review"
+    assert review["ui"]["widget"]["lifecycle"] == "approval_required"
+    assert review["ui"]["widget"]["initial_data"]["state"] == "approval_required"
 
     context = by_title["QA context artifact fixture-1"]["ui"]["widget"]
     assert context["resource_uri"] == "ui://context/explorer"
@@ -347,7 +374,7 @@ def test_widgets_can_send_media_sidecar_probe(monkeypatch):
     assert payload["fixtures"][-1]["name"] == "link_media_sidecar"
     media_call = [call for call in fake.calls if call[0] == "send_message"][-1]
     assert "https://example.com/" in media_call[2]
-    assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ" in media_call[2]
+    assert "https://www.youtube.com/watch?v=jNQXAC9IVRw" in media_call[2]
     assert media_call[4]["metadata"]["qa_fixture"] == {"kind": "link_media_sidecar", "run_id": "media-1"}
 
 

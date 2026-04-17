@@ -408,6 +408,7 @@ ax qa matrix --env dev --env next --space dev=<dev-space> --space next=<next-spa
 ax qa contracts --env dev --space-id <space-id>
 ax qa contracts --env dev --write --space-id <space-id>
 ax qa contracts --env dev --write --upload-file ./probe.md --send-message --space-id <space-id>
+ax qa widgets --space-id <space-id> --alert-to orion --run-id activity-matrix-$(date +%Y%m%dT%H%M%S)
 ```
 
 Default mode is read-only. `--env` selects a named user login created by
@@ -420,6 +421,14 @@ Use `ax qa matrix` before promotion or cross-environment debugging; it runs
 `auth doctor` plus `qa preflight` per target and emits a comparable truth table.
 Do not debug MCP Jam, widgets, Playwright, or release drift until preflight
 passes for the target environment.
+
+Use `ax qa widgets` after preflight when you need repeatable Activity Stream
+browser fixtures. It emits the current matrix of MCP app cards and widgets:
+identity, task board, task detail, task reminder, task-completed notice, agents,
+spaces, HITL agent-creation review, context artifact, alert evidence, and the
+link/media sidecar probe. Each widget-backed card includes paired
+`metadata.ui.cards[]` and `metadata.ui.widget` data so the frontend can prove
+that the Share icon and Open-widget icon appear on the right objects.
 
 Use `ax apps signal` when the CLI should create a durable folded app signal that
 opens an existing MCP app panel in the UI. This is an API-backed adapter over

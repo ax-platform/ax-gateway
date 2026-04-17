@@ -19,6 +19,7 @@ API/CLI contract is proven first.
 | Identity/config explanation | `axctl auth doctor` | Who would this command run as, what config source wins, which host and space are selected, and why any local config was ignored? | No |
 | Single-env gate | `axctl qa preflight` | Does this credential pass the required API contracts in this space for one target environment? | Yes |
 | Cross-env drift check | `axctl qa matrix` | Do dev, next, prod, or customer envs resolve identity the same way and pass the same contract gate? | Yes |
+| Activity Stream fixture run | `axctl qa widgets` | Do the current MCP app cards, widgets, alerts, notices, review cards, Share action, and Open-widget action render correctly in the browser? | Yes, writes visible QA messages |
 | UI/MCP validation | MCP Jam, widget, Playwright | Does the MCP/tool/widget layer work after API and credential contracts are already proven? | Yes |
 
 `doctor` is static. It explains what will happen. `preflight` and `matrix`
@@ -113,6 +114,24 @@ Required success:
 - `preflight.ok` is `true`.
 
 If preflight fails, fix API/auth/space routing before inspecting widgets.
+
+After preflight passes, generate a repeatable Activity Stream browser matrix:
+
+```bash
+axctl qa widgets \
+  --space-id <dev-space-id> \
+  --alert-to orion \
+  --run-id activity-matrix-$(date +%Y%m%dT%H%M%S) \
+  --json
+```
+
+The widget fixture run emits one batch covering identity, task board, task
+detail, task reminder, task-completed notice, agents, spaces, HITL
+agent-creation review, context artifact, alert evidence, and link/media sidecar.
+Every widget-backed card must have a connected-dots Share icon and a distinct
+Open-widget icon when `metadata.ui.widget` is present. HITL controls such as
+Approve/Deny belong inside the opened MCP app, not inline in the Activity
+Stream card.
 
 ## Next Single-Env Gate
 

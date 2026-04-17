@@ -176,6 +176,16 @@ def _message_id(data: Any) -> str | None:
     return str(value) if value else None
 
 
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
 def _client_for_env(env_name: str) -> tuple[AxClient, dict[str, Any]]:
     """Return a user-authored client for a named login environment."""
     normalized = _normalize_user_env(env_name)
@@ -304,6 +314,13 @@ def _send_widget_fixture(
     alert_kind: str | None = None,
     severity: str = "info",
     attachments: list[dict[str, Any]] | None = None,
+    name: str | None = None,
+    card_type: str | None = None,
+    card_payload_updates: dict[str, Any] | None = None,
+    widget_updates: dict[str, Any] | None = None,
+    widget_initial_data_updates: dict[str, Any] | None = None,
+    alert_updates: dict[str, Any] | None = None,
+    expected: list[str] | None = None,
 ) -> dict[str, Any]:
     spec = APP_SPECS[app_name]
     metadata, tool_call_id = _build_signal_metadata(
@@ -326,6 +343,26 @@ def _send_widget_fixture(
         metadata["signal_only"] = True
         metadata["app_signal"]["signal_only"] = True
 
+    ui = metadata.get("ui") if isinstance(metadata.get("ui"), dict) else {}
+    cards = ui.get("cards") if isinstance(ui.get("cards"), list) else []
+    card = cards[0] if cards and isinstance(cards[0], dict) else None
+    widget = ui.get("widget") if isinstance(ui.get("widget"), dict) else None
+    if card_type and card is not None:
+        card["type"] = card_type
+    if card_payload_updates and card is not None:
+        payload = card.get("payload") if isinstance(card.get("payload"), dict) else {}
+        payload.update({key: value for key, value in card_payload_updates.items() if value is not None})
+        card["payload"] = payload
+    if widget_updates and widget is not None:
+        widget.update({key: value for key, value in widget_updates.items() if value is not None})
+    if widget_initial_data_updates and widget is not None:
+        initial_data = widget.get("initial_data") if isinstance(widget.get("initial_data"), dict) else {}
+        initial_data = dict(initial_data)
+        initial_data.update({key: value for key, value in widget_initial_data_updates.items() if value is not None})
+        widget["initial_data"] = initial_data
+    if alert_updates and isinstance(metadata.get("alert"), dict):
+        metadata["alert"].update({key: value for key, value in alert_updates.items() if value is not None})
+
     body = message or _default_signal_message(title=title, summary=summary, context_key=context_key)
     prefix = _mention_prefix(target)
     if prefix:
@@ -341,7 +378,7 @@ def _send_widget_fixture(
     )
     message_data = _message_from_response(data)
     return {
-        "name": app_name if not alert_kind else f"alert:{alert_kind}",
+        "name": name or (app_name if not alert_kind else f"alert:{alert_kind}"),
         "message_id": _message_id(data),
         "title": title,
         "app": app_name,
@@ -351,10 +388,12 @@ def _send_widget_fixture(
         "target": _mention_prefix(target).lstrip("@") or None,
         "alert_kind": alert_kind,
         "message_type": message_data.get("message_type") or "system",
-        "expected": [
+        "expected": expected
+        or [
             "one transcript object",
             "relative time in the card header",
             "card body remains selectable",
+            "Share uses the connected-dots icon and seeds the composer",
             "Open launches the widget panel",
         ],
     }
@@ -430,6 +469,7 @@ def _run_widget_fixtures(
 
     task_payload: Any | None = None
     created_task_id: str | None = None
+    created_task: dict[str, Any] | None = None
     if create_task:
         task_data = client.create_task(
             sid,
@@ -444,6 +484,37 @@ def _run_widget_fixtures(
         )
         created_task_id = str(created_task.get("id") or created_task.get("task_id") or "") or None
     task_payload = client.list_tasks(limit=50, space_id=sid)
+    task_items = _extract_items(task_payload, ("tasks", "items", "results"))
+    task_detail = created_task or (task_items[0] if task_items else {})
+    task_detail_id = _first_text(task_detail.get("id"), task_detail.get("task_id"), created_task_id, "qa-task")
+    task_detail_title = _first_text(task_detail.get("title"), f"QA widget fixture task {resolved_run_id}")
+    task_detail_summary = _first_text(
+        task_detail.get("description"),
+        task_detail.get("summary"),
+        "Task detail widget should open from task, reminder, and notice cards.",
+    )
+    task_detail_initial_data = {
+        "kind": "task",
+        "version": 1,
+        "action": "get",
+        "selected_task_id": task_detail_id,
+        "items": [
+            {
+                **task_detail,
+                "id": task_detail_id,
+                "task_id": task_detail_id,
+                "title": task_detail_title,
+                "summary": task_detail_summary,
+                "description": task_detail_summary,
+                "status": task_detail.get("status") or "open",
+                "priority": task_detail.get("priority") or "medium",
+            }
+        ],
+        "count": 1,
+        "total": 1,
+        "space_id": sid,
+        "source": "axctl_qa_widgets",
+    }
     agents_payload = client.list_agents(space_id=sid, limit=500)
     spaces_payload = client.list_spaces()
 
@@ -476,6 +547,88 @@ def _run_widget_fixtures(
         _send_widget_fixture(
             client=client,
             space_id=sid,
+            app_name="tasks/detail",
+            action="get",
+            title=f"QA task detail {resolved_run_id}",
+            summary="Task card should show Share and the Open-widget icon.",
+            channel=channel,
+            collection_payload={"tasks": [task_detail_initial_data["items"][0]], "total": 1},
+            name="task:detail",
+            card_type="task",
+            card_payload_updates={
+                "task_id": task_detail_id,
+                "title": task_detail_title,
+                "summary": task_detail_summary,
+                "status": task_detail.get("status") or "open",
+                "priority": task_detail.get("priority") or "medium",
+            },
+            widget_initial_data_updates=task_detail_initial_data,
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="tasks/detail",
+            action="get",
+            title=f"QA task reminder {resolved_run_id}",
+            summary="Reminder should be one slim alert card with Open and Share.",
+            channel=channel,
+            collection_payload={"tasks": [task_detail_initial_data["items"][0]], "total": 1},
+            target=target,
+            alert_kind="task_reminder",
+            severity="warn",
+            name="alert:task_reminder",
+            card_payload_updates={"task_id": task_detail_id},
+            widget_initial_data_updates=task_detail_initial_data,
+            alert_updates={
+                "task_id": task_detail_id,
+                "source_task_id": task_detail_id,
+                "task_title": task_detail_title,
+                "task_summary": task_detail_summary,
+                "task_status": task_detail.get("status") or "open",
+                "task_priority": task_detail.get("priority") or "medium",
+                "reason": "QA reminder verifies task alerts open directly to the task detail widget.",
+            },
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="tasks/detail",
+            action="get",
+            title=f"QA task completion notice {resolved_run_id}",
+            summary="Closure notice should be reviewable without looking like a duplicate task message.",
+            channel=channel,
+            collection_payload={"tasks": [task_detail_initial_data["items"][0]], "total": 1},
+            alert_kind="task_completed",
+            severity="info",
+            name="notice:task_completed",
+            card_payload_updates={"task_id": task_detail_id},
+            widget_initial_data_updates={
+                **task_detail_initial_data,
+                "items": [
+                    {
+                        **task_detail_initial_data["items"][0],
+                        "status": "done",
+                    }
+                ],
+            },
+            alert_updates={
+                "task_id": task_detail_id,
+                "source_task_id": task_detail_id,
+                "task_title": task_detail_title,
+                "task_summary": "QA completion notice for Activity Stream review.",
+                "task_status": "done",
+                "task_priority": task_detail.get("priority") or "medium",
+            },
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
             app_name="agents",
             action="list",
             title=f"QA agents dashboard {resolved_run_id}",
@@ -494,6 +647,50 @@ def _run_widget_fixtures(
             summary="Spaces navigator should show real spaces and stable controls.",
             channel=channel,
             collection_payload=spaces_payload,
+        )
+    )
+    fixtures.append(
+        _send_widget_fixture(
+            client=client,
+            space_id=sid,
+            app_name="agents",
+            action="create_draft",
+            title=f"QA approve agent creation {resolved_run_id}",
+            summary="Review card should not render inline Approve/Deny; Open launches the draft widget.",
+            channel=channel,
+            collection_payload=agents_payload,
+            name="review:agent_creation",
+            card_type="confirmation",
+            card_payload_updates={
+                "title": f"Approve agent creation {resolved_run_id}",
+                "summary": "Human review required. Open the widget to inspect and approve.",
+                "action_id": f"qa-agent-create:{resolved_run_id}",
+                "intent": "review",
+                "evidence_mode": "widget",
+                "status": "needs_review",
+            },
+            widget_updates={
+                "tool_action": "create_draft",
+                "lifecycle": "approval_required",
+                "title": f"Approve agent creation {resolved_run_id}",
+            },
+            widget_initial_data_updates={
+                "kind": "agents",
+                "version": 1,
+                "action": "create_draft",
+                "state": "approval_required",
+                "draft": {
+                    "display_name": f"QA Demo Agent {resolved_run_id}",
+                    "handle": f"qa_demo_{resolved_run_id.replace('-', '_')}"[:48],
+                    "purpose": "QA-only draft for Activity Stream widget review.",
+                },
+                "summary": "Open the widget for approve/deny controls.",
+            },
+            expected=[
+                "Review card is slim and has no inline Approve/Deny buttons",
+                "Open-widget icon launches the HITL app panel",
+                "Share uses the connected-dots icon",
+            ],
         )
     )
     fixtures.append(
@@ -534,7 +731,7 @@ def _run_widget_fixtures(
             (
                 f"QA link/media sidecar {resolved_run_id}\n\n"
                 "Plain URL should open in a new tab: https://example.com/\n"
-                "YouTube should render as a sidecar: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+                "YouTube should render as a sidecar: https://www.youtube.com/watch?v=jNQXAC9IVRw"
             ),
             channel=channel,
             metadata={"qa_fixture": {"kind": "link_media_sidecar", "run_id": resolved_run_id}},
