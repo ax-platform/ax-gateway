@@ -8,6 +8,7 @@ import typer
 
 from .commands import (
     agents,
+    alerts,
     apps,
     auth,
     channel,
@@ -21,6 +22,7 @@ from .commands import (
     mint,
     profile,
     qa,
+    reminders,
     spaces,
     tasks,
     upload,
@@ -34,6 +36,8 @@ app.add_typer(credentials.app, name="credentials")
 app.add_typer(agents.app, name="agents")
 app.add_typer(apps.app, name="apps")
 app.add_typer(messages.app, name="messages")
+app.add_typer(alerts.app, name="alerts")
+app.add_typer(reminders.app, name="reminders")
 app.add_typer(tasks.app, name="tasks")
 app.add_typer(events.app, name="events")
 app.add_typer(listen.app, name="listen")

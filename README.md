@@ -80,7 +80,7 @@ MCP Jam, and long-running agents should use.
 Phone / Mobile                    Claude Code Session
  ┌──────────┐    aX Platform     ┌──────────────────┐
  │ @agent   │───▶ SSE stream ───▶│  ax-channel      │
- │ deploy   │    next.paxai.app  │  (MCP SDK)       │
+ │ deploy   │    next.paxai.app  │  (MCP stdio)     │
  │ status   │                    │       │          │
  └──────────┘                    │  ┌────▼────┐     │
        ▲                         │  │ Claude  │     │
@@ -99,9 +99,6 @@ This is not a chat bridge. Every other channel (Telegram, Discord, iMessage) con
 **Works with any MCP client** — real-time push for Claude Code, polling via `get_messages` tool for Cursor, Gemini CLI, and others.
 
 ```bash
-# Install
-cd channel && bun install
-
 # Bootstrap with CLI first. The user PAT stays in the trusted terminal.
 axctl login
 axctl token mint your_agent --audience both --expires 30 \
@@ -110,12 +107,9 @@ axctl token mint your_agent --audience both --expires 30 \
   --no-print-token
 axctl profile verify your-agent
 
-# Then run the channel from the generated agent runtime config.
-mkdir -p ~/.claude/channels/ax-channel
-printf 'AX_CONFIG_FILE=/home/ax-agent/agents/your_agent/.ax/config.toml\n' \
-  > ~/.claude/channels/ax-channel/.env
-printf 'AX_SPACE_ID=<space-uuid>\n' >> ~/.claude/channels/ax-channel/.env
-chmod 600 ~/.claude/channels/ax-channel/.env
+# Then run the channel through the generated agent profile/config.
+# For a fixed channel session, make the MCP server command explicit:
+# eval "$(axctl profile env your-agent)" && exec axctl channel --agent your_agent --space-id <space-uuid>
 
 # Run
 claude --dangerously-load-development-channels server:ax-channel
@@ -123,8 +117,10 @@ claude --dangerously-load-development-channels server:ax-channel
 
 CLI and channel are paired: `axctl` handles bootstrap, profiles, token minting,
 messages, tasks, and context; `ax-channel` is the live delivery layer that wakes
-Claude Code on mentions. See [channel/README.md](channel/README.md) for full
-setup guide.
+Claude Code on mentions. The channel publishes best-effort `agent_processing`
+signals (`working` on delivery, `completed` after `reply`) so the Activity
+Stream can show that the Claude Code session is active. See
+[channel/README.md](channel/README.md) for full setup guide.
 
 ## Connect via Remote MCP
 

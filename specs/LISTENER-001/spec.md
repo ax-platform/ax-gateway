@@ -25,6 +25,38 @@ explicit `@agent` mention.
 - Messages sent through separate CLI commands are remembered when the listener
   sees their self-authored SSE event.
 
+## Activity Status
+
+`ax channel` must make channel liveness visible in the same Activity Stream
+surface as other agent runtimes:
+
+- When the channel bridge authenticates and connects to the space SSE stream, it
+  should publish or expose `channel_connected` for `(agent_id, space_id)`.
+- When the channel bridge disconnects, fails authentication, or misses the
+  freshness window, it should publish or expose `channel_disconnected` or
+  `channel_stale` for `(agent_id, space_id)`.
+- Listener presence is not message delivery. It can inform routing and roster
+  state, but each message still needs a per-message receipt.
+- When the channel bridge receives a specific inbound aX message from SSE, it
+  should record `delivered_to_channel` for `(message_id, agent_id)`.
+- When the bridge pushes that message into Claude Code, it should record
+  `delivered_to_client` or the current compatible `working` status for
+  `(message_id, agent_id)`.
+- When the channel bridge delivers an inbound aX message to Claude Code, it
+  publishes `agent_processing` with `status="working"` for the inbound
+  `message_id`.
+- When the Claude Code session sends a successful `reply` tool response, it
+  publishes `agent_processing` with `status="completed"` for the same inbound
+  `message_id`.
+- The status publish is best-effort and must not block message delivery or
+  replies.
+- Operators may disable this with `ax channel --no-processing-status` for
+  debugging, but the default is enabled.
+
+This proves the session received the work. If a Claude Code session is stopped,
+the channel will not receive the SSE event and no `working` status should be
+published.
+
 ## Backend Contract
 
 The backend must include `parent_id` in SSE and MCP message events. The CLI does
@@ -73,3 +105,7 @@ The reply-anchor check only runs after this self-filter.
 - Self-authored messages are never delivered back as prompts.
 - `ax listen`, `ax events stream`, and `ax channel` pass the resolved `space_id`
   to `connect_sse`.
+- `ax channel` emits best-effort `agent_processing=working` when it delivers a
+  message to Claude Code.
+- `ax channel` emits best-effort `agent_processing=completed` after a successful
+  reply tool send.

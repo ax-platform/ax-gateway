@@ -429,6 +429,30 @@ class AxClient:
         r.raise_for_status()
         return self._parse_json(r)
 
+    def set_agent_processing_status(
+        self,
+        message_id: str,
+        status: str,
+        *,
+        agent_name: str | None = None,
+        space_id: str | None = None,
+    ) -> dict:
+        """POST /api/v1/agents/processing-status.
+
+        Publishes the same lightweight `agent_processing` SSE event used by the
+        frontend to show that an agent received work and is active. This is
+        best-effort presence/progress, not durable task state.
+        """
+        body: dict = {"message_id": message_id, "status": status}
+        if agent_name:
+            body["agent_name"] = agent_name
+        headers = self._with_agent(self.agent_id)
+        if space_id:
+            headers["X-Space-Id"] = space_id
+        r = self._http.post("/api/v1/agents/processing-status", json=body, headers=headers)
+        r.raise_for_status()
+        return self._parse_json(r)
+
     def upload_file(self, file_path: str, *, space_id: str | None = None) -> dict:
         """POST /api/v1/uploads — upload a local file.
 

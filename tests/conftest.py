@@ -10,7 +10,7 @@ def clean_env(monkeypatch, tmp_path):
     for var in (
         "AX_TOKEN", "AX_BASE_URL", "AX_AGENT_NAME", "AX_AGENT_ID",
         "AX_SPACE_ID", "AX_ENV", "AX_USER_ENV", "AX_USER_TOKEN",
-        "AX_USER_BASE_URL",
+        "AX_USER_BASE_URL", "AX_TOKEN_FILE", "AX_CONFIG_FILE",
     ):
         monkeypatch.delenv(var, raising=False)
     # Point global config to an empty dir so real ~/.ax/ doesn't leak in

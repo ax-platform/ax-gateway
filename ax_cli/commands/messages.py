@@ -1,6 +1,8 @@
 """ax messages — send, list, get, edit, delete, search."""
 
 import json
+import queue
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -11,6 +13,7 @@ import typer
 from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..context_keys import build_upload_context_key
 from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
+from .watch import _iter_sse
 
 app = typer.Typer(name="messages", help="Message operations", no_args_is_help=True)
 
@@ -19,6 +22,85 @@ def _print_wait_status(remaining: int, last_remaining: int | None, wait_label: s
     if remaining != last_remaining:
         console.print(f"  [dim]waiting for {wait_label}... ({remaining}s remaining)[/dim]", end="\r")
     return remaining
+
+
+def _processing_status_from_event(message_id: str, event_type: str | None, data: object) -> dict | None:
+    """Return an agent_processing event for this message, if one was emitted."""
+    if event_type != "agent_processing" or not isinstance(data, dict):
+        return None
+    event_message_id = str(data.get("message_id") or data.get("source_message_id") or "")
+    if event_message_id != message_id:
+        return None
+    status = str(data.get("status") or "").strip()
+    if not status:
+        return None
+    return {
+        "message_id": event_message_id,
+        "status": status,
+        "agent_id": data.get("agent_id"),
+        "agent_name": data.get("agent_name"),
+    }
+
+
+class _ProcessingStatusWatcher:
+    """Best-effort SSE watcher for delivery/working events emitted by channel runtimes."""
+
+    def __init__(self, client, *, space_id: str, timeout: int) -> None:
+        self.client = client
+        self.space_id = space_id
+        self.deadline = time.time() + max(1, timeout)
+        self.message_id: str | None = None
+        self.events: list[dict] = []
+        self._queue: queue.Queue[dict] = queue.Queue()
+        self._ready = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="ax-send-processing-watch", daemon=True)
+        self._thread.start()
+
+    def wait_ready(self, timeout: float = 1.5) -> bool:
+        return self._ready.wait(timeout)
+
+    def set_message_id(self, message_id: str) -> None:
+        self.message_id = message_id
+
+    def close(self) -> None:
+        self._stop.set()
+
+    def drain(self) -> list[dict]:
+        drained: list[dict] = []
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                return drained
+            self.events.append(item)
+            drained.append(item)
+
+    def _run(self) -> None:
+        while not self._stop.is_set() and time.time() < self.deadline:
+            try:
+                timeout = httpx.Timeout(connect=5, read=1, write=5, pool=5)
+                with self.client.connect_sse(space_id=self.space_id, timeout=timeout) as response:
+                    self._ready.set()
+                    if response.status_code != 200:
+                        return
+                    for event_type, data in _iter_sse(response):
+                        if self._stop.is_set() or time.time() >= self.deadline:
+                            return
+                        message_id = self.message_id
+                        if not message_id:
+                            continue
+                        status = _processing_status_from_event(message_id, event_type, data)
+                        if status:
+                            self._queue.put(status)
+            except httpx.ReadTimeout:
+                continue
+            except (httpx.HTTPError, RuntimeError, AttributeError):
+                self._ready.set()
+                return
 
 
 def _matching_reply(message_id: str, payload, seen_ids: set[str]) -> tuple[dict | None, bool]:
@@ -60,13 +142,24 @@ def _wait_for_reply_polling(
     seen_ids: set[str],
     wait_label: str = "reply",
     poll_interval: float = 2.0,
+    processing_watcher: _ProcessingStatusWatcher | None = None,
 ) -> dict | None:
     """Poll for a reply as a fallback when SSE is unavailable."""
     last_remaining = None
+    announced_processing: set[tuple[str | None, str]] = set()
 
     while time.time() < deadline:
         remaining = int(deadline - time.time())
         last_remaining = _print_wait_status(remaining, last_remaining, wait_label)
+        if processing_watcher:
+            for status_event in processing_watcher.drain():
+                status = str(status_event.get("status") or "")
+                agent_name = status_event.get("agent_name") or wait_label
+                key = (status_event.get("agent_id"), status)
+                if status and key not in announced_processing:
+                    console.print(" " * 60, end="\r")
+                    console.print(f"  [cyan]@{str(agent_name).lstrip('@')} is {status}[/cyan]")
+                    announced_processing.add(key)
 
         try:
             data = client.list_replies(message_id)
@@ -85,7 +178,14 @@ def _wait_for_reply_polling(
     return None
 
 
-def _wait_for_reply(client, message_id: str, timeout: int = 60, wait_label: str = "reply") -> dict | None:
+def _wait_for_reply(
+    client,
+    message_id: str,
+    timeout: int = 60,
+    wait_label: str = "reply",
+    *,
+    processing_watcher: _ProcessingStatusWatcher | None = None,
+) -> dict | None:
     """Wait for a reply by polling list_replies."""
     deadline = time.time() + timeout
     seen_ids: set[str] = {message_id}
@@ -97,6 +197,7 @@ def _wait_for_reply(client, message_id: str, timeout: int = 60, wait_label: str 
         seen_ids=seen_ids,
         wait_label=wait_label,
         poll_interval=1.0,
+        processing_watcher=processing_watcher,
     )
 
 
@@ -368,6 +469,12 @@ def send(
         if not _starts_with_mention(content, mention):
             final_content = f"{mention} {content}"
 
+    processing_watcher = None
+    if wait and to:
+        processing_watcher = _ProcessingStatusWatcher(client, space_id=sid, timeout=timeout + 5)
+        processing_watcher.start()
+        processing_watcher.wait_ready()
+
     try:
         parent_id = _resolve_message_id(client, parent, space_id=sid) if parent else None
         data = client.send_message(
@@ -382,8 +489,12 @@ def send(
 
     msg = data.get("message", data)
     msg_id = msg.get("id") or msg.get("message_id") or data.get("id")
+    if processing_watcher and msg_id:
+        processing_watcher.set_message_id(str(msg_id))
 
     if not wait or not msg_id:
+        if processing_watcher:
+            processing_watcher.close()
         if as_json:
             print_json(data)
         else:
@@ -392,18 +503,41 @@ def send(
 
     console.print(f"[green]Sent.[/green] id={msg_id}")
     wait_label = _target_mention("aX") if ask_ax else (_target_mention(to) if to else "reply")
-    reply = _wait_for_reply(client, msg_id, timeout=timeout, wait_label=wait_label)
+    reply = _wait_for_reply(
+        client,
+        msg_id,
+        timeout=timeout,
+        wait_label=wait_label,
+        processing_watcher=processing_watcher,
+    )
+    processing_statuses = processing_watcher.events if processing_watcher else []
+    if processing_watcher:
+        processing_watcher.close()
 
     if reply:
         if as_json:
-            print_json({"sent": data, "reply": reply})
+            print_json({"sent": data, "reply": reply, "processing_statuses": processing_statuses})
         else:
             console.print(f"\n[bold cyan]aX:[/bold cyan] {reply.get('content', '')}")
     else:
         if as_json:
-            print_json({"sent": data, "reply": None, "timeout": True})
+            print_json(
+                {
+                    "sent": data,
+                    "reply": None,
+                    "timeout": True,
+                    "processing_statuses": processing_statuses,
+                }
+            )
         else:
-            console.print(f"\n[yellow]No reply within {timeout}s. Check later: ax messages list[/yellow]")
+            if processing_statuses:
+                last_status = processing_statuses[-1].get("status")
+                console.print(
+                    f"\n[yellow]No final reply within {timeout}s, "
+                    f"but target emitted processing status: {last_status}.[/yellow]"
+                )
+            else:
+                console.print(f"\n[yellow]No reply within {timeout}s. Check later: ax messages list[/yellow]")
 
 
 @app.command("list")

@@ -9,10 +9,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -28,6 +30,22 @@ PROTOCOL_VERSION = "2025-11-25"
 SERVER_NAME = "ax-channel"
 SERVER_VERSION = "0.1.0"
 SEEN_MAX = 500
+CHANNEL_ENV_PATH = Path.home() / ".claude" / "channels" / "ax-channel" / ".env"
+
+
+def _load_channel_env(path: Path = CHANNEL_ENV_PATH) -> None:
+    """Load KEY=VALUE channel env defaults without overriding real env vars."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip("\"'")
 
 
 @dataclass(slots=True)
@@ -53,12 +71,14 @@ class ChannelBridge:
         space_id: str,
         queue_size: int,
         debug: bool,
+        processing_status: bool,
     ) -> None:
         self.client = client
         self.agent_name = agent_name
         self.agent_id = agent_id
         self.space_id = space_id
         self.debug = debug
+        self.processing_status = processing_status
         self.loop: asyncio.AbstractEventLoop | None = None
         self.mention_queue: asyncio.Queue[MentionEvent] = asyncio.Queue(maxsize=queue_size)
         self.initialized = asyncio.Event()
@@ -67,6 +87,7 @@ class ChannelBridge:
         self._write_lock = asyncio.Lock()
         self._last_message_id: str | None = None
         self._reply_anchor_ids: set[str] = set()
+        self._pending_mentions: list[MentionEvent] = []
 
     def log(self, message: str) -> None:
         if not self.debug:
@@ -99,6 +120,31 @@ class ChannelBridge:
     async def send_notification(self, method: str, params: dict[str, Any]) -> None:
         await self.write_message({"jsonrpc": "2.0", "method": method, "params": params})
 
+    async def publish_processing_status(self, message_id: str, status: str) -> None:
+        """Best-effort Activity Stream signal for channel delivery/progress.
+
+        This lets the frontend show the same inline "agent is working" affordance
+        for Claude Code channel sessions that it shows for other agent runtimes.
+        It is intentionally non-blocking: channel delivery/replies must still
+        work if the progress endpoint is unavailable.
+        """
+        if not self.processing_status:
+            return
+        try:
+
+            def _send_status():
+                return self.client.set_agent_processing_status(
+                    message_id,
+                    status,
+                    agent_name=self.agent_name,
+                    space_id=self.space_id,
+                )
+
+            await asyncio.to_thread(_send_status)
+            self.log(f"processing status {status} for {message_id[:12]}")
+        except Exception as exc:  # pragma: no cover - live best-effort path
+            self.log(f"processing status failed for {message_id[:12]}: {exc}")
+
     async def send_response(self, request_id: Any, result: dict[str, Any]) -> None:
         await self.write_message({"jsonrpc": "2.0", "id": request_id, "result": result})
 
@@ -117,18 +163,21 @@ class ChannelBridge:
                 self.log("emit_mentions: initialized done, sending notification")
 
                 self._last_message_id = event.message_id
+                self._pending_mentions.append(event)
+                if len(self._pending_mentions) > SEEN_MAX:
+                    self._pending_mentions = self._pending_mentions[-SEEN_MAX // 2 :]
+                ts = event.created_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 meta: dict[str, Any] = {
                     "chat_id": event.space_id,
                     "message_id": event.message_id,
-                    "parent_id": event.parent_id,
-                    "conversation_id": event.conversation_id,
                     "user": event.author,
                     "sender": event.author,
                     "source": "ax",
                     "space_id": event.space_id,
-                    "ts": event.created_at,
-                    "raw_content": event.raw_content,
+                    "ts": ts,
                 }
+                if event.parent_id:
+                    meta["parent_id"] = event.parent_id
                 if event.attachments:
                     meta["attachments"] = event.attachments
                 await self.send_notification(
@@ -138,6 +187,7 @@ class ChannelBridge:
                         "meta": meta,
                     },
                 )
+                await self.publish_processing_status(event.message_id, "working")
                 self.log(f"delivered mention {event.message_id} from {event.author}")
             finally:
                 self.mention_queue.task_done()
@@ -178,14 +228,64 @@ class ChannelBridge:
                             },
                             "required": ["text"],
                         },
-                    }
+                    },
+                    {
+                        "name": "get_messages",
+                        "description": "Get pending aX channel messages for clients that need a polling fallback.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "limit": {
+                                    "type": "number",
+                                    "description": "Max messages to return (default: 10).",
+                                },
+                                "mark_read": {
+                                    "type": "boolean",
+                                    "description": "Remove returned messages from the pending fallback queue (default: true).",
+                                },
+                            },
+                        },
+                    },
                 ]
             },
         )
 
+    async def handle_empty_list(self, request_id: Any, key: str) -> None:
+        await self.send_response(request_id, {key: []})
+
+    async def handle_get_messages(self, request_id: Any, arguments: dict[str, Any]) -> None:
+        try:
+            limit = max(1, int(arguments.get("limit") or 10))
+        except (TypeError, ValueError):
+            limit = 10
+        mark_read = arguments.get("mark_read") is not False
+        pending = self._pending_mentions[:limit]
+        if mark_read:
+            self._pending_mentions = self._pending_mentions[len(pending) :]
+        if not pending:
+            text = "No pending messages."
+        else:
+            text = json.dumps(
+                [
+                    {
+                        "message_id": event.message_id,
+                        "author": event.author,
+                        "content": event.prompt,
+                        "parent_id": event.parent_id,
+                        "ts": event.created_at,
+                    }
+                    for event in pending
+                ],
+                indent=2,
+            )
+        await self.send_response(request_id, {"content": [{"type": "text", "text": text}]})
+
     async def handle_tool_call(self, request_id: Any, params: dict[str, Any]) -> None:
         name = params.get("name")
         arguments = params.get("arguments") or {}
+        if name == "get_messages":
+            await self.handle_get_messages(request_id, arguments)
+            return
         if name != "reply":
             await self.send_error(request_id, -32601, f"Unknown tool: {name}")
             return
@@ -242,6 +342,7 @@ class ChannelBridge:
             message = data.get("message", data)
             sent_id = message.get("id") or data.get("id")
             _remember_reply_anchor(self._reply_anchor_ids, sent_id)
+            await self.publish_processing_status(reply_to, "completed")
             await self.send_response(
                 request_id,
                 {
@@ -272,6 +373,12 @@ class ChannelBridge:
             await self.handle_initialize(request_id)
         elif method == "tools/list":
             await self.handle_tools_list(request_id)
+        elif method == "resources/list":
+            await self.handle_empty_list(request_id, "resources")
+        elif method == "resources/templates/list":
+            await self.handle_empty_list(request_id, "resourceTemplates")
+        elif method == "prompts/list":
+            await self.handle_empty_list(request_id, "prompts")
         elif method == "tools/call":
             await self.handle_tool_call(request_id, params)
         elif method == "ping":
@@ -349,15 +456,21 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                 for event_type, data in _iter_sse(response):
                     if bridge.shutdown.is_set():
                         return
-                    # Reconnect before JWT expires (15-min TTL, reconnect at 10 min)
-                    if time.monotonic() - connect_time > _SSE_RECONNECT_INTERVAL:
-                        bridge.log("SSE reconnecting to refresh JWT")
-                        break
+                    # Reconnect before JWT expires (15-min TTL, reconnect at
+                    # 10 min), but never drop the event that woke an idle
+                    # stream. Process the current event first, then reconnect.
+                    reconnect_after_event = time.monotonic() - connect_time > _SSE_RECONNECT_INTERVAL
                     if event_type in {"bootstrap", "heartbeat", "ping", "connected", "identity_bootstrap"}:
                         bridge.log(f"skip {event_type}")
+                        if reconnect_after_event:
+                            bridge.log("SSE reconnecting to refresh JWT")
+                            break
                         continue
                     if event_type not in {"message", "mention"} or not isinstance(data, dict):
                         bridge.log(f"skip non-msg: {event_type}")
+                        if reconnect_after_event:
+                            bridge.log("SSE reconnecting to refresh JWT")
+                            break
                         continue
 
                     message_id = data.get("id") or ""
@@ -365,11 +478,17 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                     bridge.log(f"event {event_type} id={message_id[:12]} content={content_preview!r}")
                     if not message_id or message_id in seen_ids:
                         bridge.log("  -> skip: dup or no id")
+                        if reconnect_after_event:
+                            bridge.log("SSE reconnecting to refresh JWT")
+                            break
                         continue
                     if _is_self_authored(data, bridge.agent_name, bridge.agent_id):
                         _remember_reply_anchor(bridge._reply_anchor_ids, message_id)
                         seen_ids.add(message_id)
                         bridge.log("  -> skip self-authored, remembered as reply anchor")
+                        if reconnect_after_event:
+                            bridge.log("SSE reconnecting to refresh JWT")
+                            break
                         continue
                     if not _should_respond(
                         data,
@@ -378,11 +497,17 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                         reply_anchor_ids=bridge._reply_anchor_ids,
                     ):
                         bridge.log(f"  -> skip: not for @{bridge.agent_name}")
+                        if reconnect_after_event:
+                            bridge.log("SSE reconnecting to refresh JWT")
+                            break
                         continue
                     bridge.log("  -> MATCH! delivering")
 
                     prompt = _strip_mention(data.get("content", ""), bridge.agent_name)
                     if not prompt:
+                        if reconnect_after_event:
+                            bridge.log("SSE reconnecting to refresh JWT")
+                            break
                         continue
 
                     seen_ids.add(message_id)
@@ -442,6 +567,9 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             attachments=attachments,
                         )
                     )
+                    if reconnect_after_event:
+                        bridge.log("SSE reconnecting to refresh JWT")
+                        break
         except (httpx.ConnectError, httpx.ReadTimeout, ConnectionError) as exc:
             bridge.log(f"SSE reconnect in {backoff}s after: {exc}")
             time.sleep(backoff)
@@ -458,8 +586,14 @@ def channel(
     space_id: Optional[str] = typer.Option(None, "--space-id", "-s", help="Space to bridge (default: from config)"),
     queue_size: int = typer.Option(50, "--queue-size", help="Max queued mentions before dropping"),
     debug: bool = typer.Option(False, "--debug", help="Log bridge activity to stderr"),
+    processing_status: bool = typer.Option(
+        True,
+        "--processing-status/--no-processing-status",
+        help="Publish agent_processing events when messages are delivered and replies complete.",
+    ),
 ):
     """Run an MCP stdio server that bridges aX mentions into Claude Code."""
+    _load_channel_env()
     client = get_client()
     agent_name = agent or resolve_agent_name(client=client)
     if not agent_name:
@@ -479,6 +613,7 @@ def channel(
         space_id=sid,
         queue_size=queue_size,
         debug=debug,
+        processing_status=processing_status,
     )
 
     listener = threading.Thread(target=_sse_loop, args=(bridge,), daemon=True)

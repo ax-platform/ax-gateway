@@ -129,6 +129,30 @@ def _load_local_config() -> dict:
     return {}
 
 
+def _load_runtime_config_file(raw_path: str | None) -> dict:
+    """Load an explicit runtime config file and resolve its token_file."""
+    if not raw_path:
+        return {}
+    config_path = Path(raw_path).expanduser()
+    cfg = tomllib.loads(config_path.read_text())
+    token_file = cfg.get("token_file")
+    if token_file and not cfg.get("token"):
+        token_path = Path(str(token_file)).expanduser()
+        if not token_path.is_absolute():
+            token_path = config_path.parent / token_path
+        cfg["token"] = token_path.read_text().strip()
+    return cfg
+
+
+def _read_token_file(raw_path: str | None) -> str | None:
+    if not raw_path:
+        return None
+    try:
+        return Path(raw_path).expanduser().read_text().strip()
+    except OSError:
+        return None
+
+
 _global_config_warned = False
 _unsafe_local_config_warned = False
 
@@ -590,7 +614,12 @@ def diagnose_auth_config(*, env_name: str | None = None, explicit_space_id: str 
 
 
 def _load_config() -> dict:
-    """Merge global -> active profile -> local. Local/env still win."""
+    """Merge global -> active profile -> local -> explicit runtime file.
+
+    AX_CONFIG_FILE is intentionally last because it is an environment-selected
+    runtime identity, used by channel/headless processes where CWD may contain
+    unrelated project config.
+    """
     merged = _load_global_config()
     user_cfg = _load_user_config()
     if user_cfg:
@@ -618,6 +647,11 @@ def _load_config() -> dict:
                 merged.update(local_cfg)
                 if "principal_type" not in local_cfg and _has_agent_identity(local_cfg):
                     merged["principal_type"] = "agent"
+    explicit_cfg = _load_runtime_config_file(os.environ.get("AX_CONFIG_FILE"))
+    if explicit_cfg:
+        merged.update(explicit_cfg)
+        if "principal_type" not in explicit_cfg and _has_agent_identity(explicit_cfg):
+            merged["principal_type"] = "agent"
     return merged
 
 
@@ -665,7 +699,9 @@ def _check_config_permissions() -> None:
 
 def resolve_token() -> str | None:
     _check_config_permissions()
-    return os.environ.get("AX_TOKEN") or _load_config().get("token")
+    return (
+        os.environ.get("AX_TOKEN") or _read_token_file(os.environ.get("AX_TOKEN_FILE")) or _load_config().get("token")
+    )
 
 
 def resolve_user_token() -> str | None:

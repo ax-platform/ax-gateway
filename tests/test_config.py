@@ -116,6 +116,39 @@ class TestLoadConfig:
         assert cfg["agent_id"] == "local-agent"  # local wins
         assert cfg["base_url"] == "https://global.example.com"  # global preserved
 
+    def test_ax_config_file_overrides_local_runtime_config(self, tmp_path, monkeypatch):
+        local_ax = tmp_path / ".ax"
+        local_ax.mkdir()
+        (local_ax / "config.toml").write_text(
+            'token = "axp_a_local.secret"\n'
+            'base_url = "https://local.example.com"\n'
+            'agent_name = "local-agent"\n'
+            'agent_id = "agent-local"\n'
+        )
+        runtime_dir = tmp_path / "runtime"
+        runtime_dir.mkdir()
+        token_file = runtime_dir / "agent.pat"
+        token_file.write_text("axp_a_runtime.secret")
+        runtime_config = runtime_dir / "config.toml"
+        runtime_config.write_text(
+            f'token_file = "{token_file.name}"\n'
+            'base_url = "https://next.paxai.app"\n'
+            'agent_name = "orion"\n'
+            'agent_id = "agent-orion"\n'
+            'space_id = "space-next"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("AX_CONFIG_FILE", str(runtime_config))
+
+        cfg = _load_config()
+
+        assert cfg["token"] == "axp_a_runtime.secret"
+        assert cfg["base_url"] == "https://next.paxai.app"
+        assert cfg["agent_name"] == "orion"
+        assert cfg["agent_id"] == "agent-orion"
+        assert cfg["space_id"] == "space-next"
+        assert cfg["principal_type"] == "agent"
+
     def test_user_login_config_is_fallback_without_local_config(self, tmp_path, monkeypatch):
         global_dir = tmp_path / "global"
         global_dir.mkdir()
@@ -420,6 +453,15 @@ class TestResolveToken:
     def test_env_var_wins(self, monkeypatch):
         monkeypatch.setenv("AX_TOKEN", "env-token")
         assert resolve_token() == "env-token"
+
+    def test_ax_token_file_wins_when_no_direct_env_token(self, tmp_path, monkeypatch, write_config):
+        write_config(token="config-token")
+        token_file = tmp_path / "agent.pat"
+        token_file.write_text("file-token")
+        monkeypatch.setenv("AX_TOKEN_FILE", str(token_file))
+        monkeypatch.chdir(tmp_path)
+
+        assert resolve_token() == "file-token"
 
     def test_falls_back_to_config(self, tmp_path, monkeypatch, write_config):
         write_config(token="config-token")

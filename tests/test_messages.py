@@ -3,6 +3,7 @@ import re
 
 from typer.testing import CliRunner
 
+from ax_cli.commands.messages import _processing_status_from_event
 from ax_cli.main import app
 
 runner = CliRunner()
@@ -394,8 +395,13 @@ def test_send_to_does_not_duplicate_existing_mention_and_waits_for_target(monkey
             }
             return {"id": "msg-1"}
 
-    def fake_wait(client, message_id, timeout=60, wait_label="reply"):
-        calls["wait"] = {"message_id": message_id, "timeout": timeout, "wait_label": wait_label}
+    def fake_wait(client, message_id, timeout=60, wait_label="reply", **kwargs):
+        calls["wait"] = {
+            "message_id": message_id,
+            "timeout": timeout,
+            "wait_label": wait_label,
+            "processing_watcher": kwargs.get("processing_watcher"),
+        }
         return {"id": "reply-1", "content": "ack"}
 
     monkeypatch.setattr("ax_cli.commands.messages.get_client", lambda: FakeClient())
@@ -408,6 +414,29 @@ def test_send_to_does_not_duplicate_existing_mention_and_waits_for_target(monkey
     assert result.exit_code == 0, result.output
     assert calls["message"]["content"] == "@orion checkpoint"
     assert calls["wait"]["wait_label"] == "@orion"
+    assert calls["wait"]["processing_watcher"] is not None
+
+
+def test_processing_status_from_event_matches_message():
+    event = _processing_status_from_event(
+        "msg-1",
+        "agent_processing",
+        {
+            "message_id": "msg-1",
+            "status": "working",
+            "agent_id": "agent-1",
+            "agent_name": "orion",
+        },
+    )
+
+    assert event == {
+        "message_id": "msg-1",
+        "status": "working",
+        "agent_id": "agent-1",
+        "agent_name": "orion",
+    }
+    assert _processing_status_from_event("msg-2", "agent_processing", {"message_id": "msg-1"}) is None
+    assert _processing_status_from_event("msg-1", "message", {"message_id": "msg-1"}) is None
 
 
 def test_messages_edit_and_delete_resolve_short_id_prefix(monkeypatch):
