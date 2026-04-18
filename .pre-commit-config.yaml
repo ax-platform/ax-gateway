@@ -1,31 +1,34 @@
-# Pre-commit hooks for ax-cli — mirrors what CI runs so format/lint failures
-# are caught before they reach a PR.
+# Pre-commit hooks for ax-cli — mirrors what CI runs so format/lint/test
+# failures are caught before they reach a PR.
 #
 # CI runs (.github/workflows/ci.yml):
 #   - ruff check ax_cli/
 #   - ruff format --check ax_cli/
+#   - pytest tests/
 #
-# These hooks run the same checks locally on every git commit. If a commit
-# would fail in CI, it fails locally first — no more red PRs from things that
-# could have been caught at commit time.
+# Fast checks run at `commit`; the test suite runs at `push` so everyday
+# commits stay snappy but nothing unreviewed lands on origin.
 #
 # Setup (one-time, per developer/agent):
 #
 #     pip install pre-commit
-#     pre-commit install
+#     pre-commit install --install-hooks
+#     pre-commit install --hook-type pre-push
 #
-# Now `git commit` runs the hooks automatically. To run against all files
-# without committing:
+# Run against all files without committing:
 #
 #     pre-commit run --all-files
+#     pre-commit run --all-files --hook-stage pre-push
 #
 # To skip hooks for a specific commit (use sparingly):
 #
 #     git commit --no-verify ...
 #
-# To update the hook versions to whatever's latest:
+# Bump hook versions:
 #
 #     pre-commit autoupdate
+
+default_install_hook_types: [pre-commit, pre-push]
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -40,3 +43,13 @@ repos:
         files: ^ax_cli/.*\.py$
       - id: ruff-format
         files: ^ax_cli/.*\.py$
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest (matches CI)
+        entry: pytest tests/ --tb=short -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        # Runs on every `git push`. Add --no-verify to bypass in emergencies.
