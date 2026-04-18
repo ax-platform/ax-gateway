@@ -43,7 +43,7 @@ def test_tasks_create_assign_accepts_agent_handle(monkeypatch):
 
 def test_tasks_create_assign_to_accepts_uuid_without_agent_lookup(monkeypatch):
     calls = {}
-    agent_id = "076af365-dadc-4e92-a82d-79e855e5776e"
+    agent_id = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
 
     class FakeClient:
         def list_agents(self, *, space_id=None, limit=None):

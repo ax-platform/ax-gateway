@@ -21,7 +21,7 @@ Prerequisites
 -------------
 
 1. The hermes-agent repo is cloned locally and installed in a venv.
-   See https://github.com/madtank/hermes-agent for install steps.
+   See https://github.com/alex/hermes-agent for install steps.
 
 2. `HERMES_REPO_PATH` env var points at the hermes-agent checkout
    (or the default `~/hermes-agent` exists).

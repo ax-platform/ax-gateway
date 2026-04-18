@@ -149,7 +149,7 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
             self.token = token
 
         def whoami(self):
-            return {"username": "madtank", "email": "madtank@example.com"}
+            return {"username": "alex", "email": "alex@example.com"}
 
         def list_spaces(self):
             return {"spaces": [{"id": "space-current", "name": "Team Hub", "is_current": True}]}
@@ -200,7 +200,7 @@ def test_user_login_env_stores_named_login_and_marks_active(monkeypatch, write_c
             self.token = token
 
         def whoami(self):
-            return {"username": "madtank", "email": "madtank@example.com"}
+            return {"username": "alex", "email": "alex@example.com"}
 
         def list_spaces(self):
             return {"spaces": []}

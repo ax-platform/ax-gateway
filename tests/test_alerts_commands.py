@@ -394,7 +394,7 @@ def test_source_task_falls_back_to_creator_when_no_assignee(monkeypatch):
         }
     }
     agent_payloads = {
-        "agent-creator-id": {"agent": {"id": "agent-creator-id", "name": "madtank"}},
+        "agent-creator-id": {"agent": {"id": "agent-creator-id", "name": "alex"}},
     }
 
     class _TaskAwareHttp:
@@ -427,7 +427,7 @@ def test_source_task_falls_back_to_creator_when_no_assignee(monkeypatch):
         ["alerts", "send", "check", "--kind", "reminder", "--source-task", "t-noa"],
     )
     assert result.exit_code == 0, _strip_ansi(result.stdout)
-    assert fake.sent["metadata"]["alert"]["target_agent"] == "madtank"
+    assert fake.sent["metadata"]["alert"]["target_agent"] == "alex"
 
 
 def test_explicit_target_beats_task_auto_resolution(monkeypatch):
@@ -458,11 +458,11 @@ def test_explicit_target_beats_task_auto_resolution(monkeypatch):
             "--source-task",
             "dfef4c92",
             "--target",
-            "@madtank",
+            "@alex",
         ],
     )
     assert result.exit_code == 0, _strip_ansi(result.stdout)
-    assert fake.sent["metadata"]["alert"]["target_agent"] == "madtank"
+    assert fake.sent["metadata"]["alert"]["target_agent"] == "alex"
 
 
 def test_state_change_on_non_alert_message_errors_clearly(monkeypatch):

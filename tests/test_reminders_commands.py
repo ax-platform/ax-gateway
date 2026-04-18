@@ -420,7 +420,7 @@ def test_run_once_reroutes_pending_review_to_review_owner(monkeypatch, tmp_path)
                     "status": "pending_review",
                     "assignee_id": "agent-orion",
                     "creator_id": "agent-chatgpt",
-                    "requirements": {"review_owner": "madtank"},
+                    "requirements": {"review_owner": "alex"},
                 }
             },
             "/agents/agent-orion": {"agent": {"id": "agent-orion", "name": "orion"}},
@@ -457,10 +457,10 @@ def test_run_once_reroutes_pending_review_to_review_owner(monkeypatch, tmp_path)
     assert result.exit_code == 0, result.output
     assert len(fake.sent) == 1, "reminder still fires — just reroutes to reviewer"
     sent = fake.sent[0]
-    assert sent["content"].startswith("@madtank Reminder:")
+    assert sent["content"].startswith("@alex Reminder:")
     assert "[pending review]" in sent["content"], "reason should be prefixed with [pending review]"
     metadata = sent["metadata"]
-    assert metadata["alert"]["target_agent"] == "madtank"
+    assert metadata["alert"]["target_agent"] == "alex"
     assert metadata["reminder_policy"]["target_resolved_from"] == "review_owner"
     # Policy continues (not disabled) — the review owner can still be reminded
     stored = _load(policy_file)["policies"][0]

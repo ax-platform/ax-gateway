@@ -6,7 +6,7 @@ Owner:    @orion (CLI contract) + @frontend_sentinel (card surfaces)
 Status:   DRAFT — ready for team review
 Date:     2026-04-16
 Task:     b38a7475-8bf6-445e-bd6e-1845222885dd
-Trigger:  live repro message 1a365934-b596-41fc-adb1-4dce52dfadb1 (madtank
+Trigger:  live repro message 1a365934-b596-41fc-adb1-4dce52dfadb1 (alex
           + screenshots: users need an obvious way to send a task or alert
           to an agent as a real request with structured context).
 Composes: SEND-RECEIPTS-001 (PR #108 in ax-agents, delivery-receipts contract)

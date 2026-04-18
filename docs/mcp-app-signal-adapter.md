@@ -51,7 +51,7 @@ axctl apps signal context \
   --title 'Architecture diagram' \
   --summary 'Open this in the Context Explorer panel.' \
   --message 'context-backed app signal ready' \
-  --to madtank \
+  --to alex \
   --alert-kind context_artifact \
   --json
 ```

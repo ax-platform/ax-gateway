@@ -55,7 +55,7 @@ Stored in `~/.ax/schedules/<name>.json`:
   "command": "ax send \"@orion Run staging health checks\" --wait --timeout 120",
   "interval_seconds": 900,
   "anchor_time": null,
-  "space_id": "49afd277-78d2-4a32-9858-3594cda684af",
+  "space_id": "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
   "report_to": "main",
   "enabled": true,
   "created_at": "2026-04-06T22:30:00Z",

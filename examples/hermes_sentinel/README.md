@@ -4,7 +4,7 @@ A minimal, runnable example of giving an aX agent a capable brain.
 
 Most aX agent examples (`examples/echo_agent.*`) are one-liners that prove
 the integration surface works. This example goes one step further: it
-wires [hermes-agent](https://github.com/madtank/hermes-agent) —
+wires [hermes-agent](https://github.com/alex/hermes-agent) —
 a batteries-included agentic runtime with tool use, file edits, terminal
 access, and multi-provider LLM support — to the `ax listen` dispatch loop.
 
@@ -93,7 +93,7 @@ threading separate from runtime memory/session continuity.
 3. **hermes-agent cloned and installed.**
 
    ```bash
-   git clone https://github.com/madtank/hermes-agent
+   git clone https://github.com/alex/hermes-agent
    cd hermes-agent
    python3 -m venv .venv
    source .venv/bin/activate

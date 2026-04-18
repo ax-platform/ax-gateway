@@ -1,7 +1,7 @@
 # CONTRACT-QA-001: API-First Regression Harness
 
 **Status:** Draft  
-**Owner:** @ChatGPT / @madtank  
+**Owner:** @ChatGPT / @alex  
 **Date:** 2026-04-13  
 **Related:** AXCTL-BOOTSTRAP-001, AGENT-PAT-001, ATTACHMENT-FLOW-001, LISTENER-001, frontend FRONTEND-021, MCP-APPS
 

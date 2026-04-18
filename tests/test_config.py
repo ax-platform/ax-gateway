@@ -18,7 +18,7 @@ from ax_cli.config import (
 )
 
 
-def _write_active_profile(global_dir: Path, *, name: str = "next-orion") -> Path:
+def _write_active_profile(global_dir: Path, *, name: str = "demo-agent") -> Path:
     token_file = global_dir / "profiles" / name / "token"
     token_file.parent.mkdir(parents=True)
     token_file.write_text("axp_a_agent.secret")
@@ -204,11 +204,11 @@ class TestLoadConfig:
         monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
         monkeypatch.setattr(config_module, "_unsafe_local_config_warned", False)
 
-        token_file = global_dir / "profiles" / "next-orion" / "token"
+        token_file = global_dir / "profiles" / "demo-agent" / "token"
         token_file.parent.mkdir(parents=True)
         token_file.write_text("axp_a_agent.secret")
-        (global_dir / "profiles" / ".active").write_text("next-orion\n")
-        (global_dir / "profiles" / "next-orion" / "profile.toml").write_text(
+        (global_dir / "profiles" / ".active").write_text("demo-agent\n")
+        (global_dir / "profiles" / "demo-agent" / "profile.toml").write_text(
             f'base_url = "https://next.paxai.app"\n'
             f'agent_name = "orion"\n'
             f'agent_id = "agent-orion"\n'
@@ -329,8 +329,8 @@ class TestAuthDoctorDiagnostics:
         diagnostic = diagnose_auth_config()
 
         assert diagnostic["ok"] is True
-        assert diagnostic["selected_profile"] == "next-orion"
-        assert diagnostic["effective"]["auth_source"] == "active_profile:next-orion"
+        assert diagnostic["selected_profile"] == "demo-agent"
+        assert diagnostic["effective"]["auth_source"] == "active_profile:demo-agent"
         assert diagnostic["effective"]["token_kind"] == "agent_pat"
         assert diagnostic["effective"]["principal_intent"] == "agent"
         assert diagnostic["effective"]["space_id"] == "next-space"
@@ -376,7 +376,7 @@ class TestAuthDoctorDiagnostics:
         diagnostic = diagnose_auth_config()
 
         assert diagnostic["ok"] is True
-        assert diagnostic["effective"]["auth_source"] == "active_profile:next-orion"
+        assert diagnostic["effective"]["auth_source"] == "active_profile:demo-agent"
         assert diagnostic["effective"]["agent_name"] == "orion"
         assert diagnostic["effective"]["space_id"] == "next-space"
         assert any(warning["code"] == "unsafe_local_config_ignored" for warning in diagnostic["warnings"])

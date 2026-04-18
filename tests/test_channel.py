@@ -143,7 +143,7 @@ def test_channel_processes_idle_event_before_jwt_reconnect(monkeypatch):
                 {
                     "id": "incoming-123",
                     "content": "@anvil please check this",
-                    "author": {"id": "user-123", "name": "madtank", "type": "user"},
+                    "author": {"id": "user-123", "name": "alex", "type": "user"},
                     "mentions": ["anvil"],
                 }
             )
@@ -212,7 +212,7 @@ def test_channel_get_messages_returns_pending_mentions():
             message_id="incoming-123",
             parent_id=None,
             conversation_id=None,
-            author="madtank",
+            author="alex",
             prompt="please check this",
             raw_content="@anvil please check this",
             created_at="2026-04-15T23:00:00Z",
@@ -238,7 +238,7 @@ def test_channel_notification_metadata_matches_claude_channel_contract():
                 message_id="incoming-123",
                 parent_id=None,
                 conversation_id="conversation-ignored",
-                author="madtank",
+                author="alex",
                 prompt="please check this",
                 raw_content="@anvil please check this",
                 created_at=None,

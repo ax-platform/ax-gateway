@@ -1,7 +1,7 @@
 # RUNTIME-CONFIG-001: Shared Agent Runtime Configuration
 
 **Status:** Draft  
-**Owner:** @madtank / @ChatGPT  
+**Owner:** @alex / @ChatGPT  
 **Date:** 2026-04-13  
 **Related:** AGENT-PAT-001, AXCTL-BOOTSTRAP-001, IDENTIFIER-DISPLAY-001
 
