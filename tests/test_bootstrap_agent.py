@@ -271,6 +271,64 @@ def test_bootstrap_falls_back_on_404(monkeypatch, tmp_path, user_pat, verify_stu
     assert (tmp_path / "a" / ".ax" / "token").read_text() == "axp_a_via404fallback"
 
 
+# ── error propagation on existence check (PR #67 review, v2) ──────────
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 500, 503])
+def test_bootstrap_does_not_swallow_existence_check_errors(monkeypatch, tmp_path, user_pat, status_code):
+    """Regression for axolotl's PR #67 review finding: a 401/403/5xx on the
+    existence check MUST NOT be silently treated as 'agent not found'. If
+    that happens, bootstrap would proceed to create and potentially clobber
+    an existing agent (or bury a real infra failure under a confusing
+    downstream error). Propagate loudly instead."""
+    http = _FakeHttp(
+        {
+            ("GET", "/api/v1/agents"): (status_code, {"detail": "boom"}, None),
+            # If the bug regresses, the command will happily proceed to POST
+            # and mint — we assert it does NOT reach those routes.
+            ("POST", "/api/v1/agents"): (201, {"id": AGENT_ID, "name": "axolotl"}, None),
+            ("POST", "/credentials/agent-pat"): (201, {"token": "axp_a_shouldNotHappen"}, None),
+        }
+    )
+    monkeypatch.setattr(bootstrap_cmd, "get_user_client", lambda: _FakeClient(http))
+
+    result = runner.invoke(
+        app,
+        ["bootstrap-agent", "axolotl", "--space-id", SPACE_ID, "--save-to", str(tmp_path / "a")],
+    )
+    assert result.exit_code != 0, result.output
+
+    posts = [c for c in http.calls if c["method"] == "POST"]
+    assert not any(c["url"] == "/api/v1/agents" for c in posts), (
+        f"bootstrap swallowed {status_code} and proceeded to create — regression"
+    )
+    assert not any("credentials" in c["url"] or "keys" in c["url"] for c in posts)
+
+
+def test_bootstrap_handles_404_on_existence_as_not_found(monkeypatch, tmp_path, user_pat, verify_stub):
+    """A 404 from the list endpoint is the one case where 'not found' is
+    the sensible interpretation — the space is gone or the caller isn't a
+    member; the downstream POST will produce a clearer error. Bootstrap
+    should continue rather than halt."""
+    http = _FakeHttp(
+        {
+            ("GET", "/api/v1/agents"): (404, {"detail": "not a member"}, None),
+            # The POST is expected to fail too in this case, but we're only
+            # asserting that the existence check didn't halt bootstrap.
+            ("POST", "/api/v1/agents"): (201, {"id": AGENT_ID, "name": "axolotl"}, None),
+            ("POST", "/credentials/agent-pat"): (201, {"token": "axp_a_404case"}, None),
+        }
+    )
+    monkeypatch.setattr(bootstrap_cmd, "get_user_client", lambda: _FakeClient(http))
+
+    result = runner.invoke(
+        app,
+        ["bootstrap-agent", "axolotl", "--space-id", SPACE_ID, "--save-to", str(tmp_path / "a")],
+    )
+    assert result.exit_code == 0, result.output
+    assert any(c["method"] == "POST" and c["url"] == "/api/v1/agents" for c in http.calls)
+
+
 # ── already-exists behaviour ────────────────────────────────────────────
 
 

@@ -114,16 +114,25 @@ def _is_route_miss(exc: httpx.HTTPStatusError) -> bool:
 
 
 def _find_agent_in_space(client, name: str, space_id: str) -> Optional[dict]:
-    """Return the agent dict if it already exists in the target space, else None."""
-    try:
-        headers = {"X-Space-Id": space_id}
-        r = client._http.get("/api/v1/agents", params={"space_id": space_id}, headers=headers)
-        r.raise_for_status()
-        payload = client._parse_json(r)
-        agents = payload if isinstance(payload, list) else payload.get("agents", [])
-        return next((a for a in agents if a.get("name", "").lower() == name.lower()), None)
-    except httpx.HTTPStatusError:
+    """Return the agent dict if it already exists in the target space, else None.
+
+    Narrow exception handling: only a clean 200 with an empty/filtered list
+    counts as "not found". Auth failures (401/403), server errors (5xx),
+    and network errors must propagate so the user sees them instead of the
+    command silently proceeding to re-create an agent that already exists.
+    See axolotl's review of PR #67 for the original repro.
+    """
+    headers = {"X-Space-Id": space_id}
+    r = client._http.get("/api/v1/agents", params={"space_id": space_id}, headers=headers)
+    if r.status_code == 404:
+        # The space doesn't exist or the caller isn't a member — that's
+        # "agent definitely not there", and downstream create will give a
+        # cleaner error on the POST.
         return None
+    r.raise_for_status()
+    payload = client._parse_json(r)
+    agents = payload if isinstance(payload, list) else payload.get("agents", [])
+    return next((a for a in agents if a.get("name", "").lower() == name.lower()), None)
 
 
 def _create_agent_in_space(client, *, name: str, space_id: str, description: str | None, model: str | None) -> dict:
