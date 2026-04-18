@@ -1,15 +1,72 @@
 """ax agents — agent listing, creation, and management."""
 
+import base64
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
 import typer
 
-from ..config import get_client, resolve_agent_name, resolve_space_id
+from ..config import (
+    _resolve_user_env,
+    _user_config_path,
+    get_client,
+    resolve_agent_name,
+    resolve_base_url,
+    resolve_space_id,
+)
 from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
 from .handoff import _wait_for_handoff_reply
+
+# Backend caps avatar_url at 512 chars (see ax-backend app/api/v1/agents.py
+# `AgentCreate.avatar_url: Field(max_length=512)`). Anything longer is silently
+# rejected as a 500, so the CLI fails fast with a helpful message instead.
+AVATAR_URL_MAX_LENGTH = 512
+
+
+def _effective_config_line() -> str:
+    """One-liner describing the resolved environment, for mutating commands.
+
+    Printed to stderr before any write so operators can eyeball that they're
+    targeting the right environment. Addresses the common footgun where
+    ~/.ax/users/.active silently overrides AX_BASE_URL (see
+    shared/state/axctl-friction-2026-04-17.md §2).
+    """
+    base_url = resolve_base_url()
+    user_env = _resolve_user_env() or "default"
+    user_cfg_path = _user_config_path()
+    source = str(user_cfg_path) if user_cfg_path.exists() else "(none)"
+    return f"[dim]base_url={base_url}  user_env={user_env}  source={source}[/dim]"
+
+
+def _build_avatar_data_uri_from_file(path: str) -> str:
+    """Read an SVG/image file and return a base64 data URI."""
+    data = Path(path).read_bytes()
+    suffix = Path(path).suffix.lower().lstrip(".")
+    mime_map = {
+        "svg": "image/svg+xml",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+    }
+    mime = mime_map.get(suffix, "application/octet-stream")
+    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+
+def _check_avatar_url_length(avatar_url: str) -> None:
+    """Fail fast with a helpful message if avatar_url exceeds the backend cap."""
+    if len(avatar_url) > AVATAR_URL_MAX_LENGTH:
+        console.print(
+            f"[red]avatar_url is {len(avatar_url)} chars; backend caps at "
+            f"{AVATAR_URL_MAX_LENGTH}.[/red] Shrink the SVG or host it and pass "
+            f"an https:// URL. A raw base64 SVG must be ≤ "
+            f"~{int(AVATAR_URL_MAX_LENGTH * 0.7)} bytes before encoding."
+        )
+        raise typer.Exit(1)
 
 app = typer.Typer(name="agents", help="Agent management", no_args_is_help=True)
 
@@ -408,6 +465,17 @@ def update_agent(
     bio: str = typer.Option(None, "--bio", "-b", help="Short bio"),
     specialization: str = typer.Option(None, "--specialization", "-s", help="Specialization area"),
     status: str = typer.Option(None, "--status", help="active or inactive"),
+    avatar_url: str = typer.Option(
+        None,
+        "--avatar-url",
+        help="Set agent avatar (data URI or https URL). ≤ 512 chars.",
+    ),
+    avatar_file: str = typer.Option(
+        None,
+        "--avatar-file",
+        help="Read avatar from a file (svg/png/jpg/gif/webp) and set it. "
+        "Mutually exclusive with --avatar-url.",
+    ),
     as_json: bool = JSON_OPTION,
 ):
     """Update an agent's metadata.
@@ -415,7 +483,21 @@ def update_agent(
     Examples:
         ax agents update backend_sentinel --type sentinel --model claude-sonnet-4-6
         ax agents update anvil --bio "Infra and ops" --specialization "server management"
+        ax agents update axolotl --avatar-file notes/axolotl.svg
+        ax agents update axolotl --avatar-url "data:image/svg+xml;base64,..."
     """
+    if avatar_url is not None and avatar_file is not None:
+        console.print("[red]--avatar-url and --avatar-file are mutually exclusive.[/red]")
+        raise typer.Exit(1)
+
+    if avatar_file is not None:
+        avatar_url = _build_avatar_data_uri_from_file(avatar_file)
+
+    if avatar_url is not None:
+        _check_avatar_url_length(avatar_url)
+
+    console.print(_effective_config_line())
+
     client = get_client()
     fields = {}
     if description is not None:
@@ -432,9 +514,15 @@ def update_agent(
         fields["specialization"] = specialization
     if status is not None:
         fields["status"] = status
+    if avatar_url is not None:
+        fields["avatar_url"] = avatar_url
 
     if not fields:
-        typer.echo("Nothing to update. Use --type, --model, --bio, --description, --status, etc.", err=True)
+        typer.echo(
+            "Nothing to update. Use --type, --model, --bio, --description, "
+            "--status, --avatar-url, --avatar-file, etc.",
+            err=True,
+        )
         raise typer.Exit(1)
 
     try:
@@ -535,6 +623,8 @@ def avatar(
     elif set_avatar:
         client = get_client()
         data_uri = avatar_data_uri(agent, agent_type, size)
+        _check_avatar_url_length(data_uri)
+        console.print(_effective_config_line())
         try:
             # Find the agent by name
             agents_data = client.list_agents()
@@ -543,8 +633,10 @@ def avatar(
             if not target:
                 console.print(f"[red]Agent '{agent}' not found[/red]")
                 raise typer.Exit(1)
-            # Update avatar_url
-            r = client._http.patch(f"/api/v1/agents/{target['id']}", json={"avatar_url": data_uri})
+            # Update avatar_url. Use PUT — the ALB on prod proxies PUT/GET/POST
+            # but not PATCH on /api/v1/agents/{id} (see friction-2026-04-17 §7).
+            # The backend PUT handler accepts avatar_url the same way PATCH does.
+            r = client._http.put(f"/api/v1/agents/{target['id']}", json={"avatar_url": data_uri})
             r.raise_for_status()
             console.print(f"[green]Avatar set for @{agent}[/green]")
         except httpx.HTTPStatusError as e:
