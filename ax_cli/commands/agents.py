@@ -183,7 +183,9 @@ def _discover_agent_row(agent: dict[str, Any], probe: dict[str, Any] | None = No
         "mesh_role": mesh_role,
         "listener_status": listener_status,
         "contact_mode": contact_mode,
-        "recommended_contact": "reenable_before_contact" if control_status != "active" else _recommended_contact(contact_mode, mesh_role),
+        "recommended_contact": "reenable_before_contact"
+        if control_status != "active"
+        else _recommended_contact(contact_mode, mesh_role),
         "sent_message_id": probe.get("sent_message_id") if probe else None,
         "ping_token": probe.get("ping_token") if probe else None,
         "warning": warning,
