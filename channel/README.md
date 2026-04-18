@@ -171,11 +171,11 @@ Use the smoke harness to test the channel runtime without restarting Claude Code
 
 ```bash
 python3 scripts/channel_smoke.py \
-  --listener-profile next-orion \
-  --sender-profile next-chatgpt \
+  --listener-profile demo-agent \
+  --sender-profile peer-agent \
   --profile-workdir /home/ax-agent \
-  --agent orion \
-  --space-id 49afd277-78d2-4a32-9858-3594cda684af \
+  --agent demo-agent \
+  --space-id aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa \
   --case reply \
   --channel-command 'bun run --cwd /home/ax-agent/channel --shell=bun --silent start --debug'
 ```

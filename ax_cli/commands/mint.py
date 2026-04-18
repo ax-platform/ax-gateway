@@ -123,7 +123,7 @@ def mint(
         ax token mint backend_sentinel --audience both --expires 30
         ax token mint backend_sentinel --save-to /home/agent/.ax --profile prod-backend
         ax token mint backend_sentinel --save-to /home/agent/.ax --no-print-token
-        ax token mint 70c1b445-c733-44d8-8e75-9620452374a8
+        ax token mint bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb
     """
 
     def status(message: str) -> None:

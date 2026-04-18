@@ -18,7 +18,7 @@ class FakeMintClient:
             "agents": [
                 {
                     "id": "12345678-90ab-cdef-1234-567890abcdef",
-                    "name": "orion",
+                    "name": "demo-agent",
                 }
             ]
         }
@@ -68,7 +68,7 @@ def test_token_mint_prints_token_when_not_saving(monkeypatch, write_config):
     write_config(token="axp_u_user.secret", base_url="https://next.paxai.app")
     monkeypatch.setattr("ax_cli.commands.mint.get_user_client", lambda: FakeMintClient())
 
-    result = runner.invoke(app, ["token", "mint", "orion"])
+    result = runner.invoke(app, ["token", "mint", "demo-agent"])
 
     assert result.exit_code == 0, result.output
     assert "axp_a_newly_minted.secret" in result.output
@@ -103,12 +103,12 @@ def test_token_mint_hides_token_when_saved(monkeypatch, write_config, tmp_path):
     write_config(token="axp_u_user.secret", base_url="https://next.paxai.app")
     monkeypatch.setattr("ax_cli.commands.mint.get_user_client", lambda: FakeMintClient())
 
-    result = runner.invoke(app, ["token", "mint", "orion", "--save-to", str(tmp_path)])
+    result = runner.invoke(app, ["token", "mint", "demo-agent", "--save-to", str(tmp_path)])
 
     assert result.exit_code == 0, result.output
     assert "axp_a_newly_minted.secret" not in result.output
     assert "not printed" in result.output
-    assert (tmp_path / ".ax" / "orion_token").read_text() == "axp_a_newly_minted.secret"
+    assert (tmp_path / ".ax" / "demo-agent_token").read_text() == "axp_a_newly_minted.secret"
 
 
 def test_token_mint_json_hides_token_when_saved(monkeypatch, write_config, tmp_path):
@@ -116,14 +116,14 @@ def test_token_mint_json_hides_token_when_saved(monkeypatch, write_config, tmp_p
     (tmp_path / ".ax" / "config.toml").chmod(0o600)
     monkeypatch.setattr("ax_cli.commands.mint.get_user_client", lambda: FakeMintClient())
 
-    result = runner.invoke(app, ["token", "mint", "orion", "--save-to", str(tmp_path), "--json"])
+    result = runner.invoke(app, ["token", "mint", "demo-agent", "--save-to", str(tmp_path), "--json"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert "token" not in payload
     assert payload["token_redacted"] is True
     assert payload["token_printed"] is False
-    assert payload["token_file"].endswith(".ax/orion_token")
+    assert payload["token_file"].endswith(".ax/demo-agent_token")
 
 
 def test_token_mint_can_print_saved_token_when_explicit(monkeypatch, write_config, tmp_path):
@@ -131,7 +131,7 @@ def test_token_mint_can_print_saved_token_when_explicit(monkeypatch, write_confi
     (tmp_path / ".ax" / "config.toml").chmod(0o600)
     monkeypatch.setattr("ax_cli.commands.mint.get_user_client", lambda: FakeMintClient())
 
-    result = runner.invoke(app, ["token", "mint", "orion", "--save-to", str(tmp_path), "--print-token", "--json"])
+    result = runner.invoke(app, ["token", "mint", "demo-agent", "--save-to", str(tmp_path), "--print-token", "--json"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -143,8 +143,8 @@ def test_token_mint_uses_user_login_when_local_config_is_agent(monkeypatch, writ
     write_config(
         token="axp_a_agent.secret",
         base_url="https://next.paxai.app",
-        agent_name="orion",
-        agent_id="agent-orion",
+        agent_name="demo-agent",
+        agent_id="agent-demo-agent",
     )
     user_config_dir = Path(os.environ["AX_CONFIG_DIR"])
     user_config_dir.mkdir(parents=True, exist_ok=True)
@@ -153,14 +153,14 @@ def test_token_mint_uses_user_login_when_local_config_is_agent(monkeypatch, writ
     )
     monkeypatch.setattr("ax_cli.commands.mint.get_user_client", lambda: FakeMintClient())
 
-    result = runner.invoke(app, ["token", "mint", "orion"])
+    result = runner.invoke(app, ["token", "mint", "demo-agent"])
 
     assert result.exit_code == 0, result.output
     assert "axp_a_newly_minted.secret" in result.output
 
 
 def test_token_mint_env_selects_named_user_login(monkeypatch, write_config):
-    write_config(token="axp_a_agent.secret", base_url="https://next.paxai.app", agent_name="orion")
+    write_config(token="axp_a_agent.secret", base_url="https://next.paxai.app", agent_name="demo-agent")
     monkeypatch.setenv("AX_USER_TOKEN", "axp_u_dev.secret")
 
     def fake_get_user_client():
@@ -169,7 +169,7 @@ def test_token_mint_env_selects_named_user_login(monkeypatch, write_config):
 
     monkeypatch.setattr("ax_cli.commands.mint.get_user_client", fake_get_user_client)
 
-    result = runner.invoke(app, ["token", "mint", "orion", "--env", "dev"])
+    result = runner.invoke(app, ["token", "mint", "demo-agent", "--env", "dev"])
 
     assert result.exit_code == 0, result.output
     assert "axp_a_newly_minted.secret" in result.output

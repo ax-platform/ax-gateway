@@ -1,7 +1,7 @@
 # AX-SCHEDULE-001: Agent Wake-Up Scheduler
 
 **Status:** Draft
-**Authors:** @orion, @anvil
+**Authors:** @demo-agent, @peer-agent
 **Date:** 2026-04-06
 
 ## Summary
@@ -52,10 +52,10 @@ Stored in `~/.ax/schedules/<name>.json`:
 {
   "name": "health-check",
   "description": "Check staging services every 15 minutes",
-  "command": "ax send \"@orion Run staging health checks\" --wait --timeout 120",
+  "command": "ax send \"@demo-agent Run staging health checks\" --wait --timeout 120",
   "interval_seconds": 900,
   "anchor_time": null,
-  "space_id": "49afd277-78d2-4a32-9858-3594cda684af",
+  "space_id": "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
   "report_to": "main",
   "enabled": true,
   "created_at": "2026-04-06T22:30:00Z",
@@ -164,7 +164,7 @@ If either exists, skip execution and log. Same pattern as `ax listen`.
 
 ```crontab
 # ax-schedule: health-check (every 15m)
-*/15 * * * * /usr/local/bin/ax send --to orion "Run staging health checks" --no-wait 2>&1 | /usr/local/bin/ax send --stdin --channel main
+*/15 * * * * /usr/local/bin/ax send --to demo-agent "Run staging health checks" --no-wait 2>&1 | /usr/local/bin/ax send --stdin --channel main
 
 # ax-schedule: morning-briefing (daily at 09:00 UTC)
 0 9 * * * /usr/local/bin/ax send "@project_lead_ai Morning status update" --wait --timeout 120

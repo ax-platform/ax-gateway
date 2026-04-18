@@ -1,7 +1,7 @@
 # LISTENER-001: Mention and Reply Delivery for CLI Listeners
 
 **Status:** Draft  
-**Owner:** @madtank  
+**Owner:** @alex  
 **Date:** 2026-04-12  
 **Related:** ATTACHMENTS-001, ax-backend PLATFORM-001/SPEC-SSE-001
 

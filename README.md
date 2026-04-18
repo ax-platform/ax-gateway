@@ -220,15 +220,15 @@ participate should run a listener/watch loop for inbound work, and use
 `ax handoff` for outbound owned work.
 
 ```bash
-ax handoff orion "Review the aX control MCP spec" --intent review --timeout 600
+ax handoff demo-agent "Review the aX control MCP spec" --intent review --timeout 600
 ax handoff frontend_sentinel "Fix the app panel loading bug" --intent implement
 ax handoff cipher "Run QA on dev" --intent qa
 ax handoff backend_sentinel "Check dispatch health" --intent status
 ax handoff mcp_sentinel "Auth regression, urgent" --intent incident --nudge
-ax handoff orion "Pair on CLI listener UX" --follow-up
-ax handoff orion "Iterate on the contract tests until green" --loop --max-rounds 5 --completion-promise "TESTS GREEN"
+ax handoff demo-agent "Pair on CLI listener UX" --follow-up
+ax handoff demo-agent "Iterate on the contract tests until green" --loop --max-rounds 5 --completion-promise "TESTS GREEN"
 ax handoff cli_sentinel "Review the CLI docs"
-ax handoff orion "Known-live fast path" --no-adaptive-wait
+ax handoff demo-agent "Known-live fast path" --no-adaptive-wait
 ```
 
 The intent changes task priority and prompt framing without creating separate
@@ -262,7 +262,7 @@ and stop only when a completion promise is true or the max-round limit is hit.
 Keep loop prompts narrow and verifiable:
 
 ```bash
-ax handoff orion \
+ax handoff demo-agent \
   "Fix the failing auth tests. Run pytest. If all tests pass, reply with <promise>TESTS GREEN</promise>." \
   --intent implement \
   --loop \
@@ -319,7 +319,7 @@ Use discovery before assuming a wait can complete:
 ```bash
 ax agents discover
 ax agents discover --ping --timeout 10
-ax agents discover orion backend_sentinel --ping --json
+ax agents discover demo-agent backend_sentinel --ping --json
 ```
 
 `discover` shows each agent's apparent mesh role, roster status, listener
@@ -489,7 +489,7 @@ returned messages have actually been handled.
 | `ax spaces create NAME` | Create a new space (`--visibility private/invite_only/public`) |
 | `ax keys list` | List API keys |
 | `ax profile list` | List named profiles |
-| `ax agents ping orion --timeout 30` | Probe whether an agent is listening now |
+| `ax agents ping demo-agent --timeout 30` | Probe whether an agent is listening now |
 
 ### Observability
 
@@ -503,7 +503,7 @@ returned messages have actually been handled.
 
 | Command | Description |
 |---------|-------------|
-| `ax send --to orion "question" --wait` | Mention an agent and wait for the reply |
+| `ax send --to demo-agent "question" --wait` | Mention an agent and wait for the reply |
 | `ax send "message"` | Send + wait for a reply |
 | `ax send "msg" --no-wait` | Send an intentional notification without waiting |
 | `ax upload file FILE --mention @agent` | Upload context and leave an agent-visible signal |

@@ -106,7 +106,7 @@ def _install_fake_client(monkeypatch, client: _FakeClient) -> None:
     )
     monkeypatch.setattr(
         "ax_cli.commands.alerts.resolve_agent_name",
-        lambda client=None: "orion",
+        lambda client=None: "demo-agent",
     )
 
 
@@ -121,7 +121,7 @@ def test_send_builds_alert_metadata_with_ui_card_type_alert(monkeypatch):
             "send",
             "ALB /auth/me is 5xx",
             "--target",
-            "@orion",
+            "@demo-agent",
             "--severity",
             "critical",
         ],
@@ -135,7 +135,7 @@ def test_send_builds_alert_metadata_with_ui_card_type_alert(monkeypatch):
     alert = metadata["alert"]
     assert alert["kind"] == "alert"
     assert alert["severity"] == "critical"
-    assert alert["target_agent"] == "orion"
+    assert alert["target_agent"] == "demo-agent"
     assert alert["state"] == "triggered"
     assert alert["response_required"] is False
     assert "fired_at" in alert
@@ -150,7 +150,7 @@ def test_send_builds_alert_metadata_with_ui_card_type_alert(monkeypatch):
     assert card["payload"]["alert"]["severity"] == "critical"
 
     # Content should @-mention the target so notification routing fires
-    assert fake.sent["content"].startswith("@orion ")
+    assert fake.sent["content"].startswith("@demo-agent ")
     # message_type = "alert" so stream filters can distinguish from text
     assert fake.sent["message_type"] == "alert"
 
@@ -179,7 +179,7 @@ def test_reminder_requires_source_task_and_marks_kind_task_reminder(monkeypatch)
             "--source-task",
             "dfef4c92",
             "--target",
-            "@orion",
+            "@demo-agent",
             "--remind-at",
             "2026-04-16T17:00:00Z",
             "--due-at",
@@ -221,7 +221,7 @@ def test_reminder_shortcut_command_equivalent_to_send_kind_reminder(monkeypatch)
             "--source-task",
             "dfef4c92",
             "--target",
-            "orion",
+            "demo-agent",
         ],
     )
     assert result.exit_code == 0, _strip_ansi(result.stdout)
@@ -257,7 +257,7 @@ def test_ack_posts_state_change_reply_linked_to_parent(monkeypatch):
                 "kind": "alert",
                 "severity": "warn",
                 "state": "triggered",
-                "target_agent": "orion",
+                "target_agent": "demo-agent",
             },
         },
     }
@@ -343,7 +343,7 @@ def test_source_task_auto_targets_assignee_when_target_omitted(monkeypatch):
         }
     }
     agent_payloads = {
-        "agent-assignee-id": {"agent": {"id": "agent-assignee-id", "name": "orion"}},
+        "agent-assignee-id": {"agent": {"id": "agent-assignee-id", "name": "demo-agent"}},
         "agent-creator-id": {"agent": {"id": "agent-creator-id", "name": "chatgpt"}},
     }
 
@@ -378,9 +378,9 @@ def test_source_task_auto_targets_assignee_when_target_omitted(monkeypatch):
     )
     assert result.exit_code == 0, _strip_ansi(result.stdout)
 
-    # Auto-resolved to assignee (orion)
-    assert fake.sent["metadata"]["alert"]["target_agent"] == "orion"
-    assert fake.sent["content"].startswith("@orion "), "auto-target must @-mention assignee"
+    # Auto-resolved to assignee (demo-agent)
+    assert fake.sent["metadata"]["alert"]["target_agent"] == "demo-agent"
+    assert fake.sent["content"].startswith("@demo-agent "), "auto-target must @-mention assignee"
 
 
 def test_source_task_falls_back_to_creator_when_no_assignee(monkeypatch):
@@ -394,7 +394,7 @@ def test_source_task_falls_back_to_creator_when_no_assignee(monkeypatch):
         }
     }
     agent_payloads = {
-        "agent-creator-id": {"agent": {"id": "agent-creator-id", "name": "madtank"}},
+        "agent-creator-id": {"agent": {"id": "agent-creator-id", "name": "alex"}},
     }
 
     class _TaskAwareHttp:
@@ -427,7 +427,7 @@ def test_source_task_falls_back_to_creator_when_no_assignee(monkeypatch):
         ["alerts", "send", "check", "--kind", "reminder", "--source-task", "t-noa"],
     )
     assert result.exit_code == 0, _strip_ansi(result.stdout)
-    assert fake.sent["metadata"]["alert"]["target_agent"] == "madtank"
+    assert fake.sent["metadata"]["alert"]["target_agent"] == "alex"
 
 
 def test_explicit_target_beats_task_auto_resolution(monkeypatch):
@@ -458,11 +458,11 @@ def test_explicit_target_beats_task_auto_resolution(monkeypatch):
             "--source-task",
             "dfef4c92",
             "--target",
-            "@madtank",
+            "@alex",
         ],
     )
     assert result.exit_code == 0, _strip_ansi(result.stdout)
-    assert fake.sent["metadata"]["alert"]["target_agent"] == "madtank"
+    assert fake.sent["metadata"]["alert"]["target_agent"] == "alex"
 
 
 def test_state_change_on_non_alert_message_errors_clearly(monkeypatch):
@@ -492,7 +492,7 @@ def test_rejects_pre_2020_timestamps_as_clock_skew(monkeypatch):
             "send",
             "clock-skew test",
             "--target",
-            "orion",
+            "demo-agent",
             "--remind-at",
             "2000-01-01T00:00:00Z",
         ],
@@ -507,7 +507,7 @@ def test_rejects_pre_2020_timestamps_as_clock_skew(monkeypatch):
             "send",
             "clock-skew test",
             "--target",
-            "orion",
+            "demo-agent",
             "--due-at",
             "1999-12-31T23:59:59Z",
         ],
@@ -517,7 +517,7 @@ def test_rejects_pre_2020_timestamps_as_clock_skew(monkeypatch):
     # Gibberish timestamps also get rejected with a clear message
     malformed = runner.invoke(
         app,
-        ["alerts", "send", "bad iso", "--target", "orion", "--remind-at", "not-a-date"],
+        ["alerts", "send", "bad iso", "--target", "demo-agent", "--remind-at", "not-a-date"],
     )
     assert malformed.exit_code != 0
     assert "ISO-8601" in _strip_ansi(malformed.stdout + (malformed.stderr or ""))
@@ -538,7 +538,7 @@ def test_valid_future_timestamps_accepted(monkeypatch):
             "--source-task",
             "t1",
             "--target",
-            "orion",
+            "demo-agent",
             "--remind-at",
             "2026-04-16T17:00:00Z",
             "--due-at",
@@ -569,7 +569,7 @@ def test_reminder_defaults_response_required_true(monkeypatch):
             "--source-task",
             "t1",
             "--target",
-            "orion",
+            "demo-agent",
         ],
     )
     assert r1.exit_code == 0
@@ -582,7 +582,7 @@ def test_reminder_defaults_response_required_true(monkeypatch):
     _install_fake_client(monkeypatch, fake2)
     r2 = runner.invoke(
         app,
-        ["alerts", "send", "heads up", "--target", "orion"],
+        ["alerts", "send", "heads up", "--target", "demo-agent"],
     )
     assert r2.exit_code == 0
     assert fake2.sent["metadata"]["alert"]["response_required"] is False, (
@@ -596,7 +596,7 @@ def test_json_output_returns_send_response(monkeypatch):
 
     result = runner.invoke(
         app,
-        ["alerts", "send", "test", "--target", "@orion", "--json"],
+        ["alerts", "send", "test", "--target", "@demo-agent", "--json"],
     )
     assert result.exit_code == 0
     data = json.loads(result.stdout)

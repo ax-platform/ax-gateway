@@ -1,7 +1,7 @@
 # DEVICE-TRUST-001: Device Trust and Approval
 
 **Status:** Draft  
-**Owner:** @madtank / @ChatGPT  
+**Owner:** @alex / @ChatGPT  
 **Date:** 2026-04-13  
 **Related:** AXCTL-BOOTSTRAP-001, AGENT-PAT-001, docs/credential-security.md
 
@@ -109,7 +109,7 @@ Example copy:
 ```text
 Authorize new device
 
-Device: Jacob MacBook Pro
+Device: Alex's Laptop
 CLI: axctl 0.4.0
 Fingerprint: SHA256 4F2A 91C7 9B10 55E0
 Requested access: Mint agent credentials for this workspace

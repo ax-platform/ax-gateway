@@ -82,4 +82,4 @@ See `tests/test_reminders_commands.py`:
 
 ## Change log
 
-- 2026-04-16 — Initial contract (@orion). Ships with tests + `_task_lifecycle` helper in `alerts.py`. Picks up source task status on every `_fire_policy` call; one extra GET per due policy (cost acceptable for local dogfood loop).
+- 2026-04-16 — Initial contract (@demo-agent). Ships with tests + `_task_lifecycle` helper in `alerts.py`. Picks up source task status on every `_fire_policy` call; one extra GET per due policy (cost acceptable for local dogfood loop).

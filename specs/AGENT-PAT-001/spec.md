@@ -1,7 +1,7 @@
 # AGENT-PAT-001: Agent PAT Minting and JWT Exchange
 
 **Status:** Draft  
-**Owner:** @madtank / @ChatGPT  
+**Owner:** @alex / @ChatGPT  
 **Date:** 2026-04-13  
 **Related:** AXCTL-BOOTSTRAP-001, DEVICE-TRUST-001, CLI-WORKFLOW-001, LISTENER-001
 
@@ -106,7 +106,7 @@ Request:
   "audience": "cli",
   "expires_in_days": 30,
   "space_id": "space-uuid",
-  "name": "orion-cli-local",
+  "name": "demo-agent-cli-local",
   "requested_capabilities": ["messages:send", "context:read", "tasks:write"]
 }
 ```
@@ -175,7 +175,7 @@ Required behavior:
 Example:
 
 ```bash
-axctl token mint orion --audience cli --expires 30 --profile next-orion
+axctl token mint demo-agent --audience cli --expires 30 --profile demo-agent
 ```
 
 ## Approval Policy

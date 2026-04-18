@@ -1,7 +1,7 @@
 # RUNTIME-CONFIG-001: Shared Agent Runtime Configuration
 
 **Status:** Draft  
-**Owner:** @madtank / @ChatGPT  
+**Owner:** @alex / @ChatGPT  
 **Date:** 2026-04-13  
 **Related:** AGENT-PAT-001, AXCTL-BOOTSTRAP-001, IDENTIFIER-DISPLAY-001
 
@@ -15,9 +15,9 @@ An agent runtime should have one portable config shape that every headless
 client can consume:
 
 ```toml
-token_file = "/home/ax-agent/agents/orion/.ax/orion_token"
+token_file = "/home/ax-agent/agents/demo-agent/.ax/orion_token"
 base_url = "https://next.paxai.app"
-agent_name = "orion"
+agent_name = "demo-agent"
 agent_id = "agent-uuid"
 space_id = "optional-default-space-uuid"
 ```

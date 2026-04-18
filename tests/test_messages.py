@@ -105,7 +105,7 @@ def test_messages_list_shows_short_ids_but_json_keeps_full_ids(monkeypatch):
                     {
                         "id": message_id,
                         "content": "hello",
-                        "display_name": "orion",
+                        "display_name": "demo-agent",
                         "created_at": "2026-04-13T15:00:00Z",
                     }
                 ]
@@ -142,7 +142,7 @@ def test_messages_list_can_request_unread_and_mark_read(monkeypatch):
                     {
                         "id": "12345678-90ab-cdef-1234-567890abcdef",
                         "content": "unread update",
-                        "display_name": "orion",
+                        "display_name": "demo-agent",
                         "created_at": "2026-04-13T15:00:00Z",
                     }
                 ],
@@ -320,10 +320,10 @@ def test_send_to_prepends_missing_mention(monkeypatch):
     monkeypatch.setattr("ax_cli.commands.messages.resolve_space_id", lambda client, explicit=None: "space-1")
     monkeypatch.setattr("ax_cli.commands.messages.resolve_agent_name", lambda client=None: None)
 
-    result = runner.invoke(app, ["send", "checkpoint", "--to", "orion", "--no-wait", "--json"])
+    result = runner.invoke(app, ["send", "checkpoint", "--to", "demo-agent", "--no-wait", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert calls["message"]["content"] == "@orion checkpoint"
+    assert calls["message"]["content"] == "@demo-agent checkpoint"
 
 
 def test_send_ask_ax_prepends_ax_mention(monkeypatch):
@@ -373,7 +373,7 @@ def test_send_ask_ax_does_not_duplicate_existing_ax_mention(monkeypatch):
 
 
 def test_send_ask_ax_rejects_to_combination():
-    result = runner.invoke(app, ["send", "route this", "--ask-ax", "--to", "orion"])
+    result = runner.invoke(app, ["send", "route this", "--ask-ax", "--to", "demo-agent"])
 
     assert result.exit_code == 1
     assert "use either --ask-ax or --to" in result.output
@@ -409,11 +409,11 @@ def test_send_to_does_not_duplicate_existing_mention_and_waits_for_target(monkey
     monkeypatch.setattr("ax_cli.commands.messages.resolve_agent_name", lambda client=None: None)
     monkeypatch.setattr("ax_cli.commands.messages._wait_for_reply", fake_wait)
 
-    result = runner.invoke(app, ["send", "@orion checkpoint", "--to", "orion", "--json"])
+    result = runner.invoke(app, ["send", "@demo-agent checkpoint", "--to", "demo-agent", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert calls["message"]["content"] == "@orion checkpoint"
-    assert calls["wait"]["wait_label"] == "@orion"
+    assert calls["message"]["content"] == "@demo-agent checkpoint"
+    assert calls["wait"]["wait_label"] == "@demo-agent"
     assert calls["wait"]["processing_watcher"] is not None
 
 
@@ -425,7 +425,7 @@ def test_processing_status_from_event_matches_message():
             "message_id": "msg-1",
             "status": "working",
             "agent_id": "agent-1",
-            "agent_name": "orion",
+            "agent_name": "demo-agent",
         },
     )
 
@@ -433,7 +433,7 @@ def test_processing_status_from_event_matches_message():
         "message_id": "msg-1",
         "status": "working",
         "agent_id": "agent-1",
-        "agent_name": "orion",
+        "agent_name": "demo-agent",
     }
     assert _processing_status_from_event("msg-2", "agent_processing", {"message_id": "msg-1"}) is None
     assert _processing_status_from_event("msg-1", "message", {"message_id": "msg-1"}) is None

@@ -18,15 +18,15 @@ from ax_cli.config import (
 )
 
 
-def _write_active_profile(global_dir: Path, *, name: str = "next-orion") -> Path:
+def _write_active_profile(global_dir: Path, *, name: str = "demo-agent") -> Path:
     token_file = global_dir / "profiles" / name / "token"
     token_file.parent.mkdir(parents=True)
     token_file.write_text("axp_a_agent.secret")
     (global_dir / "profiles" / ".active").write_text(f"{name}\n")
     (global_dir / "profiles" / name / "profile.toml").write_text(
         f'base_url = "https://next.paxai.app"\n'
-        f'agent_name = "orion"\n'
-        f'agent_id = "agent-orion"\n'
+        f'agent_name = "demo-agent"\n'
+        f'agent_id = "agent-demo-agent"\n'
         f'space_id = "next-space"\n'
         f'token_file = "{token_file}"\n'
     )
@@ -133,8 +133,8 @@ class TestLoadConfig:
         runtime_config.write_text(
             f'token_file = "{token_file.name}"\n'
             'base_url = "https://next.paxai.app"\n'
-            'agent_name = "orion"\n'
-            'agent_id = "agent-orion"\n'
+            'agent_name = "demo-agent"\n'
+            'agent_id = "agent-demo-agent"\n'
             'space_id = "space-next"\n'
         )
         monkeypatch.chdir(tmp_path)
@@ -144,8 +144,8 @@ class TestLoadConfig:
 
         assert cfg["token"] == "axp_a_runtime.secret"
         assert cfg["base_url"] == "https://next.paxai.app"
-        assert cfg["agent_name"] == "orion"
-        assert cfg["agent_id"] == "agent-orion"
+        assert cfg["agent_name"] == "demo-agent"
+        assert cfg["agent_id"] == "agent-demo-agent"
         assert cfg["space_id"] == "space-next"
         assert cfg["principal_type"] == "agent"
 
@@ -185,8 +185,8 @@ class TestLoadConfig:
         (local_ax / "config.toml").write_text(
             'token = "axp_a_agent.secret"\n'
             'base_url = "https://next.paxai.app"\n'
-            'agent_name = "orion"\n'
-            'agent_id = "agent-orion"\n'
+            'agent_name = "demo-agent"\n'
+            'agent_id = "agent-demo-agent"\n'
         )
         monkeypatch.chdir(tmp_path)
 
@@ -194,7 +194,7 @@ class TestLoadConfig:
 
         assert cfg["token"] == "axp_a_agent.secret"
         assert cfg["principal_type"] == "agent"
-        assert cfg["agent_name"] == "orion"
+        assert cfg["agent_name"] == "demo-agent"
 
     def test_unsafe_local_user_pat_agent_config_does_not_override_active_profile(
         self, tmp_path, monkeypatch, capsys
@@ -204,14 +204,14 @@ class TestLoadConfig:
         monkeypatch.setenv("AX_CONFIG_DIR", str(global_dir))
         monkeypatch.setattr(config_module, "_unsafe_local_config_warned", False)
 
-        token_file = global_dir / "profiles" / "next-orion" / "token"
+        token_file = global_dir / "profiles" / "demo-agent" / "token"
         token_file.parent.mkdir(parents=True)
         token_file.write_text("axp_a_agent.secret")
-        (global_dir / "profiles" / ".active").write_text("next-orion\n")
-        (global_dir / "profiles" / "next-orion" / "profile.toml").write_text(
+        (global_dir / "profiles" / ".active").write_text("demo-agent\n")
+        (global_dir / "profiles" / "demo-agent" / "profile.toml").write_text(
             f'base_url = "https://next.paxai.app"\n'
-            f'agent_name = "orion"\n'
-            f'agent_id = "agent-orion"\n'
+            f'agent_name = "demo-agent"\n'
+            f'agent_id = "agent-demo-agent"\n'
             f'space_id = "next-space"\n'
             f'token_file = "{token_file}"\n'
         )
@@ -231,8 +231,8 @@ class TestLoadConfig:
 
         assert cfg["token"] == "axp_a_agent.secret"
         assert cfg["base_url"] == "https://next.paxai.app"
-        assert cfg["agent_name"] == "orion"
-        assert cfg["agent_id"] == "agent-orion"
+        assert cfg["agent_name"] == "demo-agent"
+        assert cfg["agent_id"] == "agent-demo-agent"
         assert cfg["space_id"] == "next-space"
         assert "Ignoring unsafe local aX config" in capsys.readouterr().err
 
@@ -329,8 +329,8 @@ class TestAuthDoctorDiagnostics:
         diagnostic = diagnose_auth_config()
 
         assert diagnostic["ok"] is True
-        assert diagnostic["selected_profile"] == "next-orion"
-        assert diagnostic["effective"]["auth_source"] == "active_profile:next-orion"
+        assert diagnostic["selected_profile"] == "demo-agent"
+        assert diagnostic["effective"]["auth_source"] == "active_profile:demo-agent"
         assert diagnostic["effective"]["token_kind"] == "agent_pat"
         assert diagnostic["effective"]["principal_intent"] == "agent"
         assert diagnostic["effective"]["space_id"] == "next-space"
@@ -376,8 +376,8 @@ class TestAuthDoctorDiagnostics:
         diagnostic = diagnose_auth_config()
 
         assert diagnostic["ok"] is True
-        assert diagnostic["effective"]["auth_source"] == "active_profile:next-orion"
-        assert diagnostic["effective"]["agent_name"] == "orion"
+        assert diagnostic["effective"]["auth_source"] == "active_profile:demo-agent"
+        assert diagnostic["effective"]["agent_name"] == "demo-agent"
         assert diagnostic["effective"]["space_id"] == "next-space"
         assert any(warning["code"] == "unsafe_local_config_ignored" for warning in diagnostic["warnings"])
         local_source = next(source for source in diagnostic["sources"] if source["name"] == "local_config")
@@ -486,7 +486,7 @@ class TestResolveToken:
         local_ax = tmp_path / ".ax"
         local_ax.mkdir()
         (local_ax / "config.toml").write_text(
-            'token = "axp_a_agent.secret"\nagent_name = "orion"\nagent_id = "agent-orion"\n'
+            'token = "axp_a_agent.secret"\nagent_name = "demo-agent"\nagent_id = "agent-demo-agent"\n'
         )
         monkeypatch.chdir(tmp_path)
 
