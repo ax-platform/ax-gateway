@@ -11,6 +11,7 @@ from .commands import (
     alerts,
     apps,
     auth,
+    bootstrap,
     channel,
     context,
     credentials,
@@ -49,6 +50,7 @@ app.add_typer(spaces.app, name="spaces")
 app.add_typer(channel.app, name="channel")
 app.add_typer(mint.app, name="token")
 app.add_typer(qa.app, name="qa")
+app.command("bootstrap-agent")(bootstrap.bootstrap_agent)
 app.command("handoff")(handoff.run)
 
 

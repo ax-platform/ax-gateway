@@ -713,12 +713,37 @@ class AxClient:
 
     # --- Keys (PAT management) ---
 
-    def create_key(self, name: str, *, allowed_agent_ids: list[str] | None = None) -> dict:
+    def create_key(
+        self,
+        name: str,
+        *,
+        allowed_agent_ids: list[str] | None = None,
+        bound_agent_id: str | None = None,
+        audience: str | None = None,
+        scopes: list[str] | None = None,
+        space_id: str | None = None,
+    ) -> dict:
+        """POST /api/v1/keys — mint a user PAT, optionally bound to an agent.
+
+        When ``bound_agent_id`` is set, the resulting PAT inherits the agent's
+        allowed-spaces policy and can only be used to send as that agent. This
+        is the prod-friendly alternative to ``/credentials/agent-pat`` when the
+        latter isn't routed (see axctl-friction-2026-04-17 §3).
+        """
         body: dict = {"name": name}
         if allowed_agent_ids:
             body["agent_scope"] = "agents"
             body["allowed_agent_ids"] = allowed_agent_ids
-        r = self._http.post("/api/v1/keys", json=body)
+        if bound_agent_id:
+            body["bound_agent_id"] = bound_agent_id
+        if audience:
+            body["audience"] = audience
+        if scopes:
+            body["scopes"] = scopes
+        headers = dict(self._base_headers)
+        if space_id:
+            headers["X-Space-Id"] = space_id
+        r = self._http.post("/api/v1/keys", json=body, headers=headers)
         r.raise_for_status()
         return self._parse_json(r)
 
