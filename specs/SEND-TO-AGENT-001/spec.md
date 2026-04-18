@@ -2,7 +2,7 @@
 
 ```
 Spec-ID:  SEND-TO-AGENT-001
-Owner:    @orion (CLI contract) + @frontend_sentinel (card surfaces)
+Owner:    @demo-agent (CLI contract) + @frontend_sentinel (card surfaces)
 Status:   DRAFT — ready for team review
 Date:     2026-04-16
 Task:     b38a7475-8bf6-445e-bd6e-1845222885dd
@@ -105,10 +105,10 @@ the PR #54 task snapshot pattern.
       "source": "axctl_tasks_send",
       "state": "sent",
       "fired_at": "2026-04-16T18:40:00Z",
-      "title": "orion sent you a task: Ship delivery receipts",
+      "title": "demo-agent sent you a task: Ship delivery receipts",
       "summary": "{message text or default copy}",
       "target_agent": "backend_sentinel",
-      "sender_agent_name": "orion",
+      "sender_agent_name": "demo-agent",
       "source_task_id": "task-snap",
       "task": {                   // task snapshot, per PR #54 pattern
         "id": "task-snap",
@@ -127,7 +127,7 @@ the PR #54 task snapshot pattern.
           "type": "alert",        // re-uses AlertCardBody
           "version": 1,
           "payload": {
-            "title": "orion sent you a task: Ship delivery receipts",
+            "title": "demo-agent sent you a task: Ship delivery receipts",
             "summary": "...",
             "severity": "info",
             "intent": "task_send",          // distinguishes from plain alerts
@@ -195,16 +195,16 @@ transcript.
 
 | Layer         | Owner                | Scope                                              |
 |---------------|----------------------|----------------------------------------------------|
-| CLI contract  | @orion (this spec)   | §3.1 command shape, §3.2 envelope                  |
-| CLI impl      | @orion               | `ax_cli/commands/tasks.py::send`, mirror in alerts.py |
+| CLI contract  | @demo-agent (this spec)   | §3.1 command shape, §3.2 envelope                  |
+| CLI impl      | @demo-agent               | `ax_cli/commands/tasks.py::send`, mirror in alerts.py |
 | Backend       | no change required   | Accepts the envelope as-is (plain messages POST)   |
 | MCP           | @mcp_sentinel        | Optional: mirror command as an MCP tool (`tasks.send`, `alerts.send`) so aX can invoke it |
 | Frontend card | @frontend_sentinel   | Task `60113fd7` + `e55be7c8`; render `intent=task_send` cards, wire Open Task + Ack + Reassign action buttons |
-| Wiki          | @orion               | Update ax-cli wiki "Agent-Activity-and-Final-Reply-Contract" + a new "Sending tasks and alerts" page |
+| Wiki          | @demo-agent               | Update ax-cli wiki "Agent-Activity-and-Final-Reply-Contract" + a new "Sending tasks and alerts" page |
 
 ## 5. Implementation plan (smallest slice)
 
-1. **CLI scaffold** (orion, this task): add `ax_cli/commands/tasks.py::send`
+1. **CLI scaffold** (demo-agent, this task): add `ax_cli/commands/tasks.py::send`
    and the matching entry in `ax_cli/commands/alerts.py::send_to` (or reuse
    the existing `ax alerts send` with a new `--to` flag on an existing
    alert_id). Reuses `_build_alert_metadata` + `_fetch_task_snapshot` from
@@ -215,7 +215,7 @@ transcript.
    (depends on backend emission — trail behind PR #108).
 4. **Wiki update**: one short page explaining the two commands, the
    difference vs. `ax send`, and how receipts appear.
-5. **Dogfood**: orion runs `axctl tasks send <this task id> --to @backend_sentinel`.
+5. **Dogfood**: demo-agent runs `axctl tasks send <this task id> --to @backend_sentinel`.
    Expected outcome on receiver: one card with task snapshot + Open Task
    button; CLI stdout shows receipt chain; no fake "working" without a
    listener receipt.
@@ -229,7 +229,7 @@ transcript.
 - [ ] Receiver's frontend renders one card with task/alert context + Open button
 - [ ] Delivery receipts stream per SEND-RECEIPTS-001
 - [ ] No synthetic ACK replies from tooling; the agent's subsequent action is the reply
-- [ ] Dogfood: orion → backend_sentinel with a live task, evidence captured
+- [ ] Dogfood: demo-agent → backend_sentinel with a live task, evidence captured
 
 ## 7. Open questions
 
@@ -253,7 +253,7 @@ transcript.
 
 ## 8. Change log
 
-- 2026-04-16 — Initial draft (@orion) from task b38a7475. Cross-links to
+- 2026-04-16 — Initial draft (@demo-agent) from task b38a7475. Cross-links to
   PR #108 (delivery receipts), PR #107 (availability escalation), PR #54
   (task snapshot pattern), PR #53 (alert metadata shape), task e55be7c8
   (reminder task-awareness), task 60113fd7 (frontend Send to Agent).

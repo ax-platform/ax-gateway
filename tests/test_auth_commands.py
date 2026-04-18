@@ -37,7 +37,7 @@ def test_login_calls_user_login(monkeypatch):
             "--env",
             "next",
             "--agent",
-            "anvil",
+            "peer-agent",
             "--space-id",
             "space-123",
         ],
@@ -47,7 +47,7 @@ def test_login_calls_user_login(monkeypatch):
     assert called == {
         "token": "axp_u_test.token",
         "base_url": "https://next.paxai.app",
-        "agent": "anvil",
+        "agent": "peer-agent",
         "space_id": "space-123",
         "env_name": "next",
     }
@@ -125,8 +125,8 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
     write_config(
         token="axp_a_old.secret",
         base_url="https://old.example.com",
-        agent_name="orion",
-        agent_id="agent-orion",
+        agent_name="demo-agent",
+        agent_id="agent-demo-agent",
         space_id="old-space",
     )
 
@@ -167,8 +167,8 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
     assert local_cfg == {
         "token": "axp_a_old.secret",
         "base_url": "https://old.example.com",
-        "agent_name": "orion",
-        "agent_id": "agent-orion",
+        "agent_name": "demo-agent",
+        "agent_id": "agent-demo-agent",
         "space_id": "old-space",
     }
     user_cfg = tomllib.loads((config_dir.parent / "_global_config" / "user.toml").read_text())
@@ -182,7 +182,7 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
 
 def test_user_login_env_stores_named_login_and_marks_active(monkeypatch, write_config, config_dir):
     """Admins can keep separate user bootstrap tokens for dev/next/prod."""
-    write_config(token="axp_a_old.secret", base_url="https://old.example.com", agent_name="orion")
+    write_config(token="axp_a_old.secret", base_url="https://old.example.com", agent_name="demo-agent")
 
     class FakeTokenExchanger:
         def __init__(self, base_url, token):

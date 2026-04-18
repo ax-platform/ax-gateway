@@ -231,10 +231,10 @@ axctl tasks create "Next step: deploy to staging" --priority high --assign ops-a
 ### Delegate and wait
 ```bash
 axctl handoff backend-agent "Fix the auth regression" --intent implement --timeout 600
-axctl handoff orion "Review the API contract" --intent review --follow-up
-axctl handoff orion "Iterate until contract tests pass" --intent implement --loop --max-rounds 5 --completion-promise "TESTS GREEN"
+axctl handoff demo-agent "Review the API contract" --intent review --follow-up
+axctl handoff demo-agent "Iterate until contract tests pass" --intent implement --loop --max-rounds 5 --completion-promise "TESTS GREEN"
 axctl handoff cli_sentinel "Review CLI docs"
-axctl handoff orion "Known-live fast path" --no-adaptive-wait
+axctl handoff demo-agent "Known-live fast path" --no-adaptive-wait
 ```
 
 A sent message is not completion. For owned collaboration, completion means a

@@ -71,7 +71,7 @@ def test_add_creates_local_policy_file(monkeypatch, tmp_path):
             "--reason",
             "check this task",
             "--target",
-            "orion",
+            "demo-agent",
             "--first-in-minutes",
             "0",
             "--max-fires",
@@ -89,7 +89,7 @@ def test_add_creates_local_policy_file(monkeypatch, tmp_path):
     policy = store["policies"][0]
     assert policy["source_task_id"] == "task-1"
     assert policy["reason"] == "check this task"
-    assert policy["target"] == "orion"
+    assert policy["target"] == "demo-agent"
     assert policy["max_fires"] == 2
     assert policy["enabled"] is True
 
@@ -109,7 +109,7 @@ def test_run_once_fires_due_policy_and_disables_at_max(monkeypatch, tmp_path):
                         "space_id": "space-abc",
                         "source_task_id": "task-1",
                         "reason": "review task state",
-                        "target": "orion",
+                        "target": "demo-agent",
                         "severity": "info",
                         "cadence_seconds": 300,
                         "next_fire_at": "2026-04-16T00:00:00Z",
@@ -128,11 +128,11 @@ def test_run_once_fires_due_policy_and_disables_at_max(monkeypatch, tmp_path):
     assert len(fake.sent) == 1
     sent = fake.sent[0]
     assert sent["message_type"] == "reminder"
-    assert sent["content"].startswith("@orion Reminder:")
+    assert sent["content"].startswith("@demo-agent Reminder:")
     metadata = sent["metadata"]
     assert metadata["alert"]["kind"] == "task_reminder"
     assert metadata["alert"]["source_task_id"] == "task-1"
-    assert metadata["alert"]["target_agent"] == "orion"
+    assert metadata["alert"]["target_agent"] == "demo-agent"
     assert metadata["alert"]["response_required"] is True
     assert metadata["reminder_policy"]["policy_id"] == "rem-test"
 
@@ -158,7 +158,7 @@ def test_run_once_skips_future_policy(monkeypatch, tmp_path):
                         "space_id": "space-abc",
                         "source_task_id": "task-1",
                         "reason": "not yet",
-                        "target": "orion",
+                        "target": "demo-agent",
                         "cadence_seconds": 300,
                         "next_fire_at": "2999-01-01T00:00:00Z",
                         "max_fires": 1,
@@ -204,14 +204,14 @@ def test_run_once_enriches_alert_with_task_snapshot(monkeypatch, tmp_path):
                             "title": "Ship delivery receipts",
                             "priority": "urgent",
                             "status": "in_progress",
-                            "assignee_id": "agent-orion",
+                            "assignee_id": "agent-demo-agent",
                             "creator_id": "agent-chatgpt",
                             "deadline": "2026-04-17T00:00:00Z",
                         }
                     }
                 )
-            if path.endswith("/agents/agent-orion"):
-                return _R({"agent": {"id": "agent-orion", "name": "orion"}})
+            if path.endswith("/agents/agent-demo-agent"):
+                return _R({"agent": {"id": "agent-demo-agent", "name": "demo-agent"}})
             return _R({})
 
     fake = _FakeClient()
@@ -232,7 +232,7 @@ def test_run_once_enriches_alert_with_task_snapshot(monkeypatch, tmp_path):
                         "space_id": "space-abc",
                         "source_task_id": "task-snap",
                         "reason": "review delivery receipts",
-                        "target": "orion",
+                        "target": "demo-agent",
                         "severity": "info",
                         "cadence_seconds": 300,
                         "next_fire_at": "2026-04-16T00:00:00Z",
@@ -257,8 +257,8 @@ def test_run_once_enriches_alert_with_task_snapshot(monkeypatch, tmp_path):
     assert task["title"] == "Ship delivery receipts"
     assert task["priority"] == "urgent"
     assert task["status"] == "in_progress"
-    assert task["assignee_id"] == "agent-orion"
-    assert task["assignee_name"] == "orion"
+    assert task["assignee_id"] == "agent-demo-agent"
+    assert task["assignee_name"] == "demo-agent"
     assert task["deadline"] == "2026-04-17T00:00:00Z"
 
     card_payload = metadata["ui"]["cards"][0]["payload"]
@@ -292,7 +292,7 @@ def test_run_once_without_task_snapshot_still_fires(monkeypatch, tmp_path):
                         "space_id": "space-abc",
                         "source_task_id": "task-nope",
                         "reason": "fallback path",
-                        "target": "orion",
+                        "target": "demo-agent",
                         "cadence_seconds": 300,
                         "next_fire_at": "2026-04-16T00:00:00Z",
                         "max_fires": 1,
@@ -357,11 +357,11 @@ def test_run_once_skips_and_disables_when_source_task_is_terminal(monkeypatch, t
                     "id": "task-done",
                     "title": "Already shipped",
                     "status": "completed",
-                    "assignee_id": "agent-orion",
+                    "assignee_id": "agent-demo-agent",
                     "creator_id": "agent-chatgpt",
                 }
             },
-            "/agents/agent-orion": {"agent": {"id": "agent-orion", "name": "orion"}},
+            "/agents/agent-demo-agent": {"agent": {"id": "agent-demo-agent", "name": "demo-agent"}},
         },
     )
 
@@ -377,7 +377,7 @@ def test_run_once_skips_and_disables_when_source_task_is_terminal(monkeypatch, t
                         "space_id": "space-abc",
                         "source_task_id": "task-done",
                         "reason": "old reminder for a finished task",
-                        "target": "orion",
+                        "target": "demo-agent",
                         "severity": "info",
                         "cadence_seconds": 300,
                         "next_fire_at": "2026-04-16T00:00:00Z",
@@ -418,12 +418,12 @@ def test_run_once_reroutes_pending_review_to_review_owner(monkeypatch, tmp_path)
                     "id": "task-review",
                     "title": "PR awaiting review",
                     "status": "pending_review",
-                    "assignee_id": "agent-orion",
+                    "assignee_id": "agent-demo-agent",
                     "creator_id": "agent-chatgpt",
                     "requirements": {"review_owner": "alex"},
                 }
             },
-            "/agents/agent-orion": {"agent": {"id": "agent-orion", "name": "orion"}},
+            "/agents/agent-demo-agent": {"agent": {"id": "agent-demo-agent", "name": "demo-agent"}},
             "/agents/agent-chatgpt": {"agent": {"id": "agent-chatgpt", "name": "chatgpt"}},
         },
     )
@@ -479,12 +479,12 @@ def test_run_once_pending_review_falls_back_to_creator_when_no_owner(monkeypatch
                     "id": "task-review2",
                     "title": "PR awaiting review — no owner",
                     "status": "in_progress",
-                    "assignee_id": "agent-orion",
+                    "assignee_id": "agent-demo-agent",
                     "creator_id": "agent-chatgpt",
                     "requirements": {"pending_review": True},
                 }
             },
-            "/agents/agent-orion": {"agent": {"id": "agent-orion", "name": "orion"}},
+            "/agents/agent-demo-agent": {"agent": {"id": "agent-demo-agent", "name": "demo-agent"}},
             "/agents/agent-chatgpt": {"agent": {"id": "agent-chatgpt", "name": "chatgpt"}},
         },
     )

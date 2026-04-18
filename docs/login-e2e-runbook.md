@@ -62,11 +62,11 @@ Saved user login: .../config/user.toml
 The setup agent may run this after the user login is complete.
 
 ```bash
-axdev token mint orion-e2e \
+axdev token mint demo-agent-e2e \
   --create \
   --audience both \
   --expires 30 \
-  --save-to "$AX_E2E_ROOT/agents/orion-e2e" \
+  --save-to "$AX_E2E_ROOT/agents/demo-agent-e2e" \
   --profile demo-e2e \
   --no-print-token
 ```
@@ -89,7 +89,7 @@ axdev auth whoami --json
 Expected:
 
 - `whoami` uses an agent-bound profile
-- `bound_agent.agent_name` or resolved agent metadata points at `orion-e2e`
+- `bound_agent.agent_name` or resolved agent metadata points at `demo-agent-e2e`
 - runtime commands use the agent PAT/JWT, not the user PAT
 
 ## Cleanup

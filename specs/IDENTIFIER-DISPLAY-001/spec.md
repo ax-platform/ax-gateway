@@ -45,7 +45,7 @@ Examples:
 ```text
 Account: alex
 Space: team-hub
-Agent: orion
+Agent: demo-agent
 ```
 
 If the UUID is useful, show it as supporting detail:

@@ -73,7 +73,7 @@ def test_apps_signal_writes_context_widget_metadata(monkeypatch):
             "--message",
             "context artifact ready",
             "--to",
-            "orion",
+            "demo-agent",
             "--channel",
             "automation-alerts",
             "--alert-kind",
@@ -86,7 +86,7 @@ def test_apps_signal_writes_context_widget_metadata(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert calls["get_context"] == {"key": "design:architecture", "space_id": "space-1"}
-    assert calls["message"]["content"] == "@orion context artifact ready"
+    assert calls["message"]["content"] == "@demo-agent context artifact ready"
     assert calls["message"]["channel"] == "automation-alerts"
     assert calls["message"]["message_type"] == "system"
 
@@ -99,7 +99,7 @@ def test_apps_signal_writes_context_widget_metadata(monkeypatch):
     assert widget["initial_data"]["selected_key"] == "design:architecture"
     assert widget["initial_data"]["items"][0]["file_content"] == "# Architecture\n"
     assert metadata["alert"]["kind"] == "design_review"
-    assert metadata["alert"]["target_agent"] == "orion"
+    assert metadata["alert"]["target_agent"] == "demo-agent"
     assert metadata["alert"]["response_required"] is True
     assert metadata["alert"]["summary"] == "Review this diagram"
     assert "top_level_ingress" not in metadata
@@ -269,7 +269,7 @@ def test_apps_signal_agents_hydrates_dashboard_payload(monkeypatch):
                 "agents": [
                     {
                         "id": "agent-1",
-                        "name": "orion",
+                        "name": "demo-agent",
                         "status": "active",
                         "description": "QA reviewer",
                     },
@@ -314,7 +314,7 @@ def test_apps_signal_agents_hydrates_dashboard_payload(monkeypatch):
     assert initial_data["items"] == [
         {
             "id": "agent-1",
-            "name": "orion",
+            "name": "demo-agent",
             "status": "active",
             "description": "QA reviewer",
         },

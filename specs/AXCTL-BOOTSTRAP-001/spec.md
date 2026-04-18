@@ -109,7 +109,7 @@ sequenceDiagram
     User->>CLI: axctl login
     CLI->>API: Verify user setup credential
     API-->>CLI: User/device authorization
-    User->>Agent: Set up @orion, @cipher, @sentinel
+    User->>Agent: Set up @demo-agent, @cipher, @sentinel
     Agent->>CLI: axctl token mint --create --profile --save-to
     CLI->>API: Device/user authorized PAT request
     API-->>CLI: Scoped agent PAT shown once

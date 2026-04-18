@@ -174,7 +174,7 @@ python3 scripts/channel_smoke.py \
   --listener-profile demo-agent \
   --sender-profile peer-agent \
   --profile-workdir /home/ax-agent \
-  --agent orion \
+  --agent demo-agent \
   --space-id aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa \
   --case reply \
   --channel-command 'bun run --cwd /home/ax-agent/channel --shell=bun --silent start --debug'

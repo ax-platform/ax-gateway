@@ -84,7 +84,7 @@ def test_agents_ping_classifies_reply_as_event_listener(monkeypatch):
                 "agents": [
                     {
                         "id": "agent-1",
-                        "name": "orion",
+                        "name": "demo-agent",
                         "origin": "mcp",
                         "agent_type": "mcp",
                         "status": "active",
@@ -98,22 +98,22 @@ def test_agents_ping_classifies_reply_as_event_listener(monkeypatch):
 
     def fake_wait(client, **kwargs):
         calls["wait"] = kwargs
-        return {"id": "reply-1", "content": f"received {kwargs['token']}", "display_name": "orion"}
+        return {"id": "reply-1", "content": f"received {kwargs['token']}", "display_name": "demo-agent"}
 
     monkeypatch.setattr("ax_cli.commands.agents.get_client", lambda: FakeClient())
     monkeypatch.setattr("ax_cli.commands.agents.resolve_space_id", lambda client, explicit=None: "space-1")
     monkeypatch.setattr("ax_cli.commands.agents.resolve_agent_name", lambda client=None: "ChatGPT")
     monkeypatch.setattr("ax_cli.commands.agents._wait_for_handoff_reply", fake_wait)
 
-    result = runner.invoke(app, ["agents", "ping", "orion", "--timeout", "5", "--json"])
+    result = runner.invoke(app, ["agents", "ping", "demo-agent", "--timeout", "5", "--json"])
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["contact_mode"] == "event_listener"
     assert data["listener_status"] == "replied"
     assert data["agent_id"] == "agent-1"
-    assert calls["message"]["content"].startswith("@orion Contact-mode ping")
-    assert calls["wait"]["agent_name"] == "orion"
+    assert calls["message"]["content"].startswith("@demo-agent Contact-mode ping")
+    assert calls["wait"]["agent_name"] == "demo-agent"
     assert calls["wait"]["sent_message_id"] == "msg-1"
 
 
@@ -151,7 +151,7 @@ def test_agents_ping_classifies_timeout_as_unknown(monkeypatch):
 def test_agents_ping_unknown_agent_fails(monkeypatch):
     class FakeClient:
         def list_agents(self, *, space_id=None, limit=None):
-            return {"agents": [{"id": "agent-1", "name": "orion"}]}
+            return {"agents": [{"id": "agent-1", "name": "demo-agent"}]}
 
     monkeypatch.setattr("ax_cli.commands.agents.get_client", lambda: FakeClient())
     monkeypatch.setattr("ax_cli.commands.agents.resolve_space_id", lambda client, explicit=None: "space-1")

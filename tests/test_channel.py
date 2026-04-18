@@ -37,7 +37,7 @@ class CaptureBridge(ChannelBridge):
     def __init__(self, client, *, agent_id="agent-123", processing_status=True):
         super().__init__(
             client=client,
-            agent_name="anvil",
+            agent_name="peer-agent",
             agent_id=agent_id,
             space_id="space-123",
             queue_size=10,
@@ -103,7 +103,7 @@ def test_channel_sends_with_agent_bound_pat():
         {
             "message_id": "incoming-123",
             "status": "completed",
-            "agent_name": "anvil",
+            "agent_name": "peer-agent",
             "space_id": "space-123",
         }
     ]
@@ -122,7 +122,7 @@ def test_channel_can_publish_working_status_on_delivery():
         {
             "message_id": "incoming-123",
             "status": "working",
-            "agent_name": "anvil",
+            "agent_name": "peer-agent",
             "space_id": "space-123",
         }
     ]
@@ -142,9 +142,9 @@ def test_channel_processes_idle_event_before_jwt_reconnect(monkeypatch):
             return FakeSseResponse(
                 {
                     "id": "incoming-123",
-                    "content": "@anvil please check this",
+                    "content": "@peer-agent please check this",
                     "author": {"id": "user-123", "name": "alex", "type": "user"},
-                    "mentions": ["anvil"],
+                    "mentions": ["peer-agent"],
                 }
             )
 
@@ -214,7 +214,7 @@ def test_channel_get_messages_returns_pending_mentions():
             conversation_id=None,
             author="alex",
             prompt="please check this",
-            raw_content="@anvil please check this",
+            raw_content="@peer-agent please check this",
             created_at="2026-04-15T23:00:00Z",
             space_id="space-123",
         )
@@ -240,7 +240,7 @@ def test_channel_notification_metadata_matches_claude_channel_contract():
                 conversation_id="conversation-ignored",
                 author="alex",
                 prompt="please check this",
-                raw_content="@anvil please check this",
+                raw_content="@peer-agent please check this",
                 created_at=None,
                 space_id="space-123",
             )
@@ -289,11 +289,11 @@ def test_listener_treats_parent_reply_as_delivery_signal():
         "id": "reply-1",
         "content": "I looked at this",
         "parent_id": "agent-message-1",
-        "author": {"id": "other-agent", "name": "orion", "type": "agent"},
+        "author": {"id": "other-agent", "name": "demo-agent", "type": "agent"},
         "mentions": [],
     }
 
-    assert _should_respond(data, "anvil", "agent-123", reply_anchor_ids=anchors) is True
+    assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is True
 
 
 def test_listener_treats_conversation_reply_as_delivery_signal():
@@ -302,23 +302,23 @@ def test_listener_treats_conversation_reply_as_delivery_signal():
         "id": "reply-1",
         "content": "I looked at this",
         "conversation_id": "agent-message-1",
-        "author": {"id": "other-agent", "name": "orion", "type": "agent"},
+        "author": {"id": "other-agent", "name": "demo-agent", "type": "agent"},
         "mentions": [],
     }
 
-    assert _should_respond(data, "anvil", "agent-123", reply_anchor_ids=anchors) is True
+    assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is True
 
 
 def test_listener_tracks_self_authored_messages_without_responding():
     anchors: set[str] = set()
     data = {
         "id": "agent-message-1",
-        "content": "@orion please check this",
-        "author": {"id": "agent-123", "name": "anvil", "type": "agent"},
-        "mentions": ["orion"],
+        "content": "@demo-agent please check this",
+        "author": {"id": "agent-123", "name": "peer-agent", "type": "agent"},
+        "mentions": ["demo-agent"],
     }
 
-    assert _is_self_authored(data, "anvil", "agent-123") is True
+    assert _is_self_authored(data, "peer-agent", "agent-123") is True
     _remember_reply_anchor(anchors, data["id"])
-    assert _should_respond(data, "anvil", "agent-123", reply_anchor_ids=anchors) is False
+    assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is False
     assert anchors == {"agent-message-1"}

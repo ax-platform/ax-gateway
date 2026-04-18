@@ -481,7 +481,7 @@ def update_agent(
 
     Examples:
         ax agents update backend_sentinel --type sentinel --model claude-sonnet-4-6
-        ax agents update anvil --bio "Infra and ops" --specialization "server management"
+        ax agents update peer-agent --bio "Infra and ops" --specialization "server management"
     """
     client = get_client()
     fields = {}

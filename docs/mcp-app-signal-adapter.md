@@ -65,7 +65,7 @@ Create a task with a task card and task-detail widget metadata:
 ```bash
 axctl tasks create 'Review the launch checklist' \
   --description 'Check API, CLI, MCP, and UI smoke paths before promotion.' \
-  --assign orion \
+  --assign demo-agent \
   --json
 ```
 

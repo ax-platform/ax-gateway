@@ -106,7 +106,7 @@ Request:
   "audience": "cli",
   "expires_in_days": 30,
   "space_id": "space-uuid",
-  "name": "orion-cli-local",
+  "name": "demo-agent-cli-local",
   "requested_capabilities": ["messages:send", "context:read", "tasks:write"]
 }
 ```
@@ -175,7 +175,7 @@ Required behavior:
 Example:
 
 ```bash
-axctl token mint orion --audience cli --expires 30 --profile demo-agent
+axctl token mint demo-agent --audience cli --expires 30 --profile demo-agent
 ```
 
 ## Approval Policy

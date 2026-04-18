@@ -27,13 +27,13 @@ def test_handoff_matches_thread_reply_from_target_agent():
         "id": "reply-1",
         "content": "Reviewed and done.",
         "parent_id": "sent-1",
-        "display_name": "orion",
+        "display_name": "demo-agent",
         "created_at": "2026-04-13T04:31:00+00:00",
     }
 
     assert _matches_handoff_reply(
         message,
-        agent_name="orion",
+        agent_name="demo-agent",
         sent_message_id="sent-1",
         token="handoff:abc123",
         current_agent_name="ChatGPT",
@@ -47,13 +47,13 @@ def test_handoff_matches_fast_top_level_reply_with_token_and_mention():
         "id": "reply-1",
         "content": "@ChatGPT handoff:abc123 reviewed the spec.",
         "conversation_id": "reply-1",
-        "display_name": "orion",
+        "display_name": "demo-agent",
         "created_at": "2026-04-13T04:31:00+00:00",
     }
 
     assert _matches_handoff_reply(
         message,
-        agent_name="@orion",
+        agent_name="@demo-agent",
         sent_message_id="sent-1",
         token="handoff:abc123",
         current_agent_name="ChatGPT",
@@ -71,7 +71,7 @@ def test_handoff_does_not_match_other_agent():
 
     assert not _matches_handoff_reply(
         message,
-        agent_name="orion",
+        agent_name="demo-agent",
         sent_message_id="sent-1",
         token="handoff:abc123",
         current_agent_name="ChatGPT",
@@ -173,7 +173,7 @@ def test_handoff_loop_repeats_until_completion_promise(monkeypatch):
 
     class FakeClient:
         def list_agents(self):
-            return {"agents": [{"id": "agent-1", "name": "orion"}]}
+            return {"agents": [{"id": "agent-1", "name": "demo-agent"}]}
 
         def create_task(self, space_id, title, description=None, priority=None, assignee_id=None):
             calls["task"] = {
@@ -191,8 +191,8 @@ def test_handoff_loop_repeats_until_completion_promise(monkeypatch):
             return {"message": {"id": message_id}}
 
     replies = [
-        {"id": "reply-1", "content": "handoff:abc still working", "display_name": "orion"},
-        {"id": "reply-2", "content": "<promise>DONE</promise>", "display_name": "orion"},
+        {"id": "reply-1", "content": "handoff:abc still working", "display_name": "demo-agent"},
+        {"id": "reply-2", "content": "<promise>DONE</promise>", "display_name": "demo-agent"},
     ]
 
     monkeypatch.setattr("ax_cli.commands.handoff.get_client", lambda: FakeClient())
@@ -205,7 +205,7 @@ def test_handoff_loop_repeats_until_completion_promise(monkeypatch):
         app,
         [
             "handoff",
-            "orion",
+            "demo-agent",
             "Fix the regression with tests",
             "--loop",
             "--max-rounds",
@@ -221,7 +221,7 @@ def test_handoff_loop_repeats_until_completion_promise(monkeypatch):
     data = _json_tail(result.output)
     assert len(calls["messages"]) == 2
     assert "Agentic loop mode is enabled" in calls["messages"][0]["content"]
-    assert calls["messages"][1]["content"].startswith("@orion Continue agentic loop")
+    assert calls["messages"][1]["content"].startswith("@demo-agent Continue agentic loop")
     assert calls["messages"][1]["parent_id"] == "reply-1"
     assert data["reply"]["id"] == "reply-2"
     assert data["loop"]["completed"] is True
@@ -235,7 +235,7 @@ def test_handoff_loop_stops_at_max_rounds_without_promise(monkeypatch):
 
     class FakeClient:
         def list_agents(self):
-            return {"agents": [{"id": "agent-1", "name": "orion"}]}
+            return {"agents": [{"id": "agent-1", "name": "demo-agent"}]}
 
         def create_task(self, space_id, title, description=None, priority=None, assignee_id=None):
             return {"task": {"id": "task-1"}}
@@ -246,8 +246,8 @@ def test_handoff_loop_stops_at_max_rounds_without_promise(monkeypatch):
             return {"message": {"id": message_id}}
 
     replies = [
-        {"id": "reply-1", "content": "round one", "display_name": "orion"},
-        {"id": "reply-2", "content": "round two", "display_name": "orion"},
+        {"id": "reply-1", "content": "round one", "display_name": "demo-agent"},
+        {"id": "reply-2", "content": "round two", "display_name": "demo-agent"},
     ]
 
     monkeypatch.setattr("ax_cli.commands.handoff.get_client", lambda: FakeClient())
@@ -257,7 +257,7 @@ def test_handoff_loop_stops_at_max_rounds_without_promise(monkeypatch):
 
     result = runner.invoke(
         app,
-        ["handoff", "orion", "Iterate twice", "--loop", "--max-rounds", "2", "--no-adaptive-wait", "--json"],
+        ["handoff", "demo-agent", "Iterate twice", "--loop", "--max-rounds", "2", "--no-adaptive-wait", "--json"],
     )
 
     assert result.exit_code == 0, result.output
@@ -275,7 +275,7 @@ def test_handoff_loop_timeout_after_progress_uses_loop_timeout_status(monkeypatc
 
     class FakeClient:
         def list_agents(self):
-            return {"agents": [{"id": "agent-1", "name": "orion"}]}
+            return {"agents": [{"id": "agent-1", "name": "demo-agent"}]}
 
         def create_task(self, space_id, title, description=None, priority=None, assignee_id=None):
             return {"task": {"id": "task-1"}}
@@ -285,7 +285,7 @@ def test_handoff_loop_timeout_after_progress_uses_loop_timeout_status(monkeypatc
             calls["messages"].append({"space_id": space_id, "content": content, "parent_id": parent_id})
             return {"message": {"id": message_id}}
 
-    replies = [{"id": "reply-1", "content": "round one", "display_name": "orion"}, None]
+    replies = [{"id": "reply-1", "content": "round one", "display_name": "demo-agent"}, None]
 
     monkeypatch.setattr("ax_cli.commands.handoff.get_client", lambda: FakeClient())
     monkeypatch.setattr("ax_cli.commands.handoff.resolve_space_id", lambda client, explicit=None: "space-1")
@@ -294,7 +294,7 @@ def test_handoff_loop_timeout_after_progress_uses_loop_timeout_status(monkeypatc
 
     result = runner.invoke(
         app,
-        ["handoff", "orion", "Iterate twice", "--loop", "--max-rounds", "2", "--no-adaptive-wait", "--json"],
+        ["handoff", "demo-agent", "Iterate twice", "--loop", "--max-rounds", "2", "--no-adaptive-wait", "--json"],
     )
 
     assert result.exit_code == 0, result.output
@@ -361,7 +361,7 @@ def test_handoff_default_adaptive_wait_continues_when_probe_replies(monkeypatch)
 
     class FakeClient:
         def list_agents(self):
-            return {"agents": [{"id": "agent-1", "name": "orion"}]}
+            return {"agents": [{"id": "agent-1", "name": "demo-agent"}]}
 
         def create_task(self, space_id, title, description=None, priority=None, assignee_id=None):
             return {"task": {"id": "task-1"}}
@@ -372,8 +372,8 @@ def test_handoff_default_adaptive_wait_continues_when_probe_replies(monkeypatch)
             return {"message": {"id": message_id}}
 
     replies = [
-        {"id": "probe-reply", "content": "ping:ok", "display_name": "orion"},
-        {"id": "handoff-reply", "content": "reviewed", "display_name": "orion"},
+        {"id": "probe-reply", "content": "ping:ok", "display_name": "demo-agent"},
+        {"id": "handoff-reply", "content": "reviewed", "display_name": "demo-agent"},
     ]
 
     monkeypatch.setattr("ax_cli.commands.handoff.get_client", lambda: FakeClient())
@@ -381,7 +381,7 @@ def test_handoff_default_adaptive_wait_continues_when_probe_replies(monkeypatch)
     monkeypatch.setattr("ax_cli.commands.handoff.resolve_agent_name", lambda client=None: "ChatGPT")
     monkeypatch.setattr("ax_cli.commands.handoff._wait_for_handoff_reply", lambda *args, **kwargs: replies.pop(0))
 
-    result = runner.invoke(app, ["handoff", "orion", "Review CLI docs", "--json"])
+    result = runner.invoke(app, ["handoff", "demo-agent", "Review CLI docs", "--json"])
 
     assert result.exit_code == 0, result.output
     data = _json_tail(result.output)
@@ -397,7 +397,7 @@ def test_handoff_no_adaptive_wait_skips_contact_probe(monkeypatch):
 
     class FakeClient:
         def list_agents(self):
-            return {"agents": [{"id": "agent-1", "name": "orion"}]}
+            return {"agents": [{"id": "agent-1", "name": "demo-agent"}]}
 
         def create_task(self, space_id, title, description=None, priority=None, assignee_id=None):
             return {"task": {"id": "task-1"}}
@@ -412,10 +412,10 @@ def test_handoff_no_adaptive_wait_skips_contact_probe(monkeypatch):
     monkeypatch.setattr("ax_cli.commands.handoff.resolve_agent_name", lambda client=None: "ChatGPT")
     monkeypatch.setattr(
         "ax_cli.commands.handoff._wait_for_handoff_reply",
-        lambda *args, **kwargs: {"id": "reply-1", "content": "reviewed", "display_name": "orion"},
+        lambda *args, **kwargs: {"id": "reply-1", "content": "reviewed", "display_name": "demo-agent"},
     )
 
-    result = runner.invoke(app, ["handoff", "orion", "Review CLI docs", "--no-adaptive-wait", "--json"])
+    result = runner.invoke(app, ["handoff", "demo-agent", "Review CLI docs", "--no-adaptive-wait", "--json"])
 
     assert result.exit_code == 0, result.output
     data = _json_tail(result.output)
