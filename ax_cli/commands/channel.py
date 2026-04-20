@@ -23,7 +23,14 @@ import typer
 
 from ..config import get_client, resolve_agent_name, resolve_space_id
 from ..output import console
-from .listen import _is_self_authored, _iter_sse, _remember_reply_anchor, _should_respond, _strip_mention
+from .listen import (
+    _is_self_authored,
+    _iter_sse,
+    _message_sender_identity,
+    _remember_reply_anchor,
+    _should_respond,
+    _strip_mention,
+)
 
 app = typer.Typer(name="channel", help="Run an aX Claude Code channel over MCP stdio", no_args_is_help=False)
 
@@ -31,6 +38,7 @@ PROTOCOL_VERSION = "2025-11-25"
 SERVER_NAME = "ax-channel"
 SERVER_VERSION = "0.1.0"
 SEEN_MAX = 500
+BACKLOG_BUFFER_MAX = 100
 CHANNEL_ENV_PATH = Path.home() / ".claude" / "channels" / "ax-channel" / ".env"
 
 
@@ -60,6 +68,7 @@ class MentionEvent:
     created_at: str | None
     space_id: str
     attachments: list[dict[str, Any]] | None = None
+    backlog: list[dict[str, Any]] | None = None
 
 
 class ChannelBridge:
@@ -73,6 +82,9 @@ class ChannelBridge:
         queue_size: int,
         debug: bool,
         processing_status: bool,
+        pre_exit_drain: bool,
+        backlog_limit: int,
+        backlog_in_content: bool,
     ) -> None:
         self.client = client
         self.agent_name = agent_name
@@ -80,6 +92,9 @@ class ChannelBridge:
         self.space_id = space_id
         self.debug = debug
         self.processing_status = processing_status
+        self.pre_exit_drain = pre_exit_drain
+        self.backlog_limit = max(0, backlog_limit)
+        self.backlog_in_content = backlog_in_content
         self.loop: asyncio.AbstractEventLoop | None = None
         self.mention_queue: asyncio.Queue[MentionEvent] = asyncio.Queue(maxsize=queue_size)
         self.initialized = asyncio.Event()
@@ -89,6 +104,47 @@ class ChannelBridge:
         self._last_message_id: str | None = None
         self._reply_anchor_ids: set[str] = set()
         self._pending_mentions: list[MentionEvent] = []
+
+    def _format_delivery_content(self, event: MentionEvent) -> str:
+        if not self.backlog_in_content or self.backlog_limit <= 0 or not event.backlog:
+            return event.prompt
+        lines = [
+            "Context since your previous channel wake-up, capped and newest last:",
+        ]
+        for item in event.backlog[-self.backlog_limit :]:
+            author = str(item.get("author") or "unknown")
+            content = str(item.get("content") or "").replace("\n", " ").strip()
+            if len(content) > 240:
+                content = content[:237].rstrip() + "..."
+            lines.append(f"- @{author}: {content}")
+        lines.extend(["", "Trigger mention:", event.prompt])
+        return "\n".join(lines)
+
+    def _pending_drain_events(self, reply_to: str | None, *, limit: int) -> list[MentionEvent]:
+        if not self._pending_mentions:
+            return []
+        if reply_to:
+            ids = [event.message_id for event in self._pending_mentions]
+            if reply_to in ids:
+                pending = self._pending_mentions[ids.index(reply_to) + 1 :]
+            else:
+                pending = [event for event in self._pending_mentions if event.message_id != reply_to]
+        else:
+            pending = list(self._pending_mentions)
+        return pending[: max(1, limit)]
+
+    @staticmethod
+    def _serialize_pending(events: list[MentionEvent]) -> list[dict[str, Any]]:
+        return [
+            {
+                "message_id": event.message_id,
+                "author": event.author,
+                "content": event.prompt,
+                "parent_id": event.parent_id,
+                "ts": event.created_at,
+            }
+            for event in events
+        ]
 
     def log(self, message: str) -> None:
         if not self.debug:
@@ -181,10 +237,13 @@ class ChannelBridge:
                     meta["parent_id"] = event.parent_id
                 if event.attachments:
                     meta["attachments"] = event.attachments
+                if event.backlog:
+                    meta["backlog"] = event.backlog[-self.backlog_limit :] if self.backlog_limit > 0 else []
+                    meta["backlog_count"] = len(event.backlog)
                 await self.send_notification(
                     "notifications/claude/channel",
                     {
-                        "content": event.prompt,
+                        "content": self._format_delivery_content(event),
                         "meta": meta,
                     },
                 )
@@ -225,6 +284,16 @@ class ChannelBridge:
                                 "reply_to": {
                                     "type": "string",
                                     "description": "aX message_id to reply to. Defaults to the latest inbound message.",
+                                },
+                                "force": {
+                                    "type": "boolean",
+                                    "description": (
+                                        "Send even when pre-exit drain finds newer pending channel messages."
+                                    ),
+                                },
+                                "drain_limit": {
+                                    "type": "number",
+                                    "description": "Maximum pending messages to return when pre-exit drain pauses.",
                                 },
                             },
                             "required": ["text"],
@@ -267,16 +336,7 @@ class ChannelBridge:
             text = "No pending messages."
         else:
             text = json.dumps(
-                [
-                    {
-                        "message_id": event.message_id,
-                        "author": event.author,
-                        "content": event.prompt,
-                        "parent_id": event.parent_id,
-                        "ts": event.created_at,
-                    }
-                    for event in pending
-                ],
+                self._serialize_pending(pending),
                 indent=2,
             )
         await self.send_response(request_id, {"content": [{"type": "text", "text": text}]})
@@ -293,6 +353,11 @@ class ChannelBridge:
 
         text = str(arguments.get("text") or "").strip()
         reply_to = arguments.get("reply_to") or self._last_message_id
+        force = bool(arguments.get("force"))
+        try:
+            drain_limit = max(1, int(arguments.get("drain_limit") or 10))
+        except (TypeError, ValueError):
+            drain_limit = 10
         if not text:
             await self.send_error(request_id, -32602, "reply.text is required")
             return
@@ -333,6 +398,27 @@ class ChannelBridge:
             )
             return
 
+        drain_events = self._pending_drain_events(str(reply_to) if reply_to else None, limit=drain_limit)
+        if self.pre_exit_drain and drain_events and not force:
+            await self.send_response(
+                request_id,
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "reply paused: newer pending aX messages arrived before final send. "
+                                "Review these first, then call reply again with force=true if this response is still correct.\n"
+                                + json.dumps(self._serialize_pending(drain_events), indent=2)
+                            ),
+                        }
+                    ],
+                    "isError": True,
+                    "pending_messages": self._serialize_pending(drain_events),
+                },
+            )
+            return
+
         try:
 
             def _send_as_agent():
@@ -343,6 +429,10 @@ class ChannelBridge:
             message = data.get("message", data)
             sent_id = message.get("id") or data.get("id")
             _remember_reply_anchor(self._reply_anchor_ids, sent_id)
+            if reply_to:
+                self._pending_mentions = [
+                    event for event in self._pending_mentions if event.message_id != str(reply_to)
+                ]
             await self.publish_processing_status(reply_to, "completed")
             await self.send_response(
                 request_id,
@@ -463,8 +553,33 @@ _RUNTIME_PROGRESS_RE = re.compile(
 _LEADING_MENTION_RE = re.compile(r"^@[\w-]+\s*[-\u2014]?\s*")
 
 
+def _compact_backlog_event(data: dict[str, Any]) -> dict[str, Any]:
+    author, _ = _message_sender_identity(data)
+    content = str(data.get("content") or "").replace("\n", " ").strip()
+    if len(content) > 280:
+        content = content[:277].rstrip() + "..."
+    return {
+        "message_id": data.get("id") or "",
+        "author": author or "unknown",
+        "content": content,
+        "parent_id": data.get("parent_id"),
+        "conversation_id": data.get("conversation_id"),
+        "created_at": data.get("created_at") or data.get("timestamp"),
+    }
+
+
+def _append_recent_event(recent_events: list[dict[str, Any]], data: dict[str, Any]) -> None:
+    item = _compact_backlog_event(data)
+    if not item.get("message_id") or not item.get("content"):
+        return
+    recent_events.append(item)
+    if len(recent_events) > BACKLOG_BUFFER_MAX:
+        del recent_events[: len(recent_events) - BACKLOG_BUFFER_MAX]
+
+
 def _sse_loop(bridge: ChannelBridge) -> None:
     seen_ids: set[str] = set()
+    recent_events: list[dict[str, Any]] = []
     backoff = 1
     bridge.log(f"listening for @{bridge.agent_name} in {bridge.space_id}")
 
@@ -560,6 +675,7 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                         bridge.agent_id,
                         reply_anchor_ids=bridge._reply_anchor_ids,
                     ):
+                        _append_recent_event(recent_events, data)
                         bridge.log(f"  -> skip: not for @{bridge.agent_name}")
                         if reconnect_after_event:
                             bridge.log("SSE reconnecting to refresh JWT")
@@ -578,6 +694,7 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                     if len(seen_ids) > SEEN_MAX:
                         seen_ids = set(list(seen_ids)[-SEEN_MAX // 2 :])
                     _remember_reply_anchor(bridge._reply_anchor_ids, message_id)
+                    backlog = recent_events[-bridge.backlog_limit :] if bridge.backlog_limit > 0 else []
 
                     author_raw = data.get("author")
                     if isinstance(author_raw, dict):
@@ -629,8 +746,10 @@ def _sse_loop(bridge: ChannelBridge) -> None:
                             created_at=data.get("created_at"),
                             space_id=bridge.space_id,
                             attachments=attachments,
+                            backlog=backlog,
                         )
                     )
+                    _append_recent_event(recent_events, data)
                     if reconnect_after_event:
                         bridge.log("SSE reconnecting to refresh JWT")
                         break
@@ -649,6 +768,21 @@ def channel(
     agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Agent name to listen as (default: from config)"),
     space_id: Optional[str] = typer.Option(None, "--space-id", "-s", help="Space to bridge (default: from config)"),
     queue_size: int = typer.Option(50, "--queue-size", help="Max queued mentions before dropping"),
+    backlog_limit: int = typer.Option(
+        20,
+        "--backlog-limit",
+        help="Max recent non-matching messages to attach to a wake mention (0 disables backlog packets).",
+    ),
+    backlog_in_content: bool = typer.Option(
+        True,
+        "--backlog-in-content/--no-backlog-in-content",
+        help="Prepend the capped backlog to delivered channel content so the agent sees pre-mention context.",
+    ),
+    pre_exit_drain: bool = typer.Option(
+        True,
+        "--pre-exit-drain/--no-pre-exit-drain",
+        help="Pause reply if newer pending mentions arrived before final send; pass reply force=true to override.",
+    ),
     debug: bool = typer.Option(False, "--debug", help="Log bridge activity to stderr"),
     processing_status: bool = typer.Option(
         True,
@@ -678,6 +812,9 @@ def channel(
         queue_size=queue_size,
         debug=debug,
         processing_status=processing_status,
+        pre_exit_drain=pre_exit_drain,
+        backlog_limit=backlog_limit,
+        backlog_in_content=backlog_in_content,
     )
 
     listener = threading.Thread(target=_sse_loop, args=(bridge,), daemon=True)

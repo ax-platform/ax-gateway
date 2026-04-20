@@ -34,7 +34,16 @@ class FakeClient:
 
 
 class CaptureBridge(ChannelBridge):
-    def __init__(self, client, *, agent_id="agent-123", processing_status=True):
+    def __init__(
+        self,
+        client,
+        *,
+        agent_id="agent-123",
+        processing_status=True,
+        pre_exit_drain=True,
+        backlog_limit=20,
+        backlog_in_content=True,
+    ):
         super().__init__(
             client=client,
             agent_name="peer-agent",
@@ -43,6 +52,9 @@ class CaptureBridge(ChannelBridge):
             queue_size=10,
             debug=False,
             processing_status=processing_status,
+            pre_exit_drain=pre_exit_drain,
+            backlog_limit=backlog_limit,
+            backlog_in_content=backlog_in_content,
         )
         self.writes = []
 
@@ -132,6 +144,89 @@ def test_channel_sends_with_agent_bound_pat():
     result = bridge.writes[0]["result"]
     assert result["content"][0]["text"] == "sent reply to incoming-123 (msg-123)"
     assert "msg-123" in bridge._reply_anchor_ids
+
+
+def test_channel_reply_pauses_when_newer_pending_message_arrived():
+    client = FakeClient("axp_a_AgentKey.Secret")
+    bridge = CaptureBridge(client)
+    bridge._last_message_id = "incoming-2"
+    bridge._pending_mentions.extend(
+        [
+            MentionEvent(
+                message_id="incoming-1",
+                parent_id=None,
+                conversation_id=None,
+                author="alex",
+                prompt="first prompt",
+                raw_content="@peer-agent first prompt",
+                created_at="2026-04-15T23:00:00Z",
+                space_id="space-123",
+            ),
+            MentionEvent(
+                message_id="incoming-2",
+                parent_id=None,
+                conversation_id=None,
+                author="sam",
+                prompt="second prompt",
+                raw_content="@peer-agent second prompt",
+                created_at="2026-04-15T23:01:00Z",
+                space_id="space-123",
+            ),
+        ]
+    )
+
+    asyncio.run(
+        bridge.handle_tool_call(
+            1,
+            {"name": "reply", "arguments": {"text": "final answer", "reply_to": "incoming-1"}},
+        )
+    )
+
+    assert client.sent == []
+    result = bridge.writes[0]["result"]
+    assert result["isError"] is True
+    assert "reply paused" in result["content"][0]["text"]
+    assert result["pending_messages"][0]["message_id"] == "incoming-2"
+
+
+def test_channel_reply_force_skips_pre_exit_drain():
+    client = FakeClient("axp_a_AgentKey.Secret")
+    bridge = CaptureBridge(client)
+    bridge._last_message_id = "incoming-2"
+    bridge._pending_mentions.extend(
+        [
+            MentionEvent(
+                message_id="incoming-1",
+                parent_id=None,
+                conversation_id=None,
+                author="alex",
+                prompt="first prompt",
+                raw_content="@peer-agent first prompt",
+                created_at="2026-04-15T23:00:00Z",
+                space_id="space-123",
+            ),
+            MentionEvent(
+                message_id="incoming-2",
+                parent_id=None,
+                conversation_id=None,
+                author="sam",
+                prompt="second prompt",
+                raw_content="@peer-agent second prompt",
+                created_at="2026-04-15T23:01:00Z",
+                space_id="space-123",
+            ),
+        ]
+    )
+
+    asyncio.run(
+        bridge.handle_tool_call(
+            1,
+            {"name": "reply", "arguments": {"text": "final answer", "reply_to": "incoming-1", "force": True}},
+        )
+    )
+
+    assert client.sent == [{"space_id": "space-123", "content": "final answer", "parent_id": "incoming-1"}]
+    assert [event.message_id for event in bridge._pending_mentions] == ["incoming-2"]
 
 
 def test_channel_can_publish_working_status_on_delivery():
@@ -340,6 +435,42 @@ def test_channel_delivers_prompts_that_merely_start_with_progress_words(monkeypa
     assert "Working-state cleanup proposal" in delivered[0].prompt
 
 
+def test_channel_attaches_recent_backlog_to_wake_mention(monkeypatch):
+    events = [
+        (
+            "message",
+            {
+                "id": "context-1",
+                "content": "We merged the frontend polish branch.",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": [],
+            },
+        ),
+        (
+            "message",
+            {
+                "id": "wake-1",
+                "content": "@peer-agent please review the resulting UI state",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+    ]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert len(delivered) == 1
+    assert delivered[0].message_id == "wake-1"
+    assert delivered[0].backlog == [
+        {
+            "message_id": "context-1",
+            "author": "alex",
+            "content": "We merged the frontend polish branch.",
+            "parent_id": None,
+            "conversation_id": None,
+            "created_at": None,
+        }
+    ]
+
+
 def test_channel_delivers_processing_webhook_errors_prompt(monkeypatch):
     """`Processing webhook errors` is a real user prompt, not a progress marker."""
 
@@ -475,6 +606,51 @@ def test_channel_get_messages_returns_pending_mentions():
     assert "incoming-123" in result["content"][0]["text"]
     assert "please check this" in result["content"][0]["text"]
     assert bridge._pending_mentions == []
+
+
+def test_channel_notification_includes_backlog_packet():
+    async def run():
+        client = FakeClient("axp_a_AgentKey.Secret")
+        bridge = CaptureBridge(client)
+        bridge.initialized.set()
+        await bridge.mention_queue.put(
+            MentionEvent(
+                message_id="incoming-123",
+                parent_id=None,
+                conversation_id=None,
+                author="alex",
+                prompt="please check this",
+                raw_content="@peer-agent please check this",
+                created_at=None,
+                space_id="space-123",
+                backlog=[
+                    {
+                        "message_id": "context-1",
+                        "author": "sam",
+                        "content": "Earlier context",
+                        "parent_id": None,
+                        "conversation_id": None,
+                        "created_at": "2026-04-15T22:59:00Z",
+                    }
+                ],
+            )
+        )
+        task = asyncio.create_task(bridge.emit_mentions())
+        await asyncio.wait_for(bridge.mention_queue.join(), timeout=1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return bridge
+
+    bridge = asyncio.run(run())
+
+    payload = bridge.writes[0]
+    assert "Earlier context" in payload["params"]["content"]
+    assert "Trigger mention:" in payload["params"]["content"]
+    assert payload["params"]["meta"]["backlog_count"] == 1
+    assert payload["params"]["meta"]["backlog"][0]["message_id"] == "context-1"
 
 
 def test_channel_notification_metadata_matches_claude_channel_contract():
