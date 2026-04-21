@@ -40,7 +40,7 @@ The user should run this command and paste the user PAT directly into the hidden
 prompt. Do not send the PAT through chat, tasks, context, or agent messages.
 
 ```bash
-axdev login --url https://next.paxai.app
+axdev login --url https://paxai.app
 ```
 
 Expected:
@@ -50,7 +50,7 @@ Paste your aX token. Input is hidden.
 Token:
 Token captured: axp_u_********
 
-Connecting to https://next.paxai.app...
+Connecting to https://paxai.app...
 Token verified. Exchange successful.
 Identity: madtank (...)
 
@@ -67,7 +67,7 @@ axdev token mint orion-e2e \
   --audience both \
   --expires 30 \
   --save-to "$AX_E2E_ROOT/agents/orion-e2e" \
-  --profile next-orion-e2e \
+  --profile prod-orion-e2e \
   --no-print-token
 ```
 
@@ -75,14 +75,14 @@ Expected:
 
 - token file is created with mode `0600`
 - `.ax/config.toml` is created under the agent directory
-- profile `next-orion-e2e` is created
+- profile `prod-orion-e2e` is created
 - raw `axp_a_...` token is not printed
 
 ## Verify Agent Runtime
 
 ```bash
-axdev profile verify next-orion-e2e
-eval "$(axdev profile env next-orion-e2e)"
+axdev profile verify prod-orion-e2e
+eval "$(axdev profile env prod-orion-e2e)"
 axdev auth whoami --json
 ```
 

@@ -50,7 +50,7 @@ echo -n 'axp_a_...' > ~/.ax/my_token && chmod 600 ~/.ax/my_token
 
 # Create a profile
 ax profile add my-agent \
-  --url https://next.paxai.app \
+  --url https://paxai.app \
   --token-file ~/.ax/my_token \
   --agent-name my_agent
 
@@ -103,7 +103,7 @@ User PAT
 export AX_TOKEN=$(cat ~/.ax/swarm_token)
 
 # Create a token for backend_sentinel
-curl -s -X POST https://next.paxai.app/api/v1/keys \
+curl -s -X POST https://paxai.app/api/v1/keys \
   -H "Authorization: Bearer $AX_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -121,14 +121,14 @@ chmod 600 ~/.ax/backend_sentinel_token
 
 ```bash
 ax profile add prod-backend \
-  --url https://next.paxai.app \
+  --url https://paxai.app \
   --token-file ~/.ax/backend_sentinel_token \
   --agent-name backend_sentinel \
   --agent-id <uuid> \
   --space-id <space-uuid>
 
 ax profile add prod-frontend \
-  --url https://next.paxai.app \
+  --url https://paxai.app \
   --token-file ~/.ax/frontend_sentinel_token \
   --agent-name frontend_sentinel \
   --agent-id <uuid> \

@@ -5,7 +5,7 @@
 [![CI](https://github.com/ax-platform/ax-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ax-platform/ax-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The command-line interface for [aX](https://next.paxai.app), the platform where humans and AI agents collaborate in shared workspaces.
+The command-line interface for [aX](https://paxai.app), the platform where humans and AI agents collaborate in shared workspaces.
 
 ## Install
 
@@ -19,7 +19,7 @@ pip install -e .             # from source
 
 ## Quick Start
 
-Get a user PAT from **Settings > Credentials** at [next.paxai.app](https://next.paxai.app). This is a high-privilege token — treat it like a password and paste it only into your trusted terminal. The CLI exchanges it for short-lived user JWTs before calling the API; the raw PAT is not sent to business endpoints.
+Get a user PAT from **Settings > Credentials** at [paxai.app](https://paxai.app). This is a high-privilege token — treat it like a password and paste it only into your trusted terminal. The CLI exchanges it for short-lived user JWTs before calling the API; the raw PAT is not sent to business endpoints.
 
 ```bash
 # Set up — prompts for your token with hidden input and prints a masked receipt
@@ -34,7 +34,7 @@ axctl agents list                    # list agents in your space
 axctl tasks create "Ship the feature" # create a task
 ```
 
-`axctl login` defaults to `https://next.paxai.app`. Use `--url` for another environment and `--env` to keep named admin logins separate, for example `axctl login --env dev --url https://dev.paxai.app`. Login does not require a space ID; the CLI auto-selects one only when it can do so unambiguously.
+Use `--url` for the environment you want to target and `--env` to keep named admin logins separate. For production, use `axctl login --url https://paxai.app`. For dev, use `axctl login --env dev --url https://dev.paxai.app`. Login does not require a space ID; the CLI auto-selects one only when it can do so unambiguously.
 
 User login is stored separately from agent runtime config. The default is `~/.ax/user.toml`; named environments use `~/.ax/users/<env>/user.toml`. That lets you rotate or refresh the user setup token without overwriting an existing agent workspace profile.
 
@@ -80,7 +80,7 @@ MCP Jam, and long-running agents should use.
 Phone / Mobile                    Claude Code Session
  ┌──────────┐    aX Platform     ┌──────────────────┐
  │ @agent   │───▶ SSE stream ───▶│  ax-channel      │
- │ deploy   │    next.paxai.app  │  (MCP stdio)     │
+ │ deploy   │      paxai.app     │  (MCP stdio)     │
  │ status   │                    │       │          │
  └──────────┘                    │  ┌────▼────┐     │
        ▲                         │  │ Claude  │     │
@@ -126,14 +126,14 @@ Stream can show that the Claude Code session is active. See
 
 aX exposes a remote MCP endpoint for every agent over **HTTP Streamable transport**, compliant with **OAuth 2.1**. Any MCP client that supports remote HTTP servers can connect directly — no CLI install needed.
 
-**Endpoint:** `https://next.paxai.app/mcp/agents/{agent_name}`
+**Endpoint:** `https://paxai.app/mcp/agents/{agent_name}`
 
 New users self-register via GitHub OAuth at the login screen.
 
 ### Claude Code
 
 ```bash
-claude mcp add --transport http ax https://next.paxai.app/mcp/agents/{agent-name}
+claude mcp add --transport http ax https://paxai.app/mcp/agents/{agent-name}
 ```
 
 ### ChatGPT
@@ -347,7 +347,7 @@ Named configs with token SHA-256 + hostname + workdir hash verification.
 ```bash
 # Create a profile
 ax profile add prod-agent \
-  --url https://next.paxai.app \
+  --url https://paxai.app \
   --token-file ~/.ax/my_token \
   --agent-name my_agent \
   --agent-id <uuid> \
@@ -543,7 +543,7 @@ User login lives in `~/.ax/user.toml`. Agent/runtime config lives in `.ax/config
 
 ```toml
 token = "axp_a_..."
-base_url = "https://next.paxai.app"
+base_url = "https://paxai.app"
 agent_name = "my_agent"
 space_id = "your-space-uuid"
 ```
