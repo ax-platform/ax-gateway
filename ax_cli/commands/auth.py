@@ -24,7 +24,7 @@ app = typer.Typer(name="auth", help="Authentication & identity", no_args_is_help
 token_app = typer.Typer(name="token", help="Token management", no_args_is_help=True)
 app.add_typer(token_app, name="token")
 
-DEFAULT_LOGIN_BASE_URL = "https://next.paxai.app"
+DEFAULT_LOGIN_BASE_URL = "https://paxai.app"
 
 
 def _mask_token_prefix(token: str) -> str:
@@ -258,7 +258,7 @@ def init(
 
     \b
         axctl login
-        axctl login --url https://next.paxai.app
+        axctl login --url https://paxai.app
 
     The CLI will:
     1. Verify the token works (exchange it for a JWT)
@@ -508,7 +508,7 @@ def exchange(
     ),
     agent_id: str = typer.Option(None, "--agent", "-a", help="Agent ID (required for agent_access)"),
     audience: str = typer.Option("ax-api", "--audience", help="Target audience: ax-api or ax-mcp"),
-    resource: str = typer.Option(None, "--resource", help="RFC 8707 resource URI (e.g. https://next.paxai.app/mcp)"),
+    resource: str = typer.Option(None, "--resource", help="RFC 8707 resource URI (e.g. https://paxai.app/mcp)"),
     as_json: bool = JSON_OPTION,
 ):
     """Exchange PAT for a short-lived JWT (AUTH-SPEC-001 §9).

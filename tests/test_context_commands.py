@@ -14,7 +14,7 @@ def test_context_download_uses_base_url_and_auth_headers(monkeypatch, tmp_path):
     calls = {}
 
     class FakeClient:
-        base_url = "https://next.paxai.app"
+        base_url = "https://paxai.app"
 
         def get_context(self, key, *, space_id=None):
             assert key == "image.png"
@@ -68,7 +68,7 @@ def test_context_download_uses_base_url_and_auth_headers(monkeypatch, tmp_path):
     assert "Downloaded:" in result.output
     assert "[green]" not in result.output
     assert output.read_bytes() == b"png-bytes"
-    assert calls["url"] == "https://next.paxai.app/api/v1/uploads/files/image.png"
+    assert calls["url"] == "https://paxai.app/api/v1/uploads/files/image.png"
     assert calls["params"] == {"space_id": "space-1"}
     assert calls["headers"] == {
         "Authorization": "Bearer exchanged.jwt",
@@ -81,7 +81,7 @@ def test_context_load_fetches_to_preview_cache(monkeypatch, tmp_path):
     calls = {}
 
     class FakeClient:
-        base_url = "https://next.paxai.app"
+        base_url = "https://paxai.app"
 
         def get_context(self, key, *, space_id=None):
             assert key == "upload-key"
@@ -142,7 +142,7 @@ def test_context_load_fetches_to_preview_cache(monkeypatch, tmp_path):
     preview_files = list(tmp_path.glob("*/image.png"))
     assert len(preview_files) == 1
     assert preview_files[0].read_bytes() == b"png-bytes"
-    assert calls["url"] == "https://next.paxai.app/api/v1/uploads/files/image.png"
+    assert calls["url"] == "https://paxai.app/api/v1/uploads/files/image.png"
     assert calls["params"] == {"space_id": "space-1"}
     assert calls["headers"] == {"Authorization": "Bearer exchanged.jwt"}
     assert '"text_like": false' in result.output
@@ -150,7 +150,7 @@ def test_context_load_fetches_to_preview_cache(monkeypatch, tmp_path):
 
 def test_context_load_can_include_text_content(monkeypatch, tmp_path):
     class FakeClient:
-        base_url = "https://next.paxai.app"
+        base_url = "https://paxai.app"
 
         def get_context(self, key, *, space_id=None):
             return {

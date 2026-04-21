@@ -157,7 +157,7 @@ def _register_fingerprint(profile: dict) -> str | None:
 @app.command("add")
 def add(
     name: str = typer.Argument(..., help="Profile name (e.g. next-orion)"),
-    url: str = typer.Option(..., "--url", help="Base URL (e.g. https://next.paxai.app)"),
+    url: str = typer.Option(..., "--url", help="Base URL (e.g. https://paxai.app)"),
     token_file: str = typer.Option(..., "--token-file", help="Path to token file"),
     agent_name: str = typer.Option(..., "--agent-name", help="Agent name"),
     agent_id: Optional[str] = typer.Option(None, "--agent-id", help="Agent UUID"),

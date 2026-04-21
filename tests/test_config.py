@@ -24,7 +24,7 @@ def _write_active_profile(global_dir: Path, *, name: str = "next-orion") -> Path
     token_file.write_text("axp_a_agent.secret")
     (global_dir / "profiles" / ".active").write_text(f"{name}\n")
     (global_dir / "profiles" / name / "profile.toml").write_text(
-        f'base_url = "https://next.paxai.app"\n'
+        f'base_url = "https://paxai.app"\n'
         f'agent_name = "orion"\n'
         f'agent_id = "agent-orion"\n'
         f'space_id = "next-space"\n'
@@ -132,7 +132,7 @@ class TestLoadConfig:
         runtime_config = runtime_dir / "config.toml"
         runtime_config.write_text(
             f'token_file = "{token_file.name}"\n'
-            'base_url = "https://next.paxai.app"\n'
+            'base_url = "https://paxai.app"\n'
             'agent_name = "orion"\n'
             'agent_id = "agent-orion"\n'
             'space_id = "space-next"\n'
@@ -143,7 +143,7 @@ class TestLoadConfig:
         cfg = _load_config()
 
         assert cfg["token"] == "axp_a_runtime.secret"
-        assert cfg["base_url"] == "https://next.paxai.app"
+        assert cfg["base_url"] == "https://paxai.app"
         assert cfg["agent_name"] == "orion"
         assert cfg["agent_id"] == "agent-orion"
         assert cfg["space_id"] == "space-next"
@@ -156,7 +156,7 @@ class TestLoadConfig:
         _save_user_config(
             {
                 "token": "axp_u_user.secret",
-                "base_url": "https://next.paxai.app",
+                "base_url": "https://paxai.app",
                 "principal_type": "user",
             }
         )
@@ -176,7 +176,7 @@ class TestLoadConfig:
         _save_user_config(
             {
                 "token": "axp_u_user.secret",
-                "base_url": "https://next.paxai.app",
+                "base_url": "https://paxai.app",
                 "principal_type": "user",
             }
         )
@@ -184,7 +184,7 @@ class TestLoadConfig:
         local_ax.mkdir()
         (local_ax / "config.toml").write_text(
             'token = "axp_a_agent.secret"\n'
-            'base_url = "https://next.paxai.app"\n'
+            'base_url = "https://paxai.app"\n'
             'agent_name = "orion"\n'
             'agent_id = "agent-orion"\n'
         )
@@ -209,7 +209,7 @@ class TestLoadConfig:
         token_file.write_text("axp_a_agent.secret")
         (global_dir / "profiles" / ".active").write_text("next-orion\n")
         (global_dir / "profiles" / "next-orion" / "profile.toml").write_text(
-            f'base_url = "https://next.paxai.app"\n'
+            f'base_url = "https://paxai.app"\n'
             f'agent_name = "orion"\n'
             f'agent_id = "agent-orion"\n'
             f'space_id = "next-space"\n'
@@ -230,7 +230,7 @@ class TestLoadConfig:
         cfg = _load_config()
 
         assert cfg["token"] == "axp_a_agent.secret"
-        assert cfg["base_url"] == "https://next.paxai.app"
+        assert cfg["base_url"] == "https://paxai.app"
         assert cfg["agent_name"] == "orion"
         assert cfg["agent_id"] == "agent-orion"
         assert cfg["space_id"] == "next-space"
@@ -300,7 +300,7 @@ class TestAuthDoctorDiagnostics:
         _save_user_config(
             {
                 "token": "axp_u_next.secret",
-                "base_url": "https://next.paxai.app",
+                "base_url": "https://paxai.app",
                 "principal_type": "user",
                 "space_id": "next-space",
             },
@@ -313,7 +313,7 @@ class TestAuthDoctorDiagnostics:
         assert diagnostic["ok"] is True
         assert diagnostic["selected_env"] == "default"
         assert diagnostic["effective"]["auth_source"] == "user_login:default"
-        assert diagnostic["effective"]["base_url"] == "https://next.paxai.app"
+        assert diagnostic["effective"]["base_url"] == "https://paxai.app"
         assert diagnostic["effective"]["space_id"] == "next-space"
         assert diagnostic["effective"]["principal_intent"] == "user"
 
@@ -479,7 +479,7 @@ class TestResolveToken:
         _save_user_config(
             {
                 "token": "axp_u_user.secret",
-                "base_url": "https://next.paxai.app",
+                "base_url": "https://paxai.app",
                 "principal_type": "user",
             }
         )
@@ -500,7 +500,7 @@ class TestResolveToken:
         _save_user_config(
             {
                 "token": "axp_u_next.secret",
-                "base_url": "https://next.paxai.app",
+                "base_url": "https://paxai.app",
                 "principal_type": "user",
             },
             env_name="next",

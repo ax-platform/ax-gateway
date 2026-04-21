@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://next.paxai.app"
+Homepage = "https://paxai.app"
 Repository = "https://github.com/ax-platform/ax-cli"
 Documentation = "https://github.com/ax-platform/ax-cli#readme"
 

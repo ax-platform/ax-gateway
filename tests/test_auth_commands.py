@@ -33,7 +33,7 @@ def test_login_calls_user_login(monkeypatch):
             "--token",
             "axp_u_test.token",
             "--url",
-            "https://next.paxai.app",
+            "https://paxai.app",
             "--env",
             "next",
             "--agent",
@@ -46,7 +46,7 @@ def test_login_calls_user_login(monkeypatch):
     assert result.exit_code == 0
     assert called == {
         "token": "axp_u_test.token",
-        "base_url": "https://next.paxai.app",
+        "base_url": "https://paxai.app",
         "agent": "anvil",
         "space_id": "space-123",
         "env_name": "next",
@@ -75,7 +75,7 @@ def test_login_defaults_to_next_without_space_requirement(monkeypatch):
     assert result.exit_code == 0
     assert called == {
         "token": "axp_u_test.token",
-        "base_url": "https://next.paxai.app",
+        "base_url": "https://paxai.app",
         "agent": None,
         "space_id": None,
         "env_name": None,
@@ -136,7 +136,7 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
             self.token = token
 
         def get_token(self, token_class, *, scope, force_refresh):
-            assert self.base_url == "https://next.paxai.app"
+            assert self.base_url == "https://paxai.app"
             assert self.token == "axp_u_new.secret"
             assert token_class == "user_access"
             assert scope == "messages tasks context agents spaces search"
@@ -174,7 +174,7 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
     user_cfg = tomllib.loads((config_dir.parent / "_global_config" / "user.toml").read_text())
     assert user_cfg == {
         "token": "axp_u_new.secret",
-        "base_url": "https://next.paxai.app",
+        "base_url": "https://paxai.app",
         "principal_type": "user",
         "space_id": "space-current",
     }

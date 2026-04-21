@@ -16,7 +16,7 @@ client can consume:
 
 ```toml
 token_file = "/home/ax-agent/agents/orion/.ax/orion_token"
-base_url = "https://next.paxai.app"
+base_url = "https://paxai.app"
 agent_name = "orion"
 agent_id = "agent-uuid"
 space_id = "optional-default-space-uuid"

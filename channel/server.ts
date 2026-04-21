@@ -2,7 +2,7 @@
 /**
  * aX Channel for Claude Code.
  *
- * Bridges @mentions from the aX platform (next.paxai.app) into a running
+ * Bridges @mentions from the aX platform (paxai.app) into a running
  * Claude Code session via the MCP channel protocol.
  *
  * Modeled on fakechat — uses the official MCP SDK with StdioServerTransport.
@@ -84,7 +84,7 @@ function cfg(key: string, fallback: string, axKey?: string): string {
 }
 
 // --- Config: explicit env > AX_CONFIG_FILE/local .ax/config.toml > .env fallback > defaults ---
-const BASE_URL = cfg("AX_BASE_URL", "https://next.paxai.app", "base_url");
+const BASE_URL = cfg("AX_BASE_URL", "https://paxai.app", "base_url");
 const AGENT_NAME = cfg("AX_AGENT_NAME", "", "agent_name");
 const AGENT_ID = cfg("AX_AGENT_ID", "", "agent_id");
 const SPACE_ID = cfg("AX_SPACE_ID", "", "space_id");

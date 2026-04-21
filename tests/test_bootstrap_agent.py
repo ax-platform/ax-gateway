@@ -70,7 +70,7 @@ class _FakeHttp:
 
 
 class _FakeClient:
-    base_url = "https://next.paxai.app"
+    base_url = "https://paxai.app"
 
     def __init__(self, http: _FakeHttp):
         self._http = http
@@ -129,7 +129,7 @@ def user_pat(monkeypatch):
     monkeypatch.setattr(
         bootstrap_cmd, "resolve_user_token", lambda: "axp_u_test1234567890abcd.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     )
-    monkeypatch.setattr(bootstrap_cmd, "resolve_user_base_url", lambda: "https://next.paxai.app")
+    monkeypatch.setattr(bootstrap_cmd, "resolve_user_base_url", lambda: "https://paxai.app")
     monkeypatch.setattr(bootstrap_cmd, "_resolve_user_env", lambda: "default")
     monkeypatch.setattr(bootstrap_cmd, "_user_config_path", lambda: Path("/tmp/nope-not-real.toml"))
 

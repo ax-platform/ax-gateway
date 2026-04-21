@@ -54,7 +54,7 @@ function liveEnv() {
     return env;
   }
   env.AX_TOKEN_FILE = process.env.AX_TOKEN_FILE || `${homedir()}/.ax/user_token`;
-  env.AX_BASE_URL = process.env.AX_BASE_URL || 'https://next.paxai.app';
+  env.AX_BASE_URL = process.env.AX_BASE_URL || 'https://paxai.app';
   env.AX_AGENT_NAME = process.env.AX_AGENT_NAME || 'test_echo';
   env.AX_SPACE_ID = process.env.AX_SPACE_ID || '';
   return env;
@@ -74,7 +74,7 @@ const config = {
       ...process.env,
       // Use a fake token for protocol tests — SSE will fail but MCP works
       AX_TOKEN: process.env.AX_TOKEN || 'test-token-for-protocol-only',
-      AX_BASE_URL: process.env.AX_BASE_URL || 'https://next.paxai.app',
+      AX_BASE_URL: process.env.AX_BASE_URL || 'https://paxai.app',
       AX_AGENT_NAME: process.env.AX_AGENT_NAME || 'test_agent',
       AX_SPACE_ID: process.env.AX_SPACE_ID || 'test-space',
     }
