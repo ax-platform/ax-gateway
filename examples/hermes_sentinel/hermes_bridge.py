@@ -64,9 +64,22 @@ Design notes
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import uuid
 from pathlib import Path
+
+# ─── AX_GATEWAY_EVENT protocol ────────────────────────────────────────────
+# Lines prefixed with `AX_GATEWAY_EVENT ` on stdout are parsed by the Gateway
+# and forwarded as platform `agent_processing` / tool-call events so the UI
+# sees per-mention phase text while the agent is still working. Unprefixed
+# stdout lines accumulate into the final reply body.
+EVENT_PREFIX = "AX_GATEWAY_EVENT "
+
+
+def _emit_event(payload: dict) -> None:
+    print(f"{EVENT_PREFIX}{json.dumps(payload, sort_keys=True)}", flush=True)
 
 # ─── Resolve hermes-agent location ─────────────────────────────────────────
 HERMES_REPO = Path(
@@ -200,6 +213,35 @@ def main() -> int:
     # Change to workdir so relative file tool paths behave predictably.
     os.chdir(workdir)
 
+    # ─── Phase events for Gateway/UI ───────────────────────────────────────
+    # `tool_progress_callback` is an AIAgent constructor param (see
+    # hermes_agent/run_agent.py:446). It fires before each tool call with
+    # (name, args_preview, args_dict). We translate those into
+    # AX_GATEWAY_EVENT tool_start/tool_result pairs so the UI chip
+    # reflects what Hermes is actually doing.
+    def _on_tool_progress(tool_name: str, args_preview: str, args_dict=None):
+        tool_call_id = f"hermes-{uuid.uuid4()}"
+        try:
+            _emit_event({
+                "kind": "tool_start",
+                "tool_name": tool_name,
+                "tool_action": tool_name,
+                "tool_call_id": tool_call_id,
+                "status": "tool_call",
+                "arguments": args_dict if isinstance(args_dict, dict) else {},
+                "message": f"Using {tool_name}",
+            })
+            _emit_event({
+                "kind": "tool_result",
+                "tool_name": tool_name,
+                "tool_action": tool_name,
+                "tool_call_id": tool_call_id,
+                "status": "tool_complete",
+                "message": f"{tool_name} in progress",
+            })
+        except Exception:
+            pass  # never let event emission break the agent run
+
     agent = AIAgent(
         base_url=cfg["base_url"],
         api_key=cfg["api_key"],
@@ -215,20 +257,33 @@ def main() -> int:
             "web", "browser", "image_generation", "tts", "vision",
             "cronjob", "rl_training", "homeassistant",
         ],
+        tool_progress_callback=_on_tool_progress,
     )
 
+    _emit_event({"kind": "status", "status": "started", "message": "Agent planning"})
+    _emit_event({"kind": "status", "status": "thinking", "message": "Thinking"})
+
     # ─── Run a single conversation turn ────────────────────────────────────
-    result = agent.run_conversation(
-        user_message=content,
-        system_message=system_prompt,
-    )
+    try:
+        result = agent.run_conversation(
+            user_message=content,
+            system_message=system_prompt,
+        )
+    except Exception as run_err:
+        _emit_event({"kind": "status", "status": "error", "message": f"Agent error: {run_err}"[:200]})
+        print(f"Hermes bridge failed: {run_err}", file=sys.stderr)
+        return 1
 
     final_text = result.get("final_response", "").strip()
     if not final_text:
+        _emit_event({"kind": "status", "status": "error", "message": "Agent produced no output"})
         print("(agent produced no output)", file=sys.stderr)
         return 1
 
-    # ax listen captures stdout → posts to aX as the agent's reply.
+    _emit_event({"kind": "status", "status": "completed", "message": "Reply ready"})
+
+    # Gateway captures the tail of stdout (unprefixed lines) → posts to aX as
+    # the agent's reply.
     print(final_text)
     return 0
 
