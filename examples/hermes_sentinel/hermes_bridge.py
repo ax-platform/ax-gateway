@@ -232,8 +232,48 @@ def main() -> int:
     # (name, args_preview, args_dict). We translate those into
     # AX_GATEWAY_EVENT tool_start/tool_result pairs so the UI chip
     # reflects what Hermes is actually doing.
+    #
+    # `activity` is the human-readable chip text (<40 chars). Extracting
+    # a salient arg per tool makes the bubble read
+    #   "@X: $ pwd"  or  "@X: reading AGENTS.md"
+    # instead of the generic "@X is using terminal…".
+
+    def _tool_activity(tool_name: str, args: dict | None) -> str:
+        args = args if isinstance(args, dict) else {}
+        name = (tool_name or "").lower()
+        # Normalize synonyms across hermes's tool namespace
+        if name in {"terminal", "bash", "shell", "run_command"}:
+            cmd = args.get("command") or args.get("cmd") or ""
+            cmd = str(cmd).splitlines()[0].strip() if cmd else ""
+            return f"$ {cmd}"[:80] if cmd else "running shell"
+        if name in {"read_file", "read", "view"}:
+            path = args.get("path") or args.get("file") or args.get("filename") or ""
+            return f"reading {path}"[:80] if path else "reading file"
+        if name in {"write_file", "write", "create_file"}:
+            path = args.get("path") or args.get("file") or args.get("filename") or ""
+            return f"writing {path}"[:80] if path else "writing file"
+        if name in {"edit_file", "edit", "str_replace"}:
+            path = args.get("path") or args.get("file") or ""
+            return f"editing {path}"[:80] if path else "editing file"
+        if name in {"search", "grep", "find"}:
+            pattern = args.get("pattern") or args.get("query") or args.get("q") or ""
+            return f"searching {pattern}"[:80] if pattern else "searching"
+        if name in {"web_search", "search_web"}:
+            q = args.get("query") or args.get("q") or ""
+            return f"web search: {q}"[:80] if q else "web search"
+        if name in {"fetch", "http_get", "url"}:
+            url = args.get("url") or args.get("target") or ""
+            return f"fetching {url}"[:80] if url else "fetching"
+        # Generic fallback: surface the first scalar arg value
+        for k, v in args.items():
+            if isinstance(v, (str, int, float, bool)):
+                return f"{tool_name}: {str(v)}"[:80]
+        return f"using {tool_name}"[:80]
+
     def _on_tool_progress(tool_name: str, args_preview: str, args_dict=None):
         tool_call_id = f"hermes-{uuid.uuid4()}"
+        args = args_dict if isinstance(args_dict, dict) else {}
+        activity = _tool_activity(tool_name, args)
         try:
             _emit_event({
                 "kind": "tool_start",
@@ -241,8 +281,9 @@ def main() -> int:
                 "tool_action": tool_name,
                 "tool_call_id": tool_call_id,
                 "status": "tool_call",
-                "arguments": args_dict if isinstance(args_dict, dict) else {},
-                "message": f"Using {tool_name}",
+                "arguments": args,
+                "activity": activity,
+                "message": activity,
             })
             _emit_event({
                 "kind": "tool_result",
@@ -250,7 +291,8 @@ def main() -> int:
                 "tool_action": tool_name,
                 "tool_call_id": tool_call_id,
                 "status": "tool_complete",
-                "message": f"{tool_name} in progress",
+                "activity": activity,
+                "message": activity,
             })
         except Exception:
             pass  # never let event emission break the agent run
