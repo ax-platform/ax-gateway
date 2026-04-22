@@ -77,9 +77,22 @@ from pathlib import Path
 # stdout lines accumulate into the final reply body.
 EVENT_PREFIX = "AX_GATEWAY_EVENT "
 
+# Preserve the *original* stdout before we suppress hermes's internal prints.
+# AX_GATEWAY_EVENT lines and the final reply must reach Gateway, but hermes's
+# chatter ("deliberating...", tool previews, etc.) must not — otherwise the
+# Gateway captures it all as the reply body. `_real_stdout` is the escape hatch
+# for our own prints.
+_real_stdout = sys.stdout
+
 
 def _emit_event(payload: dict) -> None:
-    print(f"{EVENT_PREFIX}{json.dumps(payload, sort_keys=True)}", flush=True)
+    _real_stdout.write(f"{EVENT_PREFIX}{json.dumps(payload, sort_keys=True)}\n")
+    _real_stdout.flush()
+
+
+def _print_reply(text: str) -> None:
+    _real_stdout.write(text + "\n")
+    _real_stdout.flush()
 
 # ─── Resolve hermes-agent location ─────────────────────────────────────────
 HERMES_REPO = Path(
@@ -264,15 +277,33 @@ def main() -> int:
     _emit_event({"kind": "status", "status": "thinking", "message": "Thinking"})
 
     # ─── Run a single conversation turn ────────────────────────────────────
+    # Hermes's AIAgent prints progress chatter ("deliberating...", tool
+    # previews, "🔧 ..." etc.) to stdout even with quiet_mode=True.  If we
+    # don't suppress it, Gateway captures all of it as the reply body.
+    # Redirect sys.stdout/sys.stderr to devnull during the run; our own
+    # AX_GATEWAY_EVENT emissions write to `_real_stdout` directly and
+    # still reach Gateway.
+    saved_stdout = sys.stdout
+    saved_stderr = sys.stderr
+    devnull = open(os.devnull, "w")
+    sys.stdout = devnull
+    sys.stderr = devnull
     try:
-        result = agent.run_conversation(
-            user_message=content,
-            system_message=system_prompt,
-        )
-    except Exception as run_err:
-        _emit_event({"kind": "status", "status": "error", "message": f"Agent error: {run_err}"[:200]})
-        print(f"Hermes bridge failed: {run_err}", file=sys.stderr)
-        return 1
+        try:
+            result = agent.run_conversation(
+                user_message=content,
+                system_message=system_prompt,
+            )
+        except Exception as run_err:
+            sys.stdout = saved_stdout
+            sys.stderr = saved_stderr
+            _emit_event({"kind": "status", "status": "error", "message": f"Agent error: {run_err}"[:200]})
+            print(f"Hermes bridge failed: {run_err}", file=saved_stderr)
+            return 1
+    finally:
+        sys.stdout = saved_stdout
+        sys.stderr = saved_stderr
+        devnull.close()
 
     final_text = result.get("final_response", "").strip()
     if not final_text:
@@ -282,9 +313,8 @@ def main() -> int:
 
     _emit_event({"kind": "status", "status": "completed", "message": "Reply ready"})
 
-    # Gateway captures the tail of stdout (unprefixed lines) → posts to aX as
-    # the agent's reply.
-    print(final_text)
+    # Gateway captures unprefixed stdout lines → posts to aX as the reply.
+    _print_reply(final_text)
     return 0
 
 
