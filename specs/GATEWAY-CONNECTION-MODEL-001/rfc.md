@@ -86,6 +86,17 @@ The token model in aX today distinguishes user PATs and agent-bound PATs at exch
 
 `781f5781` is the place to land that contract. Until that task moves, phase 2 is blocked at the API.
 
+### Phase-2 dependencies on `781f5781` (data model + API contract)
+
+The phase-2 design assumes `781f5781` answers four specific questions before a single phase-2 PR ships:
+
+1. **Identity attestation contract**: how does the Gateway prove to aX that it is authorized to act as a given `agent_id`? Likely shape: signed `gateway_attestation` document referencing `gateway_id` + `agent_install_id` + a Gateway-held private key that aX has a public-key record for. Without this, "act as" is a trust-me header.
+2. **`agent_install_id` lifecycle**: who mints it, who revokes it, what does revocation look like at the wire level. Today the registry generates an `install_id` UUID locally; in phase 2 aX must be the source of truth for that ID.
+3. **Per-message authorship vs connection-level identity**: when a Gateway-managed agent posts a message, is `agent_id` resolved per-request (header-stamped, JWT scope is "Gateway") or per-connection (the JWT itself is agent-scoped, Gateway pools per-agent JWTs). Affects whether `mcp_act_as` in `ax-mcp-server` plays the same role.
+4. **Failure-mode error codes**: dedicated 4xx codes for "Gateway not authorized for this agent", "agent_install_id revoked", "attestation expired" — so the Gateway can recover gracefully (re-attest) instead of looking like a generic 401.
+
+Phase-2 effort estimate above assumes (1) and (2) come for free from `781f5781`; (3) and (4) are negotiated as that task closes.
+
 ### Effort + repo split for phase 2
 
 | Repo | Work | Effort |
@@ -139,6 +150,19 @@ Phase 3 is worth doing once phases 1-2 prove the model works at small scale (~5-
 
 2. **Expand pilot to prod sentinels** (phase 1, this sprint). Move `backend_sentinel`, `mcp_sentinel`, `frontend_sentinel`, `cli_sentinel`, `supervisor_sentinel` under Gateway management on prod. Acceptance: each survives a forced runtime kill and is auto-respawned within 30s; kill is visible in `ax gateway status`.
 
+   **Concrete migration steps** (each agent, in order):
+
+   1. Stop the existing direct-mode runtime (kill the tmux session or systemd unit owning it).
+   2. Run `ax gateway agents add <name> --type hermes_sentinel --workdir /home/ax-agent/agents/<name> --token-file /home/ax-agent/.ax/<name>_token` against the prod-bound Gateway.
+   3. Verify registry `live_pid` populates within 10s and `last_state` becomes `LIVE`.
+   4. Send a no-op probe (`@<name> ping` from a registered sender) and assert reply lands within the runtime's normal latency window (Hermes: ~5-30s for a real prompt, ~1-2s for trivial replies).
+   5. Run the failure-recovery smoke (kill the runtime, watch respawn).
+   6. Mark the migration step done in `~/.ax/gateway/migration_log.jsonl` (a new artifact this sprint introduces). Each entry is `{ts, agent, from_mode: "direct", to_mode: "gateway", verified: bool}`.
+
+   For agents whose workspace dir is missing entirely (`frontend_sentinel`, `supervisor_sentinel`), the bootstrap is `ax bootstrap-agent <name> --runtime hermes_sentinel --gateway-managed` first, then steps 2-6.
+
+   **Backwards compat**: `backend_sentinel` and `mcp_sentinel` are kept in their current direct-mode tmux sessions through Saturday EOD as a safety net; the Gateway-managed instances run *alongside* (different agent_install_id, same agent_id is fine because they take turns based on which one is `LIVE`). Cut the direct-mode versions only after a full weekend of green Gateway operation.
+
 3. **Move human-driven channel bridges under Gateway supervision** (phase 1 → phase 2 boundary). The `axctl channel` Python bridge becomes a Gateway-spawned subprocess with its own runtime type (`channel_bridge`), gaining the same supervision + activity emission as other runtimes. Connection and credentials stay per-agent during this step.
 
 4. **Cut over to Gateway-owned creds** (phase 2). Gated on `781f5781`. Per-agent PATs are revoked as their agents migrate; tokens previously held in `~/.ax/<agent>_*_token` files are deleted in favor of Gateway-owned equivalents.
@@ -173,6 +197,86 @@ Gateway daemon `e6ec9664-c5fd-482c-91a0-29ef93fa524f` running since 2026-04-22, 
 - `tests/test_gateway_failure_recovery.py` — pytest that kills the runtime PID mid-run and asserts (a) Gateway detects within 5s, (b) auto-respawns, (c) sender-confidence in aX flips to `error_recovering` then back to `live` within the recovery window.
 
 These tests gate phase-1 graduation. They run nightly on dev once green.
+
+#### Pytest skeleton for `test_gateway_smoke_round_trip.py`
+
+```python
+# tests/test_gateway_smoke_round_trip.py
+"""Phase-1 graduation gate: prove Gateway round-trips an echo probe against dev.
+
+Skipped unless AX_GATEWAY_SMOKE=1 in env (this is an integration test that
+requires dev.paxai.app reachability and a valid madtank/operator user PAT).
+"""
+import json
+import os
+import subprocess
+import time
+import uuid
+from pathlib import Path
+
+import httpx
+import pytest
+
+DEV_BASE = "https://dev.paxai.app"
+DEV_SPACE = os.environ.get("AX_GATEWAY_SMOKE_SPACE", "12d6eafd-0316-4f3e-be33-fd8a3fd90f67")
+PROBE_TIMEOUT_S = 5.0
+GATEWAY_DIR = Path.home() / ".ax/gateway"
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("AX_GATEWAY_SMOKE") != "1",
+    reason="set AX_GATEWAY_SMOKE=1 to run the live Gateway smoke",
+)
+
+@pytest.fixture
+def jwt():
+    pat = (Path.home() / ".ax/gateway/session.json")
+    token = json.loads(pat.read_text())["token"]
+    resp = httpx.post(
+        f"{DEV_BASE}/auth/exchange",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "requested_token_class": "user_access",
+            "audience": "ax-api",
+            "scope": "messages tasks context agents spaces",
+        },
+        timeout=10.0,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+def test_echo_round_trip(jwt):
+    """Send @echo_bot probe, expect reply within PROBE_TIMEOUT_S."""
+    nonce = uuid.uuid4().hex[:8]
+    content = f"@echo_bot smoke probe {nonce}"
+    sent = httpx.post(
+        f"{DEV_BASE}/api/v1/messages",
+        headers={"Authorization": f"Bearer {jwt}"},
+        json={"content": content, "space_id": DEV_SPACE, "channel": "main", "message_type": "text"},
+        timeout=10.0,
+    ).json()["message"]
+
+    deadline = time.monotonic() + PROBE_TIMEOUT_S
+    while time.monotonic() < deadline:
+        msgs = httpx.get(
+            f"{DEV_BASE}/api/v1/messages",
+            headers={"Authorization": f"Bearer {jwt}"},
+            params={"space_id": DEV_SPACE, "limit": 5},
+            timeout=10.0,
+        ).json().get("messages", [])
+        for m in msgs:
+            if m.get("display_name") == "echo_bot" and nonce in (m.get("content") or ""):
+                # Round-trip success.
+                # Confirm activity log captured at least one event for the run.
+                activity = (GATEWAY_DIR / "activity.jsonl").read_text().splitlines()
+                recent = [json.loads(line) for line in activity[-50:]]
+                assert any(e.get("agent_name") == "echo_bot" for e in recent), \
+                    "no echo_bot activity captured in activity.jsonl"
+                return
+        time.sleep(0.5)
+    pytest.fail(f"no echo reply for nonce={nonce} within {PROBE_TIMEOUT_S}s")
+```
+
+The recovery test (`test_gateway_failure_recovery.py`) follows the same shape: send probe, kill the runtime PID via `os.kill(pid, signal.SIGTERM)` while the run is in flight, assert respawn within 5s by reading `~/.ax/gateway/registry.json` for a new `live_pid`, then re-send a probe and assert recovery.
 
 ## Open questions
 
