@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.6.0](https://github.com/ax-platform/ax-cli/compare/v0.5.0...v0.6.0) (2026-04-23)
+
+
+### Features
+
+* **cli:** bootstrap agents with scoped setup flow ([#79](https://github.com/ax-platform/ax-cli/issues/79)) ([7f83ec6](https://github.com/ax-platform/ax-cli/commit/7f83ec6bcf962192da870bd10b840595b7d0b684))
+* **examples/hermes:** emit AX_GATEWAY_EVENT phase events for tool calls ([5eacade](https://github.com/ax-platform/ax-cli/commit/5eacade98e6d78bf295ed4236b8a03fdf5708d54))
+* **examples/hermes:** extract salient tool args into activity text ([32a90fb](https://github.com/ax-platform/ax-cli/commit/32a90fb8eaab39e1e831bd62404f94d6fed51c01))
+* **gateway:** add local control plane mvp ([3223e05](https://github.com/ax-platform/ax-cli/commit/3223e050a1123e2362c0c570667cb7715c4fd092))
+* **gateway:** preserve hermes sentinel runtime ([db088f3](https://github.com/ax-platform/ax-cli/commit/db088f3c68f915b2fac38e12762ff94a676cac68))
+
+
+### Bug Fixes
+
+* **channel:** deliver hermes streamed final replies, drop progress chunks ([542c040](https://github.com/ax-platform/ax-cli/commit/542c040ab3ddc65f17a66d50182eccb2c255dda7))
+* **channel:** filter hermes progress messages, deliver streamed final updates ([1cf5a44](https://github.com/ax-platform/ax-cli/commit/1cf5a44d2f8bef11e30f4982fce55018009c670b))
+* **channel:** materialize shared objects for agents ([b9c133c](https://github.com/ax-platform/ax-cli/commit/b9c133cea5fb6a71db16d3899b9991520c42a1bd))
+* **context:** reject app shells for binary downloads ([783a705](https://github.com/ax-platform/ax-cli/commit/783a70588a631ba8e9246136eccac4276b17ded4))
+* **context:** reject app shells for binary downloads ([5fb1850](https://github.com/ax-platform/ax-cli/commit/5fb18504c1db76873f5980311ff3f39a526c0b5e))
+* **examples/hermes:** redirect hermes stdout/stderr during run so terminal chatter doesn't leak into reply ([a7609f1](https://github.com/ax-platform/ax-cli/commit/a7609f10d0551577af1aeb840d47eefba74eb2e6))
+* **gateway:** enforce agent-bound runtime tokens ([a5bf1e2](https://github.com/ax-platform/ax-cli/commit/a5bf1e2fb5d6855a4e683e634d7fd960a1284ad3))
+
+
+### Documentation
+
+* **channel:** clarify runtime compatibility ([#62](https://github.com/ax-platform/ax-cli/issues/62)) ([b2e5388](https://github.com/ax-platform/ax-cli/commit/b2e53883b9eca35ade88b25acf969f53faa64269))
+* **claude-md:** add current-state header, align on main/paxai.app ([5d7d2be](https://github.com/ax-platform/ax-cli/commit/5d7d2bea07babf31aadc2ff33439e00a83d4ed84))
+* **claude-md:** add current-state header, align on main/paxai.app ([6da78d0](https://github.com/ax-platform/ax-cli/commit/6da78d0a2bd8106a2ea2be24998c11b2eba3da5c))
+* make ax-cli skill shareable ([#78](https://github.com/ax-platform/ax-cli/issues/78)) ([f2de1cb](https://github.com/ax-platform/ax-cli/commit/f2de1cbf8d4bed7996f140d4cc60b7c20897095c))
+* point user guides at paxai.app ([#82](https://github.com/ax-platform/ax-cli/issues/82)) ([365a433](https://github.com/ax-platform/ax-cli/commit/365a433844e1998f6dac20d319cde99da9d06875))
+
 ## [0.5.0](https://github.com/ax-platform/ax-cli/compare/v0.4.0...v0.5.0) (2026-04-17)
 
 
