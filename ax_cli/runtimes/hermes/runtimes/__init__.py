@@ -1,3 +1,4 @@
+# Vendored from ax-agents on 2026-04-25 — see ax_cli/runtimes/hermes/README.md
 """Agent runtime plugins.
 
 Each runtime implements BaseRuntime and provides a way to execute agent work.
@@ -33,6 +34,7 @@ class RuntimeResult:
     """Result from a runtime execution."""
     text: str
     session_id: str | None = None
+    history: list[dict] | None = None
     tool_count: int = 0
     files_written: list[str] = field(default_factory=list)
     exit_reason: str = "done"  # done | crashed | timeout

@@ -54,6 +54,7 @@ addopts = ["-p", "no:pytest_postgresql"]
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+extend-exclude = ["ax_cli/runtimes/hermes"]  # Vendored runtime — see ax_cli/runtimes/hermes/README.md
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
