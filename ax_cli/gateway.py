@@ -3422,16 +3422,27 @@ class ManagedAgentRuntime:
                 f"\n[{_now_iso()}] Gateway starting Hermes sentinel: {' '.join(shlex.quote(part) for part in cmd)}\n"
             )
             log_handle.flush()
+            # Capture stdout via pipe so we can parse AX_GATEWAY_EVENT lines
+            # and forward them to the activity stream. Non-event lines tee
+            # back to the log file so operator visibility is preserved.
             process = subprocess.Popen(
                 cmd,
-                stdout=log_handle,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
                 cwd=str(workdir),
                 env=env,
                 start_new_session=True,
             )
-            log_handle.close()
+            self._sentinel_log_handle = log_handle
+            self._sentinel_stdout_thread = threading.Thread(
+                target=self._consume_sentinel_stdout,
+                args=(process, log_handle),
+                daemon=True,
+                name=f"gw-hermes-stdout-{self.name}",
+            )
+            self._sentinel_stdout_thread.start()
         except Exception as exc:
             error = f"Failed to start Hermes sentinel: {str(exc)[:360]}"
             self._update_state(
@@ -3467,6 +3478,61 @@ class ManagedAgentRuntime:
         )
         self._supervised_thread.start()
         self._log(f"started hermes_sentinel pid={process.pid}")
+
+    def _consume_sentinel_stdout(self, process: subprocess.Popen, log_handle) -> None:
+        """Read sentinel stdout line-by-line, parse AX_GATEWAY_EVENT lines and
+        forward them to the activity stream. All other lines tee to the
+        existing log file unchanged so operator visibility stays the same.
+        """
+        try:
+            stdout = process.stdout
+            if stdout is None:
+                return
+            for raw in stdout:
+                # Always tee to log file first so operator can `tail -f`.
+                try:
+                    log_handle.write(raw)
+                    log_handle.flush()
+                except Exception:
+                    pass
+                event = _parse_gateway_exec_event(raw)
+                if event is None:
+                    continue
+                kind = str(event.get("kind") or "").strip().lower()
+                if kind != "status":
+                    continue
+                message_id = str(event.get("message_id") or "").strip()
+                if not message_id:
+                    continue
+                status = str(event.get("status") or "processing").strip()
+                activity = str(event.get("activity") or event.get("message") or "").strip() or None
+                tool_name = str(event.get("tool_name") or event.get("tool") or "").strip() or None
+                # Mirror the runtime worker's update + publish path so the row
+                # status pill and the aX UI bubble both reflect what the
+                # sentinel is currently doing.
+                updates: dict[str, Any] = {"current_status": status}
+                if activity is not None:
+                    updates["current_activity"] = activity[:240]
+                if tool_name is not None:
+                    updates["current_tool"] = tool_name[:120]
+                if status == "completed":
+                    updates["current_status"] = None
+                    updates["current_activity"] = None
+                    updates["current_tool"] = None
+                self._update_state(**updates)
+                self._publish_processing_status(
+                    message_id,
+                    status,
+                    activity=activity,
+                    tool_name=tool_name,
+                )
+        except Exception as exc:
+            self._log(f"sentinel stdout consumer error: {exc}")
+        finally:
+            try:
+                log_handle.close()
+            except Exception:
+                pass
 
     def _monitor_hermes_sentinel_process(self) -> None:
         process = self._supervised_process

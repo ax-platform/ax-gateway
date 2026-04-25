@@ -326,7 +326,41 @@ class AxAPI:
         *,
         tool_name: str | None = None,
     ):
-        """Fire an agent_processing event so the frontend shows a status indicator."""
+        """Fire an agent_processing event so the frontend shows a status indicator.
+
+        Two delivery paths so managed-gateway agents don't lose visibility:
+
+        1. **stdout AX_GATEWAY_EVENT** — always emitted. The local gateway's
+           ManagedAgentRuntime parses these lines and forwards via the public
+           `/api/v1/agents/processing-status` endpoint using the agent's JWT.
+           This is the path that works for `pip install ax-cli` users without
+           any shared dispatch secret.
+        2. **direct POST to /auth/internal/agent-status** — kept as-is for
+           the EC2 production sentinels that have INTERNAL_DISPATCH_API_KEY
+           in their env. Skipped silently when the key isn't set.
+
+        ax-cli vendoring note: this dual-emission was added downstream of
+        ax-agents on 2026-04-25 to make Hermes feel alive in the gateway's
+        Simple Gateway view (madtank: "constant activity monitor… make the
+        platform feel alive"). Should be upstreamed to ax-agents next vendor
+        sync — see ax_cli/runtimes/hermes/README.md.
+        """
+        # Path 1: stdout event — always fires.
+        try:
+            event = {
+                "kind": "status",
+                "status": status,
+                "message_id": message_id,
+                "agent_name": self.agent_name,
+                "space_id": space_id,
+            }
+            if tool_name:
+                event["tool_name"] = tool_name
+            print(f"AX_GATEWAY_EVENT {json.dumps(event, sort_keys=True)}", flush=True)
+        except Exception as e:
+            log.debug(f"stdout AX_GATEWAY_EVENT emit failed (non-fatal): {e}")
+
+        # Path 2: legacy internal POST for EC2 production sentinels.
         if not self._processing_signals_enabled or not self.internal_api_key:
             return
         try:
@@ -351,7 +385,7 @@ class AxAPI:
                 self._processing_signals_enabled = False
                 log.warning(
                     "Disabling agent_processing signals after %s from %s/auth/internal/agent-status; "
-                    "check INTERNAL_DISPATCH_API_KEY or AGENT_RUNNER_API_KEY",
+                    "check INTERNAL_DISPATCH_API_KEY or AGENT_RUNNER_API_KEY (stdout AX_GATEWAY_EVENT path still active)",
                     resp.status_code,
                     self.base_url,
                 )
