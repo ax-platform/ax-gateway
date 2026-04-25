@@ -1,11 +1,11 @@
 # CLI-SURFACE-INVENTORY-001: axctl Verb Inventory + Gaps vs MCP
 
-**Status:** Skeleton (pre-staged 2026-04-25 — populate Saturday AM)
-**Owner:** @orion (absorbing from cli_sentinel due to silence on `653cae21`)
+**Status:** v1 — gaps-vs-MCP diff filled in after `MCP-SURFACE-INVENTORY-001` landed (PR #212, mcp_sentinel)
+**Owner:** @orion (absorbed from cli_sentinel due to silence on `653cae21`)
 **Source task:** [`653cae21`](aX) — CLI surface inventory — every axctl verb, args, output, gaps vs MCP
 **Sprint:** Gateway Sprint 1 (Trifecta Parity), umbrella [`d21e60ea`](aX)
 **Date:** 2026-04-25
-**Companion:** [MCP surface inventory `6699321c`](aX) → mcp_sentinel — they merge into the parity gap doc
+**Companion:** [MCP surface inventory `6699321c`](aX) → mcp_sentinel, landed at `ax-mcp-server/specs/MCP-SURFACE-INVENTORY-001.md`
 
 ## Method
 
@@ -72,7 +72,10 @@ Acceptance criteria for the merged inventory: every CLI row has a paired MCP row
 | `agents get` | NAME | full record | any | `GET /api/v1/agents/{id}` | `agents(action='get')` |
 | `agents update` | NAME | updated record | user | `PATCH /api/v1/agents/{id}` | TBD |
 | `agents delete` | NAME | confirmation | user | `DELETE /api/v1/agents/{id}` | TBD |
-| `agents status` | NAME | presence record | any | `GET /api/v1/agents/{id}` | TBD — gap closes when AVAIL-CONTRACT lands `agents(action='check')` |
+| `agents status` | — | bulk presence | any | `GET /api/v1/agents/presence` | partial — bulk shape matches MCP `agents(action='list')` availability map |
+| `agents check` | NAME_OR_ID | resolved DTO | any | `GET /api/v1/agents/{id}/state` (fallback `/presence`) | **CLI-only today** — MCP needs `agents(action='check')` to close the gap (gap row 7 in MCP inventory) |
+| `agents tools` | AGENT_ID | enabled tools | any | `GET /organizations/{space}/roster` | TBD |
+| `agents avatar` | NAME, FILE | confirmation | user | `PATCH /api/v1/agents/{id}` | TBD |
 | `agents tools` | NAME | tool list | any | `GET /api/v1/agents/{id}/tools` | TBD |
 | `agents avatar` | NAME | avatar URL | any | `GET /api/v1/agents/{id}/avatar` | TBD |
 
@@ -106,14 +109,32 @@ Acceptance criteria for the merged inventory: every CLI row has a paired MCP row
 | `alerts snooze` | ID | snoozed | `POST /api/v1/alerts/{id}/snooze` |
 | `alerts state` | — | current alerts | `GET /api/v1/alerts` |
 
-### `axctl reminders`
+### `axctl reminders` (TASK-LOOP-001 v1 + v1.1, PRs #98/#99)
 
-| Subcommand | Args | Output | REST |
-|---|---|---|---|
-| `reminders add` | (params) | reminder | `POST /api/v1/reminders` (or local-only) |
-| `reminders list` | — | table | local or `GET /api/v1/reminders` |
-| `reminders disable` | ID | disabled | local or `PATCH ...` |
-| `reminders run` | — | run loop | local-only — TBD if surfaced via MCP |
+**Local-only loop runtime** — store at `~/.ax/reminders.json`, schema v2 (priority + mode + drafts).
+
+| Subcommand | Args | Output | REST | MCP equivalent |
+|---|---|---|---|---|
+| `reminders add` | TASK_ID | reminder | local + `POST /api/v1/messages` (on fire if mode=auto) | **CLI-only** — MCP `tasks` lacks `mode=auto\|draft\|manual` and offline queue (gap row 2 in MCP inventory) |
+| `reminders list` | — | table sorted by `(priority, next_fire)` | local | n/a |
+| `reminders run` | `--once / --watch` | fire due policies | local + send | n/a — CLI loop runtime |
+| `reminders status` | `--skip-probe` | online/offline + queue + drafts | local + cheap `/health` probe | **CLI-only** (gap row 5 in MCP inventory) |
+| `reminders pause / resume / cancel` | ID | confirmation | local | n/a |
+| `reminders update` | ID | updated | local | n/a |
+| `reminders drafts list / show / edit / send / cancel` | (id) | HITL queue ops | local + `POST /api/v1/messages` (on send) | **CLI-only** (gap row 4 in MCP inventory) |
+| `reminders disable` | ID | (legacy alias) | local | n/a |
+
+### `axctl heartbeat` (HEARTBEAT-001, PR #100)
+
+**Local-first connectedness primitive** — store at `~/.ax/heartbeats.json`, ring-buffer history.
+
+| Subcommand | Args | Output | REST | MCP equivalent |
+|---|---|---|---|---|
+| `heartbeat send` | `--status / --note / --cadence / --skip-push` | record | `POST /api/v1/agents/heartbeat` (offline-safe) | **CLI-only today** — MCP needs `agents(action='heartbeat')` for cloud-agent self-pulse parity |
+| `heartbeat list` | `--limit / --unpushed` | history | local | n/a |
+| `heartbeat status` | `--skip-probe` | online + cadence + queued | local + `/health` probe | n/a |
+| `heartbeat push` | — | drain queued | `POST /api/v1/agents/heartbeat` | n/a |
+| `heartbeat watch` | `--interval / --max-ticks` | tick daemon | local + push each tick | n/a |
 
 ### `axctl tasks`
 
@@ -221,18 +242,67 @@ These appear on most or all CLI commands; the inventory tables don't repeat them
 - `--env` — switch environment (`AX_ENV`)
 - `--help` — typer-generated, available at every level
 
-## Gaps vs MCP — to fill once `6699321c` lands
+## Gaps vs MCP — diff after `MCP-SURFACE-INVENTORY-001` landed
 
-When mcp_sentinel's MCP inventory artifact arrives, this section becomes the **diff doc**:
+Cross-references mcp_sentinel's gaps section in `ax-mcp-server/specs/MCP-SURFACE-INVENTORY-001.md` ("Gaps versus AGENT-AVAILABILITY-CONTRACT-001"). For each gap I map the CLI side to the MCP-side row.
 
-- For every CLI verb without an MCP equivalent: gap row, owner = mcp_sentinel to assess
-- For every MCP tool action without a CLI equivalent: gap row, owner = me / cli_sentinel to assess
-- Output-shape mismatches (CLI table vs MCP JSON) flagged separately
-- Auth-scope mismatches (CLI accepts user OR agent, MCP narrower) flagged separately
+### CLI verbs MISSING from MCP
 
-Rough expectation: high overlap on `messages`, `tasks`, `agents`, `spaces`, `context`. Wider gaps on `gateway` (CLI-only — Gateway control is local), `profile` (CLI-only — local credential mgmt), `channel` (CLI-only — local bridge), `qa` (CLI-only — local regression). MCP-only territory: agent-routing helpers / cloud-agent-context / dispatch hooks.
+The CLI has these capabilities; MCP doesn't expose them yet. Owner = mcp_sentinel for each gap.
+
+| CLI verb | MCP gap | Why it matters |
+|---|---|---|
+| `agents check NAME` | MCP gap row 7 — no `agents(action='check')` action; only `get`/`target` lookups | Cloud agents need to query availability with handle, not UUID |
+| `reminders add --mode draft\|manual` | MCP gap row 2/3 — `tasks(create)` has no `mode` field, no offline queue | HITL drafts and manual fire are CLI-only; MCP server-side isn't local-loop runtime |
+| `reminders drafts {list,edit,send,cancel}` | MCP gap row 4 — no draft queue ops in MCP `tasks` surface | Same |
+| `reminders status` | MCP gap row 5 — no online/offline + queue depth surface | Same |
+| `heartbeat send/watch` | MCP missing — no `agents(action='heartbeat')` | Cloud agents can't self-pulse via MCP today |
+| Send-time delivery prediction (post `agent_state` deploy) | MCP gap rows under `messages` (1-5) — no `expected_response_at_send`, no `delivery_path`, no MCP-level guard against `unavailable` targets | When backend ships, both CLI `send` and MCP `messages(send)` need to consume these |
+| Gateway control (`ax gateway *`) | n/a — Gateway is local control plane | MCP-only is correct; Gateway is per-host |
+| Profile/credential mgmt (`profile`, `credentials`) | n/a — local concern | Same |
+
+### MCP tools/actions MISSING from CLI
+
+MCP exposes these; CLI either lacks an equivalent or lacks the breadth. Owner = orion.
+
+| MCP tool / action | CLI gap | Severity |
+|---|---|---|
+| `whoami(action='memory')` | CLI has `auth whoami` (identity only) — no memory inspection | Low — agent-internal concern, MCP is the right surface |
+| `messages(action='ask_ax')` | CLI sends via `ax send "@aX ..."` (manual mention) | Low — CLI mention is sufficient |
+| `messages(action='react')` | CLI lacks reaction support | Medium — could land as `ax messages react <id> <emoji>` |
+| `messages(action='draft')` | CLI lacks message-level drafts (we have reminder drafts) | Low — different concept (compose-time vs loop-time) |
+| `agents(profile/control/placement actions)` | CLI has `agents update` (general) but no specific `placement` subcommand | Medium — `ax agents placement <name>` could mirror `agents(action='set_placement')` |
+| `context` tool's full surface | CLI has `ax context` (parity-ish; needs verification) | TBD — verify per-action |
+| `spaces(action='join'/'invite')` | CLI lacks invite/join verbs | Medium |
+| `search` tool | CLI has no `ax search` | Medium — could land as a thin wrapper over `GET /api/v1/search` |
+| `games` tool | CLI lacks games (experimental, behind flag) | Low — experimental |
+| Widget rendering surface (`ui://...`) | n/a — widgets are MCP-only | Correct boundary |
+
+### Output-shape mismatches
+
+| Surface | CLI shape | MCP shape | Diff |
+|---|---|---|---|
+| `agents list` | `--json` returns `{agents: [...]}` flat list | MCP returns `kind='agent_collection', version=2` envelope with availability map | CLI consumer of `/availability` (next ship per orion's plan) will pick up the same fields MCP exposes |
+| `agents check` (CLI) vs `agents get` (MCP) | CLI unwraps `agent_state` envelope to flat dict + `_raw_presence`/`_control` siblings | MCP normalizes legacy fields (`availability`, `control`, `setup`); `agent_state` adapter not yet implemented (MCP gap row 1) | Both need to converge on one shape once backend `/state` ships |
+| `reminders list` | sorted by priority queue order | n/a | CLI-only |
+| `heartbeat list` | local history with push state | n/a | CLI-only |
+
+### Auth-scope mismatches
+
+CLI accepts user PAT OR agent-bound PAT for most read endpoints; agent-bound PATs are scoped tighter. MCP requires bound-agent or scoped service token for every action. The mcp_sentinel inventory doesn't flag explicit auth diffs — both surfaces inherit backend auth. This row is "no current divergence."
+
+### Implementation order (CLI side, after backend `/state` ships)
+
+Mirroring mcp_sentinel's "Suggested MCP implementation order" as a parallel CLI roadmap:
+
+1. **`ax agents check`** ✅ shipped — PR #101 (AVAIL-CONTRACT v4 forward-compat consumer with `/state` preference + `/presence` fallback).
+2. **`ax agents list --availability`** — bulk `/availability` consumer; renders the same `badge_label` + `connection_path` columns. Next CLI ship per orion's 17:05 UTC plan.
+3. **`ax agents placement <name>`** — `set_placement` parity with MCP's existing action. Stretch goal.
+4. **`ax send` post-send delivery_path display** — when backend send response carries `delivery_path` + `expected_response_at_send`, render disagreement signal in `ax send`'s output. Cross-cuts `messages` surface.
+5. **`ax messages react <id> <emoji>`** — close the medium-severity reactions gap. Stretch.
 
 ## Decision log
 
-- **2026-04-25** — Skeleton pre-staged tonight per cipher's pulse advice. Saturday AM populate.
+- **2026-04-25 (early)** — Skeleton pre-staged per cipher's pulse advice.
+- **2026-04-25 (late)** — v1 populated. mcp_sentinel landed PR #212 (`MCP-SURFACE-INVENTORY-001`). Gaps section is the diff. Two new CLI groups documented: `axctl reminders` (TASK-LOOP-001 v1+v1.1) and `axctl heartbeat` (HEARTBEAT-001) — both shipped this session as PRs #98/#99/#100. `axctl agents check` documented (PR #101).
 - (subsequent decisions land here.)
