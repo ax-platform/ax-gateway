@@ -325,6 +325,10 @@ class AxAPI:
         space_id: str = "",
         *,
         tool_name: str | None = None,
+        # `activity` carries human-readable context (e.g. a tool call summary)
+        # so the aX UI bubble can show "Reading foo.py" instead of just a
+        # status token. Optional; older callers don't have to pass it.
+        activity: str | None = None,
     ):
         """Fire an agent_processing event so the frontend shows a status indicator.
 
@@ -356,6 +360,8 @@ class AxAPI:
             }
             if tool_name:
                 event["tool_name"] = tool_name
+            if activity:
+                event["activity"] = activity
             print(f"AX_GATEWAY_EVENT {json.dumps(event, sort_keys=True)}", flush=True)
         except Exception as e:
             log.debug(f"stdout AX_GATEWAY_EVENT emit failed (non-fatal): {e}")
@@ -758,6 +764,7 @@ def _run_via_runtime_plugin(
                 "tool_call",
                 space_id=space_id,
                 tool_name=tool_name,
+                activity=summary or None,
             )
 
         def on_tool_end(self, tool_name: str, summary: str):
@@ -766,6 +773,7 @@ def _run_via_runtime_plugin(
                 "processing",
                 space_id=space_id,
                 tool_name=tool_name,
+                activity=summary or None,
             )
 
         def on_status(self, status: str):
