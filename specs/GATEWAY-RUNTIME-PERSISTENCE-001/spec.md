@@ -80,7 +80,7 @@ We want Ollama (and any conversational runtime) to be **persistent**: a long-liv
 
 Same `AX_GATEWAY_EVENT` contract as today, plus:
 - `{"kind":"started","agent_name":"<name>"}` — sent once when the bridge is ready to accept work.
-- `{"kind":"heartbeat","ts":"..."}` — sent every 15s while idle.
+- `{"kind":"heartbeat","ts":"...","cadence_seconds":N}` — sent on the bridge's *declared* cadence. Default declared cadence is 15s, but the bridge may declare any cadence and the gateway's stale-detection respects whatever the bridge sends in `cadence_seconds`. This aligns with **HEARTBEAT-001** (PR #100): cadence is a per-agent declaration, not a hardcoded gateway constant. Stale threshold = `cadence_seconds × 2` (orion's HEARTBEAT-001 default tolerance).
 - `{"kind":"thread_loaded","thread_id":"...","turns":N}` — emitted before processing a message, signals to the UI "Recalling N prior turns".
 
 ## API + CLI
@@ -130,8 +130,12 @@ ax gateway agents runtime status memo-bot
 ax gateway agents remove memo-bot
 ```
 
+## Privacy decisions (locked)
+
+- **Removal.** When an agent is removed (`DELETE /api/agents/{name}`), the gateway MUST delete `~/.ax/gateway/agents/<name>/sessions.json` along with the token file. No leftover session memory on disk.
+- **Cross-space move.** When an agent is moved to a new space, **drop in-memory threads from the previous space**. The session memory for the new space starts empty. Privacy by default — we never let conversation context leak across space boundaries. If a user needs continuity, they can reissue messages in the new space and rebuild context naturally from aX history.
+
 ## Open questions
 
-- Should `live_listener` Ollama be the default for `--template ollama`, or stay opt-in via `--connection-mode live_listener`? Default-on means new users get session memory automatically; default-off means we don't pin GPU/RAM unexpectedly.
+- Should `live_listener` Ollama be the default for `--template ollama`, or stay opt-in via `--connection-mode live_listener`? Default-on means new users get session memory automatically; default-off means we don't pin GPU/RAM unexpectedly. **Recommended default: opt-in for now**; flip to opt-out once we have CPU/RAM telemetry to back the change.
 - Memory eviction policy: LRU per thread, or hard cap? For demo we use sliding window per thread; production might need cross-thread eviction.
-- When an agent is moved to a new space, do we drop in-memory threads from the old space? (Probably yes — privacy by default.)
