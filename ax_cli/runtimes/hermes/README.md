@@ -16,6 +16,7 @@ Vendored from the live ax-agents host (`/home/ax-agent/agents/` on the EC2 produ
 | `runtimes/claude_cli.py` | `runtimes/claude_cli.py` | 178 |
 | `runtimes/codex_cli.py` | `runtimes/codex_cli.py` | 155 |
 | `runtimes/openai_sdk.py` | `runtimes/openai_sdk.py` | 502 |
+| `tools/__init__.py` | `agents/tools/__init__.py` | 294 |
 
 Each file carries a `# Vendored from ax-agents on 2026-04-25 — see ax_cli/runtimes/hermes/README.md` line at the top for attribution.
 
@@ -38,6 +39,28 @@ The earlier 1153-line copy of `claude_agent_v2.py` only supported `claude/codex/
 
 The override-then-bundle order means the existing dev fleet keeps using the live host copy while fresh `pip install ax-cli` users get the bundled one transparently.
 
+### `tools/` shim — important
+
+The `_secure_hermes_tools` function in `runtimes/hermes_sdk.py` does TWO imports that resolve to **different `tools` packages on the live host**:
+
+```python
+from tools.registry import registry          # → public hermes-agent's tools/registry.py
+from tools import _check_read_path, ...      # → vendored tools/__init__.py (this dir)
+```
+
+On the EC2 production host, this works because PYTHONPATH puts `/home/ax-agent/agents` first (loads `tools/__init__.py` from there) and the public hermes-agent clone second (provides `tools.registry` via Python's namespace fall-through).
+
+**For a `pip install ax-cli` user** wanting to launch a hermes agent, the wiring needs to:
+
+1. Prepend `Path(__file__).parent` (i.e. `ax_cli/runtimes/hermes/`) to `sys.path` BEFORE the public hermes-agent clone, so `import tools` resolves to the vendored `tools/__init__.py` shim.
+2. Ensure the public hermes-agent clone is also on `sys.path` (operators set this via `HERMES_REPO_PATH` or default `~/hermes-agent`) so `tools.registry` resolves correctly.
+
+`_hermes_sentinel_script` (the launcher) is the right place to set this up, since it constructs the subprocess env. The vendored `sentinel.py` does not need to be modified — the path setup happens at launch time.
+
+### Why the shim isn't a separate import name
+
+Renaming to e.g. `from ax_cli.runtimes.hermes.security import _check_read_path` would be cleaner, BUT it would diverge the vendored `runtimes/hermes_sdk.py` from the live host's copy. That breaks the "re-vendor as a clean copy" property. Keeping `from tools import ...` means the vendored runtime is byte-identical to live (modulo the attribution header), and the import resolution is a deployment concern, not a code change.
+
 ## Lint
 
 Vendored files are excluded from `ruff` checks via `extend-exclude` in `pyproject.toml`. They follow the upstream ax-agents style (which differs from ax-cli's `select = ["E","F","W","I"]` profile). Updating the vendored files means re-vendoring from the live host — see "Re-vendoring" below.
@@ -58,6 +81,7 @@ DEST=/path/to/ax-cli/ax_cli/runtimes/hermes
 for r in __init__ hermes_sdk claude_cli codex_cli openai_sdk; do
   { echo "$HEADER"; cat "$SRC/runtimes/$r.py"; } > "$DEST/runtimes/$r.py"
 done
+{ echo "$HEADER"; cat "$SRC/tools/__init__.py"; } > "$DEST/tools/__init__.py"
 ```
 
 Then commit + PR. Update the line counts table in this README to reflect the new state.
