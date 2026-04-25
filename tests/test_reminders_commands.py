@@ -84,7 +84,8 @@ def test_add_creates_local_policy_file(monkeypatch, tmp_path):
 
     assert result.exit_code == 0, result.output
     store = _load(policy_file)
-    assert store["version"] == 1
+    assert store["version"] == 2
+    assert store["drafts"] == []
     assert len(store["policies"]) == 1
     policy = store["policies"][0]
     assert policy["source_task_id"] == "task-1"
@@ -92,6 +93,9 @@ def test_add_creates_local_policy_file(monkeypatch, tmp_path):
     assert policy["target"] == "orion"
     assert policy["max_fires"] == 2
     assert policy["enabled"] is True
+    # Defaults for new fields
+    assert policy["mode"] == "auto"
+    assert policy["priority"] == 50
 
 
 def test_run_once_fires_due_policy_and_disables_at_max(monkeypatch, tmp_path):
