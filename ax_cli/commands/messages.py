@@ -331,6 +331,110 @@ def _sender_label(message: dict) -> str | None:
     return None
 
 
+def _extract_delivery_context(data: dict | None) -> dict | None:
+    """Pull AVAIL-CONTRACT-001 ``delivery_context`` out of a send response.
+
+    Looks in three places per the spec — top-level, metadata, and nested
+    message.metadata — so the CLI doesn't care which envelope wrapping the
+    backend uses. Returns the dict or ``None`` if not present.
+    """
+    if not isinstance(data, dict):
+        return None
+    direct = data.get("delivery_context")
+    if isinstance(direct, dict):
+        return direct
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        nested = metadata.get("delivery_context")
+        if isinstance(nested, dict):
+            return nested
+    msg = data.get("message")
+    if isinstance(msg, dict):
+        msg_meta = msg.get("metadata")
+        if isinstance(msg_meta, dict):
+            inner = msg_meta.get("delivery_context")
+            if isinstance(inner, dict):
+                return inner
+    return None
+
+
+_DELIVERY_PATH_LABEL = {
+    "live_session": "delivered live",
+    "warm_wake": "warming target",
+    "inbox_queue": "queued",
+    "blocked_unroutable": "blocked (unroutable)",
+    "failed_no_route": "failed (no route)",
+}
+
+_EXPECTED_RESPONSE_LABEL = {
+    "immediate": "Immediate",
+    "warming": "Warming",
+    "dispatch_delayed": "Dispatch",
+    "queued": "Queued",
+    "unlikely": "Unlikely",
+    "unavailable": "Unavailable",
+    "unknown": "Unknown",
+}
+
+
+def _delivery_context_chip(ctx: dict) -> str | None:
+    """Format delivery_context as a one-line chip for human output.
+
+    Returns ``None`` when the context is empty / has no useful fields.
+    Renders disagreement signal when ``delivery_path`` doesn't match the
+    ``expected_response_at_send`` prediction (per the spec's "predicted
+    warming, actually live" debugging gold).
+    """
+    if not isinstance(ctx, dict):
+        return None
+    delivery_path = str(ctx.get("delivery_path") or "").strip()
+    expected = str(ctx.get("expected_response_at_send") or "").strip()
+    warning = str(ctx.get("warning") or "").strip()
+
+    if not delivery_path and not expected and not warning:
+        return None
+
+    parts: list[str] = []
+    if delivery_path:
+        label = _DELIVERY_PATH_LABEL.get(delivery_path, delivery_path)
+        parts.append(label)
+
+    # Disagreement signal: predicted X, actually Y
+    if delivery_path and expected and not _delivery_matches_expectation(delivery_path, expected):
+        expected_label = _EXPECTED_RESPONSE_LABEL.get(expected, expected)
+        parts.append(f"predicted {expected_label}, actually {_DELIVERY_PATH_LABEL.get(delivery_path, delivery_path)}")
+    elif expected and not delivery_path:
+        # No actual path yet (offline send?), show the prediction alone
+        parts.append(_EXPECTED_RESPONSE_LABEL.get(expected, expected))
+
+    if warning:
+        parts.append(f"warning: {warning}")
+
+    return " · ".join(parts) if parts else None
+
+
+def _delivery_matches_expectation(delivery_path: str, expected: str) -> bool:
+    """Whether the actual delivery_path agrees with expected_response_at_send.
+
+    Mapping per AVAIL-CONTRACT-001 §"Pre-send / Post-send UX":
+    - immediate ↔ live_session
+    - warming ↔ warm_wake
+    - dispatch_delayed ↔ warm_wake (cloud-agent dispatch is also a "warm wake" path)
+    - queued ↔ inbox_queue
+    - unlikely / unavailable ↔ blocked_unroutable / failed_no_route
+    """
+    pairs = {
+        "immediate": {"live_session"},
+        "warming": {"warm_wake"},
+        "dispatch_delayed": {"warm_wake"},
+        "queued": {"inbox_queue"},
+        "unlikely": {"blocked_unroutable", "failed_no_route", "live_session"},
+        "unavailable": {"blocked_unroutable", "failed_no_route"},
+        "unknown": {"live_session", "warm_wake", "inbox_queue", "blocked_unroutable", "failed_no_route"},
+    }
+    return delivery_path in pairs.get(expected, set())
+
+
 def _gateway_reply_note(message: dict) -> str | None:
     metadata = message.get("metadata")
     if not isinstance(metadata, dict) or metadata.get("control_plane") != "gateway":
@@ -608,6 +712,8 @@ def send(
     if processing_watcher and msg_id:
         processing_watcher.set_message_id(str(msg_id))
 
+    delivery_chip = _delivery_context_chip(_extract_delivery_context(data) or {})
+
     if not wait or not msg_id:
         if processing_watcher:
             processing_watcher.close()
@@ -619,6 +725,8 @@ def send(
             if sender:
                 sent_line += f" as {sender}"
             console.print(sent_line)
+            if delivery_chip:
+                console.print(f"[dim]{delivery_chip}[/dim]")
         return
 
     sent_line = f"[green]Sent.[/green] id={msg_id}"
@@ -626,6 +734,8 @@ def send(
     if sender:
         sent_line += f" as {sender}"
     console.print(sent_line)
+    if delivery_chip:
+        console.print(f"[dim]{delivery_chip}[/dim]")
     wait_label = _target_mention("aX") if ask_ax else (_target_mention(to) if to else "reply")
     reply = _wait_for_reply(
         client,
