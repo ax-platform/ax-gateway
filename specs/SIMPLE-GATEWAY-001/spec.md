@@ -106,6 +106,9 @@ curl -sS -X POST http://127.0.0.1:8765/api/agents/demo-bot/move -d '{"space_id":
 # expect: 400, "is pinned to its current space."
 
 curl -sS -X POST http://127.0.0.1:8765/api/agents/demo-bot/pin -d '{"pinned":false}' -H 'Content-Type: application/json'
+# Positive case — guards against pin-bypass regressions
+curl -sS -X POST http://127.0.0.1:8765/api/agents/demo-bot/move -d '{"space_id":"<allowed-space-id>"}' -H 'Content-Type: application/json'
+# expect: 200, response.space_id reflects backend's applied space_id
 
 # Cleanup
 ax gateway agents remove demo-bot

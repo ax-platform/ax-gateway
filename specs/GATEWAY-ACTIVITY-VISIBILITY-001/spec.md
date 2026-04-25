@@ -109,6 +109,8 @@ Currently the aX UI shows the "waiting" chip only on user-authored DMs. Agent-au
 
 Owner: aX UI team. Spec'd here so the gateway side commits to emitting the same events for both cases — which it already does — and so the UI ticket has a clear acceptance check.
 
+> **TODO**: cross-link the ax-frontend ticket once filed. Until then, this section IS the ticket spec — copy it verbatim into the issue body.
+
 ## Open questions
 
 - Should the gateway also emit a `started` event distinct from `thinking` so the bubble can show "received → thinking" as two micro-states? Or is "thinking" enough?

@@ -72,6 +72,7 @@ The install endpoint executes `git clone` and `pip install`. That is code execut
    - `hermes` → `https://github.com/NousResearch/hermes-agent`
    No other URLs are clone-able through this endpoint. Future runtimes require a code change to extend the allowlist (PR-reviewable).
 3. **User-writable target only.** Targets must be under `Path.home()` or under an explicit `--target` argument that is also under home. Never `/usr/local`, never `/opt`, never `sys.prefix`. The endpoint refuses any path outside the user's home tree.
+   - **Symlink trap closed.** Resolve via `Path(target).resolve()` (follows symlinks) BEFORE the home-tree check, so `~/hermes-agent → /usr/local/...` does not slip through. Test: `ln -s /tmp/escape ~/hermes-agent && curl install` must fail with 400.
 4. **No system-Python install.** `pip install` runs with `--user` flag, OR within a venv we create at `~/hermes-agent/.venv` (preferred). The system Python interpreter is never modified.
 5. **Network failure is graceful.** Timeouts, permission failures, and network errors return structured errors — they never leave a half-extracted directory on disk. Cleanup on failure is part of the contract.
 6. **No arbitrary command execution.** The endpoint takes a template id and zero other parameters that affect what runs. Anything else is a config option of the recipe (e.g. `--target` to override the target dir within the home-tree constraint).
@@ -96,6 +97,15 @@ POST /api/templates/{id}/install          # NEW: streams progress (text/event-st
 ]
 ```
 
+**SSE progress event shape** for the `POST .../install` stream:
+```
+data: {"phase":"clone","percent":42,"message":"Receiving objects: 42% (210/500)"}
+data: {"phase":"pip","line":"Installing collected packages: hermes-agent"}
+data: {"phase":"verify","ready":true}
+data: {"phase":"done","ready":true,"resolved_path":"/Users/.../hermes-agent"}
+```
+One JSON object per `data:` line, terminated with the SSE `\n\n`. Phases: `clone | pip | verify | done | error`. The terminal event is always `done` or `error`. Clients close the stream on either.
+
 ## Acceptance smokes (CLI-driven)
 
 ```bash
@@ -114,8 +124,11 @@ curl -sS http://127.0.0.1:8765/api/agents/demo-hermes | jq '.agent.last_error'
 ax gateway agents remove demo-hermes
 ```
 
+## Decisions
+
+- **Install requires explicit user click.** Picking a runtime in the wizard does NOT auto-trigger install. The "Install <runtime>" button is the only path. Reason: a network operation that may pull hundreds of MB requires explicit consent; auto-install on selection is a UX trap. (Locked — do not flip.)
+- **Allowlist eligibility:** public Apache/MIT/BSD repos are candidates. Anything requiring credentials (private GitHub, paid registries) stays out of the install endpoint and uses env-var/manual setup.
+
 ## Open questions
 
-- Should `runtime install` happen automatically the first time someone picks a runtime in the wizard, or always require the explicit Install button click? Default: explicit (user consent for network operations).
-- Where do we draw the line for what gateway will install? Public Apache/MIT repos = yes. Anything requiring credentials = no (those stay env-var setup).
-- For air-gapped environments: a `--local <path>` flag on `runtime install` to register an existing local checkout without clone.
+- For air-gapped environments: a `--local <path>` flag on `runtime install` to register an existing local checkout without clone. Spec'd but not yet implemented.
