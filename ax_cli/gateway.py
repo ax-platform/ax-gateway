@@ -3001,7 +3001,15 @@ def _build_hermes_sentinel_env(entry: dict[str, Any]) -> dict[str, str]:
     env.setdefault("AGENT_RUNNER_API_KEY", "staging-dispatch-key")
     env.setdefault("INTERNAL_DISPATCH_API_KEY", env["AGENT_RUNNER_API_KEY"])
 
-    python_paths = [str(agents_dir), hermes_repo, repo_root]
+    # PYTHONPATH order matters — see ax_cli/runtimes/hermes/README.md.
+    # The vendored ax_cli/runtimes/hermes/ directory MUST come before the
+    # public NousResearch/hermes-agent clone so `from tools import
+    # _check_read_path` resolves to our security shim, while
+    # `from tools.registry import registry` falls through to the public
+    # hermes-agent. Operator override: `agents_dir/tools/__init__.py` on
+    # the EC2 host preserves the live-fleet workflow when present.
+    vendored_hermes_dir = Path(__file__).resolve().parent / "runtimes" / "hermes"
+    python_paths = [str(vendored_hermes_dir), str(agents_dir), hermes_repo, repo_root]
     existing_pythonpath = env.get("PYTHONPATH")
     if existing_pythonpath:
         python_paths.append(existing_pythonpath)
