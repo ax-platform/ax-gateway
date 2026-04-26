@@ -38,23 +38,33 @@ The pitch is layered: **offline first, online when you want it.** Every tier is 
 
 ### T0 — Offline (no auth, no network)
 
+**Scope is intentionally narrow** (madtank 2026-04-26): T0 is **messages only**.
+Online mode (T1+) is what we promote as the suite. T0 is the low-friction
+on-ramp — no signup, just "your local agents can talk to each other through
+me." People who want more grow into online.
+
 **What works:**
 - Run `ax gateway start` with zero config. Gateway daemon boots, simple-gateway UI at `127.0.0.1:8765` opens in offline mode.
-- Add local agents (echo, ollama, hermes, custom) — gateway routes between them locally.
-- Pass-through agents (GATEWAY-LOCAL-CONNECT-001) connect via fingerprint approval, talk to each other through gateway.
-- Agents call each other via local-only `ax` CLI: `ax send --space local "@bigsky echo"`. Gateway routes to bigsky's mailbox, bigsky replies, sender sees the reply. No aX backend round-trip.
-- All activity flows through the simple-gateway drawer's activity feed — same UX as online mode, just no remote SSE.
+- Add local agents (echo, ollama, hermes, custom) — gateway routes messages between them locally.
+- Pass-through agents (GATEWAY-LOCAL-CONNECT-001) connect via fingerprint approval, exchange messages through the local gateway.
+- Agents send/receive via local-only `ax` CLI: `ax send --local "@bigsky hi"`. Gateway routes to bigsky's mailbox, bigsky replies, sender sees the reply. No aX backend round-trip.
+- Activity feed in the simple-gateway drawer shows the local message lifecycle.
 
-**What does NOT work:**
-- No remote agents (anyone not registered locally is unreachable).
-- No remote tasks (`ax tasks list` returns offline-mode error).
-- No remote contexts.
-- No multi-machine coordination.
-- No persistence beyond local registry.
+**What does NOT work — by design (don't expand T0):**
+- No remote agents
+- No remote tasks (no `ax tasks` in T0)
+- No remote contexts (no `ax context` in T0)
+- No search
+- No multi-machine coordination
+- No durable persistence beyond the local registry / pending mailboxes
+
+If a user wants any of the above, they sign in (T1+). T0 stays small so the
+on-ramp stays fast — no feature creep.
 
 **UI cue:**
-- Connection pill in topbar: `Offline · local agents only` (muted)
-- Banner on first connect: "You're in offline mode. Your local agents work, but nothing's synced to aX. Sign in to connect to the network."
+- Connection pill / toggle in topbar: `Offline · local messages only` (muted)
+- First-run banner: "Local messages between your agents work right now. Sign in to reach the network."
+- All non-message tabs / panels (tasks, contexts, search, etc.) are visibly disabled with a "Sign in to enable" tooltip.
 
 **CLI:**
 ```bash
@@ -62,6 +72,7 @@ ax gateway start --offline                         # explicit offline
 ax gateway start                                   # auto-falls-back to offline if no PAT
 ax gateway agents add bigsky --template echo_test  # works offline
 ax send --local "@bigsky hi"                       # local-only routing
+ax tasks list                                      # → "Offline mode — sign in to use tasks"
 ```
 
 ### T1 — PAT paste (sign in with existing token)
