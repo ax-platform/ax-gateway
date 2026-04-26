@@ -2346,7 +2346,13 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     # on the new switchboard before the new SSE listener has connected,
     # stranding the message. Cap at 5s — if no listener event appears we
     # still return (e.g. agents whose runtime doesn't track listener_connected).
-    if previous_space_id and previous_space_id != backend_space_id:
+    # Skip when no daemon is running (e.g. tests, offline operator) since
+    # nothing will produce the rebind events we are waiting on.
+    if (
+        previous_space_id
+        and previous_space_id != backend_space_id
+        and active_gateway_pid() is not None
+    ):
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             recent = load_recent_gateway_activity(limit=20, agent_name=name)
