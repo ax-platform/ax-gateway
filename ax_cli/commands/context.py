@@ -439,6 +439,54 @@ def fetch_url(
         print_kv(context_value)
 
 
+@app.command("promote")
+def promote_ctx(
+    key: str = typer.Argument(..., help="Context key already in ephemeral storage"),
+    artifact_type: str = typer.Option(
+        "RESEARCH",
+        "--artifact-type",
+        "-t",
+        help="Artifact type: RESEARCH (default), CODE, DESIGN, REPORT, etc. (passed through to backend)",
+    ),
+    agent_id: Optional[str] = typer.Option(
+        None,
+        "--agent-id",
+        help="Attribute the promoted artifact to a specific agent (default: user attribution)",
+    ),
+    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
+    as_json: bool = JSON_OPTION,
+):
+    """Promote an existing ephemeral context entry to the permanent intelligence vault.
+
+    Closes the ``upload ephemeral, decide later it should be permanent`` gap.
+    Without this command, the only path to vault was ``--vault`` at upload time;
+    re-uploading creates a duplicate and loses any context-graph references.
+
+    The key must already exist in ephemeral context (Redis). Promotion calls
+    ``POST /api/v1/spaces/{space_id}/intelligence/promote`` which copies the
+    entry into durable Postgres-backed vault storage.
+
+        ax context promote q1-report
+        ax context promote design-doc --artifact-type DESIGN
+        ax context promote shared-state --agent-id 6acc502d-...
+
+    Forward-compat: when backend extends the artifact_type enum or adds
+    additional promote options, --artifact-type passes through unchanged.
+    """
+    client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
+    try:
+        result = client.promote_context(sid, key, artifact_type=artifact_type, agent_id=agent_id)
+    except httpx.HTTPStatusError as exc:
+        handle_error(exc)
+
+    if as_json:
+        print_json(result)
+        return
+
+    typer.echo(f"Promoted: {key} → vault (artifact_type={artifact_type})")
+
+
 @app.command("set")
 def set_ctx(
     key: str = typer.Argument(..., help="Context key"),
