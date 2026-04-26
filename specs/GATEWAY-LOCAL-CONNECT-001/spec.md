@@ -13,7 +13,9 @@ Today the gateway only manages agents whose runtime IT launches (Hermes sentinel
 
 That's a gap. The gateway's value prop is "I see and control every agent talking to aX from this machine." Until any local agent can knock on the gateway and get gated access, that promise is half-true.
 
-Local Connect makes the gateway a localhost service that any process on the user's machine can connect to, with **fingerprint-based approval** as the control mechanism: first time a new agent identity asks to connect from a new origin, the user sees an approval row.
+Local Connect makes the gateway a localhost service that any process on the user's machine can connect to as a **pass-through agent**, with **fingerprint-based approval** as the control mechanism: first time a new agent identity asks to connect from a new origin, the user sees a normal gateway table row whose status is **Needs approval**.
+
+Pass-through agents are deliberately not live listeners. They have a mailbox, they can poll/check notifications, and Gateway can relay approved calls for them, but the UI must not imply that they are continuously online or actively listening.
 
 ## Scope
 
@@ -45,7 +47,22 @@ Local Connect makes the gateway a localhost service that any process on the user
 }
 ```
 
-The agent supplies these in the connect call. The gateway records the full set; the **trust signature** for re-connect matching is `(agent_name, exe_path, user)`. A change in any of those triggers a fresh approval. Other fields are recorded for audit but not part of the matching key.
+The agent supplies these in the connect call. The gateway records the full set; the **trust signature** for re-connect matching is `(agent_name, exe_path, cwd, user)`. A change in any of those triggers a fresh approval. Other fields are recorded for audit but not part of the matching key.
+
+## HMAC key + session-token persistence
+
+- HMAC signing key for `session_token` lives at `~/.ax/gateway/local_secret.bin` (32 random bytes, mode 0600). Generated on first start; persists across gateway restarts so sessions survive a restart.
+- If the file is missing or rotated, all existing tokens fail HMAC verification → 401, agents must re-connect. That's the operator's lever for "force everyone to re-handshake": delete the secret file.
+
+## Fingerprint forgery defense (mandatory)
+
+The agent supplies its own fingerprint — a hostile process could lie. The gateway MUST cross-check self-reported values against the OS source of truth at connect time:
+
+- `exe_path` → resolve via `/proc/<pid>/exe` (Linux) or `proc_pidpath()` / `lsof -p <pid>` (macOS) and compare to the self-report.
+- `parent_pid` / `cwd` → cross-reference `/proc/<pid>/status` + `/proc/<pid>/cwd` (or platform equivalents).
+- `exe_sha256` → computed by the gateway from the OS-resolved `exe_path`, not from the self-report.
+
+Any divergence on `(exe_path, parent_pid, cwd, user)` between self-report and OS view → **reject with `403 fingerprint_mismatch`** and log both reported-vs-observed sets for audit.
 
 ## Approval lifecycle
 
@@ -53,8 +70,8 @@ The agent supplies these in the connect call. The gateway records the full set; 
 unknown_fingerprint → pending → approved | denied | revoked
 ```
 
-- **pending**: row appears in simple gateway under a new "Local connections" section. Operator clicks Approve / Deny.
-- **approved**: gateway issues `session_token` (HMAC over `agent_name + fingerprint + nonce`, 24h expiry). Agent can call `/local/send`.
+- **pending**: row appears in the simple gateway agent table as `Pass-through` with status `Needs approval`. Operator opens the row and clicks Approve / Deny.
+- **approved**: gateway issues `session_token` (HMAC over `agent_name + fingerprint + nonce`, 24h expiry). Agent can call `/local/send` and mailbox/toolbelt endpoints.
 - **auto-approved**: same as approved, but skipped the user step. Logged distinctly.
 - **denied**: gateway records the rejection; agent must wait or change fingerprint to retry.
 - **revoked**: token invalidated. Operator can also revoke a previously-approved fingerprint.
@@ -71,8 +88,11 @@ POST /local/connect
 POST /local/send
   headers: X-Gateway-Session: <session_token>
   body: { space_id, content, parent_id?, ... }
-  → relays to /api/v1/messages with the gateway's view of the agent identity.
-  Activity events emitted as if it were a managed agent.
+  → gateway relays to /api/v1/messages using its OWN credentials with
+    an `X-Acting-Agent-Id: <agent_id>` header. Locally-connected
+    agents do NOT supply a PAT in /local/connect — the gateway acts on
+    their behalf, scoped to whatever the approval-time validation
+    allowed. Activity events emitted as if it were a managed agent.
 
 GET /local/approvals          (operator UI)
 POST /local/approvals/{id}/approve
@@ -116,15 +136,21 @@ ax gateway local trust revoke <fingerprint-id>
 
 ## UI surface (simple gateway)
 
-New section above the agent grid: **Local connections**. Each row shows:
+Pass-through connections should appear in the same agent table shown in the onboarding/demo screen, not only in a hidden advanced panel. The point is that a newly connected local agent visibly becomes part of the gateway inventory while remaining clearly distinct from live runtimes.
+
+Each row shows:
 
 - Agent name (e.g. `pulse`)
-- Status pill (pending / approved / auto-approved)
+- Type/mode: `Pass-through`
+- Status pill:
+  - `Needs approval` for pending fingerprints
+  - `Mailbox ready` or `Approved` for approved fingerprints
+  - `Denied` / `Revoked` for blocked fingerprints
 - Fingerprint summary (e.g. `Claude.app · jacob · pid 12345`)
 - Last activity timestamp
 - Quick actions: Approve / Deny (if pending), Revoke (if active)
 
-The existing managed-agent grid is unchanged — these are visibly different from gateway-launched runtimes.
+The row must not use `Active`, `Live`, or listener language unless the agent has separately attached a live receive path. Pass-through means "can pass approved calls through Gateway when it checks in," not "Gateway is running the agent."
 
 ## Acceptance smokes
 

@@ -54,7 +54,7 @@ Every gateway-managed agent gets these unless explicitly excluded:
 | `context.get` | Read shared context for the space | Platform memory. |
 | `context.set` | Note something in shared context | Platform memory. |
 | `agents.list` / `agents.discover` | Who else is here? | Find collaborators. |
-| `agents.check` | Is `<name>` available right now? | Know before assigning. |
+| `agents.check` | Is `<name>` available right now? | Know before assigning. **MCP gap** — exists as `ax agents check` (PR #101) but not yet on the MCP surface. Cross-ref to MCP-SURFACE-INVENTORY-001 gap row 7; mcp_sentinel needs to land `agents(action='check')` before this row functions over MCP-passthrough. |
 | `spaces.list` | Where can I work? | Cross-space awareness. |
 | `search.messages` | Find prior conversations | Recall. |
 
@@ -73,14 +73,19 @@ The gateway already has the `ax-channel` MCP server bundled in this repo (`/chan
   "mcpServers": {
     "ax-channel": {
       "command": "ax-channel",
-      "args": ["--agent-token-file", "<token_file>"],
+      "args": ["--auth-token-file", "<token_file>"],
       "transport": "stdio"
     }
   }
 }
 ```
 
-Hermes / Claude Code / Codex all already speak MCP, so this lights up the toolbelt with zero per-runtime adapter code. The MCP server handles the JWT exchange, scope checks, and forwards to the aX backend.
+Token resolution per agent type:
+
+- **Gateway-launched runtime** (Hermes, Ollama bridge, etc.) → token file is the agent's own gateway-issued PAT at `~/.ax/gateway/agents/<name>/token`. The MCP server exchanges that PAT for an `agent_access` JWT before each business call.
+- **Locally-connected agent** (via GATEWAY-LOCAL-CONNECT-001) → the session_token from the connect handshake. The MCP server treats `axgw_s_*` session tokens as a separate auth shape and validates them against the gateway's HMAC secret before each business call. (This requires `ax-channel` to gain a session-token verifier — small adapter change.)
+
+Hermes / Claude Code / Codex all already speak MCP, so option A lights up the toolbelt with zero per-runtime adapter code beyond the MCP server's auth shapes.
 
 ### B. Direct-call helpers (for runtimes that don't speak MCP)
 
@@ -92,7 +97,7 @@ tasks.list(status="open")        # returns the agent's open tasks
 context.set("key", "value")       # writes to space context
 ```
 
-Implementation lives in `ax_cli/runtimes/_toolbelt/` — uses the agent's gateway-issued credentials to call the aX REST API directly.
+Implementation lives at `ax_cli.toolbelt` (importable as `from ax_cli.toolbelt import messages, tasks, ...`) — sits next to `ax_cli.client` for natural discovery from any `pip install ax-cli` consumer. Uses the agent's gateway-issued credentials to call the aX REST API directly. Decoupled from any specific runtime so it can serve raw exec scripts, custom Python agents, or future runtimes that don't speak MCP.
 
 ## Activity hook
 
@@ -106,6 +111,8 @@ AX_GATEWAY_EVENT {"kind": "status", "status": "processing",
 ```
 
 These flow through the same path GATEWAY-ACTIVITY-VISIBILITY-001 establishes — ending up as `current_tool` on the agent row and as activity bubble updates in the aX UI.
+
+**Rate-limit / coalescing** (mandatory): a chatty agent could fire 50+ `tool_call` events per minute. The bubble must not be flooded. Gateway coalesces repeated `tool_call` events for the *same* `tool_name` within a 1-second window — only the latest is forwarded to `_publish_processing_status`. Distinct tool_names always pass through. The full uncoalesced history is still recorded in `recent_activity` for the drawer's detail view, so audit fidelity is preserved.
 
 ## Allowlist / denylist
 
