@@ -449,3 +449,67 @@ def test_bootstrap_prints_effective_config(monkeypatch, tmp_path, user_pat, veri
     assert result.exit_code == 0, result.output
     assert "base_url=" in result.output
     assert "user_env=" in result.output
+
+
+# ── _create_agent_in_space 409 fallback (gateway agents test crash fix) ──────
+
+
+def test_create_agent_in_space_409_falls_back_to_existing(monkeypatch):
+    """If POST /api/v1/agents returns 409, look up the existing agent and return it.
+
+    Closes the ``ax gateway agents test`` crash where the auto-created
+    switchboard sender existed on the backend but not in the local Gateway
+    registry — caller's intent was "ensure agent exists," 409 is success-by-
+    convergence, not a failure to surface.
+    """
+    existing_agent = {"id": AGENT_ID, "name": "switchboard-12d6eafd", "space_id": SPACE_ID}
+    http = _FakeHttp(
+        {
+            ("POST", "/api/v1/agents"): (409, {"detail": "Agent 'switchboard-12d6eafd' already exists in this space"}, None),
+            ("GET", "/api/v1/agents"): (200, {"agents": [existing_agent]}, None),
+        }
+    )
+    client = _FakeClient(http)
+    result = bootstrap_cmd._create_agent_in_space(
+        client, name="switchboard-12d6eafd", space_id=SPACE_ID, description=None, model=None
+    )
+    assert result["id"] == AGENT_ID
+    assert result["name"] == "switchboard-12d6eafd"
+    # Sanity: we did make the POST attempt (not just immediate GET)
+    posts = [c for c in http.calls if c["method"] == "POST"]
+    assert len(posts) == 1
+
+
+def test_create_agent_in_space_409_with_no_match_re_raises(monkeypatch):
+    """409 + GET returns empty → re-raise the 409 so the user sees real backend error.
+
+    Avoids replacing one mystery ("409 already exists") with another ("404 not
+    found in space") when our lookup doesn't match what the backend rejected.
+    """
+    http = _FakeHttp(
+        {
+            ("POST", "/api/v1/agents"): (409, {"detail": "Agent 'mystery' already exists in this space"}, None),
+            ("GET", "/api/v1/agents"): (200, {"agents": []}, None),  # empty — couldn't find conflict
+        }
+    )
+    client = _FakeClient(http)
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        bootstrap_cmd._create_agent_in_space(
+            client, name="mystery", space_id=SPACE_ID, description=None, model=None
+        )
+    assert exc.value.response.status_code == 409
+
+
+def test_create_agent_in_space_other_errors_still_raise(monkeypatch):
+    """409 fallback must not swallow other status codes (401, 500, etc)."""
+    http = _FakeHttp(
+        {
+            ("POST", "/api/v1/agents"): (500, {"detail": "boom"}, None),
+        }
+    )
+    client = _FakeClient(http)
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        bootstrap_cmd._create_agent_in_space(
+            client, name="x", space_id=SPACE_ID, description=None, model=None
+        )
+    assert exc.value.response.status_code == 500

@@ -138,7 +138,15 @@ def _find_agent_in_space(client, name: str, space_id: str) -> Optional[dict]:
 def _create_agent_in_space(client, *, name: str, space_id: str, description: str | None, model: str | None) -> dict:
     """POST /api/v1/agents with X-Space-Id. This is the creation path proven
     to route through the ALB on prod (POST survives; PATCH/PUT to the same
-    prefix don't — see avatar-day PR)."""
+    prefix don't — see avatar-day PR).
+
+    On 409 ("agent already exists in this space"), fall back to GET-by-name —
+    the caller's intent is "ensure this agent exists"; if backend already has
+    one with our name in the target space, that's success-by-convergence, not
+    a hard error. Without this, ``ax gateway agents test`` crashes when its
+    auto-created switchboard sender agent already exists on the backend but
+    isn't in the local Gateway registry (drift after registry resets).
+    """
     body: dict = {"name": name}
     if description is not None:
         body["description"] = description
@@ -148,6 +156,13 @@ def _create_agent_in_space(client, *, name: str, space_id: str, description: str
         body["space_id"] = space_id
     headers = {"X-Space-Id": space_id} if space_id else None
     r = client._http.post("/api/v1/agents", json=body, headers=headers)
+    if r.status_code == 409:
+        existing = _find_agent_in_space(client, name, space_id)
+        if existing:
+            return existing
+        # 409 but we can't find the conflicting agent — surface the original
+        # error so caller sees what the backend reported, not a misleading 404.
+        r.raise_for_status()
     r.raise_for_status()
     return client._parse_json(r)
 
