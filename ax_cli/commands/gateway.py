@@ -2319,6 +2319,9 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
         entry["allowed_spaces"] = backend_allowed_spaces
     apply_entry_current_space(entry, backend_space_id)
     ensure_gateway_identity_binding(registry, entry, session=load_gateway_session())
+    # Capture the rebind marker BEFORE writing the registry so the wait below
+    # is guaranteed to see only post-move runtime/listener events.
+    rebind_marker = datetime.now(timezone.utc).isoformat()
     save_gateway_registry(registry)
     record_gateway_activity(
         "managed_agent_moved_space",
@@ -2336,6 +2339,24 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
             requested_space_id=new_space_id,
             applied_space_id=backend_space_id,
         )
+    # Wait for the daemon to finish the rebind before returning. The daemon
+    # is a separate process polling the registry every ~1s; once it sees
+    # space_id changed it stops the old runtime and starts a new one.
+    # Without this wait, a follow-up POST /api/agents/<name>/test can land
+    # on the new switchboard before the new SSE listener has connected,
+    # stranding the message. Cap at 5s — if no listener event appears we
+    # still return (e.g. agents whose runtime doesn't track listener_connected).
+    if previous_space_id and previous_space_id != backend_space_id:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            recent = load_recent_gateway_activity(limit=20, agent_name=name)
+            if any(
+                (event.get("ts") or "") > rebind_marker
+                and event.get("event") in {"listener_connected", "runtime_started"}
+                for event in recent
+            ):
+                break
+            time.sleep(0.2)
     return annotate_runtime_health(entry, registry=registry)
 
 
