@@ -2706,6 +2706,128 @@ def find_agent_entry(registry: dict[str, Any], name: str) -> dict[str, Any] | No
     return None
 
 
+def _apply_placement_event(
+    entry: dict[str, Any],
+    event_data: dict[str, Any],
+    *,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Apply an ``agent.placement.changed`` event to the local Gateway registry.
+
+    Returns a result dict describing what happened:
+
+        {
+          "applied": bool,
+          "reason": str | None,           # if not applied
+          "previous_space": str | None,
+          "new_space": str | None,
+          "placement_state": str | None,
+          "policy_revision": int | None,
+        }
+
+    Spec: ``specs/GATEWAY-PLACEMENT-POLICY-001/spec.md``. The event payload
+    follows the placement record fields (lines 32-46): ``agent_id``,
+    ``current_space``, ``placement_state``, ``policy_revision``, etc.
+
+    Idempotent: events for an agent we don't manage, or where ``current_space``
+    already matches, are no-ops (``applied: False``, ``reason`` set).
+    """
+    event_agent_id = str(event_data.get("agent_id") or "").strip()
+    entry_agent_id = str(entry.get("agent_id") or "").strip()
+    if event_agent_id and entry_agent_id and event_agent_id != entry_agent_id:
+        return {"applied": False, "reason": "agent_id_mismatch"}
+
+    new_space = str(event_data.get("current_space") or event_data.get("space_id") or "").strip()
+    if not new_space:
+        return {"applied": False, "reason": "missing_current_space"}
+
+    previous_space = str(entry.get("space_id") or "").strip() or None
+    placement_state = str(event_data.get("placement_state") or "applied").strip() or "applied"
+    policy_revision = event_data.get("policy_revision")
+    try:
+        policy_revision_int = int(policy_revision) if policy_revision is not None else None
+    except (TypeError, ValueError):
+        policy_revision_int = None
+
+    # Already in sync — ack-without-apply
+    if previous_space == new_space:
+        existing_rev = entry.get("placement_revision")
+        if policy_revision_int is None or (existing_rev is not None and int(existing_rev) >= policy_revision_int):
+            return {
+                "applied": False,
+                "reason": "already_at_target",
+                "previous_space": previous_space,
+                "new_space": new_space,
+                "placement_state": placement_state,
+                "policy_revision": policy_revision_int,
+            }
+
+    # Persist to local registry
+    registry = load_gateway_registry()
+    name = agent_name or str(entry.get("name") or "")
+    target_entry = find_agent_entry(registry, name)
+    if target_entry is None:
+        return {
+            "applied": False,
+            "reason": "agent_not_in_registry",
+            "previous_space": previous_space,
+            "new_space": new_space,
+        }
+    target_entry["space_id"] = new_space
+    target_entry["placement_state"] = placement_state
+    if policy_revision_int is not None:
+        target_entry["placement_revision"] = policy_revision_int
+    if "current_space_set_by" in event_data:
+        target_entry["placement_source"] = str(event_data["current_space_set_by"])
+    save_gateway_registry(registry)
+
+    # Mirror to caller's `entry` so subsequent calls in same loop see the new value
+    entry["space_id"] = new_space
+    entry["placement_state"] = placement_state
+    if policy_revision_int is not None:
+        entry["placement_revision"] = policy_revision_int
+
+    return {
+        "applied": True,
+        "previous_space": previous_space,
+        "new_space": new_space,
+        "placement_state": placement_state,
+        "policy_revision": policy_revision_int,
+    }
+
+
+def _post_placement_ack(
+    client: Any,
+    entry: dict[str, Any],
+    *,
+    placement_state: str,
+    policy_revision: int | None = None,
+    runtime_pid: int | None = None,
+) -> bool:
+    """Best-effort PATCH /api/v1/agents/{id}/placement/ack — backend task 31adc3a4.
+
+    Returns True on success, False otherwise. 404 is the expected failure mode
+    until backend ships the endpoint; logged but not fatal.
+    """
+    agent_id = str(entry.get("agent_id") or "").strip()
+    if not agent_id:
+        return False
+    body: dict[str, Any] = {"placement_state": placement_state}
+    if policy_revision is not None:
+        body["policy_revision"] = int(policy_revision)
+    if runtime_pid is not None:
+        body["runtime_pid"] = int(runtime_pid)
+    body["ack_at"] = _now_iso()
+    try:
+        response = client._http.patch(f"/api/v1/agents/{agent_id}/placement/ack", json=body)
+    except Exception:  # noqa: BLE001
+        return False
+    if response.status_code == 404:
+        # Endpoint not yet shipped (31adc3a4 pending) — silent no-op
+        return False
+    return 200 <= response.status_code < 300
+
+
 def upsert_agent_entry(registry: dict[str, Any], agent: dict[str, Any]) -> dict[str, Any]:
     agents = registry.setdefault("agents", [])
     for idx, existing in enumerate(agents):
@@ -3247,6 +3369,52 @@ class ManagedAgentRuntime:
             if seen:
                 self._completed_seen_ids.discard(message_id)
             return seen
+
+    def _handle_placement_event(self, data: dict[str, Any]) -> None:
+        """Handle SSE ``agent.placement.changed`` for this managed agent.
+
+        Per ``specs/GATEWAY-PLACEMENT-POLICY-001/spec.md`` lines 81-93. The
+        event carries the new placement record; we update the local Gateway
+        registry to keep operator-visible state in sync, log activity, and
+        best-effort POST an ack.
+
+        Stub-resilient: if the backend hasn't shipped the ack endpoint yet
+        (task ``31adc3a4``), the POST returns 404 and we log a warning. The
+        inbound side still works — operators see placement changes in the
+        registry without restarting agents.
+        """
+        try:
+            outcome = _apply_placement_event(self.entry, data, agent_name=self.name)
+        except Exception as exc:  # noqa: BLE001
+            record_gateway_activity(
+                "placement_apply_failed",
+                entry=self.entry,
+                error=str(exc)[:300],
+                event=data.get("event_id") or data.get("id"),
+            )
+            self._log(f"placement event apply failed: {exc}")
+            return
+        record_gateway_activity(
+            "placement_changed",
+            entry=self.entry,
+            placement_state=outcome.get("placement_state"),
+            previous_space=outcome.get("previous_space"),
+            new_space=outcome.get("new_space"),
+            policy_revision=outcome.get("policy_revision"),
+            applied=outcome.get("applied", False),
+        )
+        if outcome.get("applied"):
+            try:
+                client = self._new_client()
+                _post_placement_ack(
+                    client,
+                    self.entry,
+                    placement_state=str(outcome.get("placement_state") or "applied"),
+                    policy_revision=outcome.get("policy_revision"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Ack is best-effort while 31adc3a4 ships. Don't kill the listener.
+                self._log(f"placement ack failed (non-fatal): {exc}")
 
     def snapshot(self) -> dict[str, Any]:
         with self._state_lock:
@@ -4183,6 +4351,10 @@ class ManagedAgentRuntime:
                             break
                         if event_type in {"bootstrap", "heartbeat", "ping", "identity_bootstrap", "connected"}:
                             self._update_state(last_seen_at=_now_iso())
+                            continue
+                        if event_type == "agent.placement.changed" and isinstance(data, dict):
+                            self._update_state(last_seen_at=_now_iso())
+                            self._handle_placement_event(data)
                             continue
                         if event_type not in {"message", "mention"} or not isinstance(data, dict):
                             continue
