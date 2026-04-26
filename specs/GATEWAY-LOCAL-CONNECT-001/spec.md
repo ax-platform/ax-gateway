@@ -7,6 +7,8 @@
 - @madtank 2026-04-25: "any agent that runs bash should be able to use the gateway on this machine. They just need to make sure that they pass their agent name and if it's a new agent name connecting through the gateway for the first time then it fingerprints them and make sure that they're running from a specific path and it comes up with a new row that has the user approve."
 - @madtank: "we could probably even have like a mode that says auto approved for agents to go through, but I think having it show up as an approval makes way more sense."
 
+**Pass-through UX/details:** see **GATEWAY-PASS-THROUGH-MAILBOX-001**.
+
 ## Why this exists
 
 Today the gateway only manages agents whose runtime IT launches (Hermes sentinel, Ollama bridge). Every other agent on the machine — Claude Code sessions, scripts, ad-hoc tools — has to go straight to the aX backend with its own PAT, bypassing gateway visibility, audit, and approval.
@@ -49,6 +51,11 @@ Pass-through agents are deliberately not live listeners. They have a mailbox, th
 
 The agent supplies these in the connect call. The gateway records the full set; the **trust signature** for re-connect matching is `(agent_name, exe_path, cwd, user)`. A change in any of those triggers a fresh approval. Other fields are recorded for audit but not part of the matching key.
 
+For pass-through mailbox agents, the canonical reconnect trust signature is
+defined in **GATEWAY-PASS-THROUGH-MAILBOX-001** and also includes Gateway/host
+and template context. `pid` and `parent_pid` are audit fields, not reconnect
+keys.
+
 ## HMAC key + session-token persistence
 
 - HMAC signing key for `session_token` lives at `~/.ax/gateway/local_secret.bin` (32 random bytes, mode 0600). Generated on first start; persists across gateway restarts so sessions survive a restart.
@@ -63,6 +70,10 @@ The agent supplies its own fingerprint — a hostile process could lie. The gate
 - `exe_sha256` → computed by the gateway from the OS-resolved `exe_path`, not from the self-report.
 
 Any divergence on `(exe_path, parent_pid, cwd, user)` between self-report and OS view → **reject with `403 fingerprint_mismatch`** and log both reported-vs-observed sets for audit.
+
+If host OS verification is blocked by platform permissions, Gateway may return
+a partial verification state for v1, but that state must be visible in the
+drawer and the connection must still require operator approval.
 
 ## Approval lifecycle
 
@@ -142,13 +153,11 @@ Each row shows:
 
 - Agent name (e.g. `pulse`)
 - Type/mode: `Pass-through`
-- Status pill:
-  - `Needs approval` for pending fingerprints
-  - `Mailbox ready` or `Approved` for approved fingerprints
-  - `Denied` / `Revoked` for blocked fingerprints
+- Mailbox indicator, not a live dot
+- Optional unread count bubble attached to the mailbox icon
 - Fingerprint summary (e.g. `Claude.app · jacob · pid 12345`)
 - Last activity timestamp
-- Quick actions: Approve / Deny (if pending), Revoke (if active)
+- Row action: `Review` if pending, chevron otherwise
 
 The row must not use `Active`, `Live`, or listener language unless the agent has separately attached a live receive path. Pass-through means "can pass approved calls through Gateway when it checks in," not "Gateway is running the agent."
 
@@ -181,6 +190,36 @@ ax gateway local approvals approve <id>           # one-click parity with the bu
 ax gateway local approvals approve <id> --space <uuid> --pin --reason '...'  # advanced
 ax gateway agents remove <name>                   # rejection path
 ```
+
+## Pass-through ack endpoint (impl 2026-04-26)
+
+Pass-through agents reply to mailbox messages via their **own gateway-issued PAT**, calling aX directly. The gateway never sees the outbound reply traffic, so without an ack callback the local registry's `last_reply_at`, `processed_count`, and `backlog_depth` go stale and the simple-gateway drawer keeps showing "1 message awaiting check" forever.
+
+The agent MUST call `POST /api/agents/<name>/ack` after sending a reply:
+
+```
+POST /api/agents/<name>/ack
+  body: { message_id: "<inbound>", reply_id?: "<outbound>", reply_preview?: "<first 240 chars>" }
+  200:  { ...full agent record with updated last_reply_at + processed_count }
+  404:  { error: "Managed agent not found: <name>" }
+  400:  { error: "message_id is required." }
+```
+
+Side effects on success:
+- Drops `message_id` from `~/.ax/gateway/agents/<name>/pending.json`
+- Updates registry entry: `last_reply_at`, `last_work_completed_at`, `last_received_message_id`, `last_reply_message_id` (if provided), `last_reply_preview` (if provided), `processed_count` += 1
+- Records `reply_sent` activity event in `~/.ax/gateway/activity.jsonl`
+
+The simple-gateway drawer's `lastActivityLabel()` then surfaces "Sent message · just now" for the agent row.
+
+CLI parity (small wrapper for shell scripts):
+```bash
+ax gateway agents ack <name> --message-id <id> [--reply-id <id>] [--reply-preview '<text>']
+```
+
+This endpoint is the local-side counterpart to GATEWAY-RUNTIME-PERSISTENCE-001's reconciliation model — it lets pass-through agents stay accurately reflected in the gateway's registry without the gateway having to subscribe to the agent's own SSE stream.
+
+**Follow-up:** per-message read/seen state (separate task) — extend the pending-queue items with `seen_at` / `read_at` / `replied_at` fields so the activity feed can show per-message "🔵 Unread / ✅ Read / ↩ Replied" pills.
 
 ## Acceptance smokes
 

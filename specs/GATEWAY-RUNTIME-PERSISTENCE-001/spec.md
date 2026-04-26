@@ -130,6 +130,33 @@ ax gateway agents runtime status memo-bot
 ax gateway agents remove memo-bot
 ```
 
+## What survives a gateway restart (current state, 2026-04-26)
+
+Operator-relevant question — added per madtank: "Do we remember stuff on restart and should we?" Answer: **most of it survives, by file**. The split:
+
+**Survives restart (durable on disk):**
+
+| Concern | File | Notes |
+|---|---|---|
+| Agent registry (names, ids, templates, space bindings, `last_reply_at`, `processed_count`, `pinned`, `desired_state`) | `~/.ax/gateway/registry.json` | Loaded fresh on every daemon boot via `load_gateway_registry()`. |
+| Per-agent pending mailboxes (pass-through inbox queue) | `~/.ax/gateway/agents/<name>/pending.json` | Survives restart. Pass-through agents pick up where they left off. |
+| Per-agent gateway-issued PATs | `~/.ax/gateway/agents/<name>/token` | Persistent token files, mode 0600. |
+| Activity log (lifecycle events for the drawer + audit trail) | `~/.ax/gateway/activity.jsonl` | Append-only. The drawer reads recent N items via `load_recent_gateway_activity()`. |
+| Approvals (pending / approved / rejected pass-through bindings) | inside `registry.json` under `approvals` | Pending approvals survive restart. |
+| Identity bindings (gateway↔agent attestation) | inside `registry.json` under `identity_bindings` | Survives restart. |
+| Gateway operator session (PAT, base_url, username) | `~/.ax/gateway/session.json` | Survives. Logout deletes the file → drops to T0 offline (per AUTH-TIERS). |
+
+**Does NOT survive restart (in-memory only):**
+
+| Concern | Why | Recovery on restart |
+|---|---|---|
+| `ManagedAgentRuntime` per-agent worker state (current_status, current_activity, current_tool, in-flight queue) | Lives in daemon process memory. | Reconcile loop respawns workers; in-flight messages are re-fetched via SSE. |
+| Hermes sentinel subprocess + tool sandbox state | Subprocess dies with the daemon. | Reconcile loop relaunches the sentinel; Hermes reconstructs context from aX history. |
+| SSE listener loops | TCP connections dropped. | Reconnect with exponential backoff. |
+| `_send_client` AxClient cache | Re-instantiated lazily on first publish. | Lazy-init on next event (per ACTIVITY-VISIBILITY fix). |
+
+**Should we persist more?** For demo: no — current persistence is enough. For production: the cosmetic `backlog_depth` mismatch case (when agent replies via PAT and the local registry doesn't know) is solved by the **pass-through ack endpoint** (see LOCAL-CONNECT-001). For session memory in conversational runtimes, the design is below — sliding window per thread, persisted on graceful shutdown, reconstructed from aX history on cold restart.
+
 ## Privacy decisions (locked)
 
 - **Removal.** When an agent is removed (`DELETE /api/agents/{name}`), the gateway MUST delete `~/.ax/gateway/agents/<name>/sessions.json` along with the token file. No leftover session memory on disk.

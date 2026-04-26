@@ -103,6 +103,23 @@ If the manual probe returns 401/422, the gateway's auto-push will also fail — 
 
 Surface `last_work_received_at` and `last_work_completed_at` (NOT `last_seen_at` which includes heartbeats). Connection state is implied by the connection pill; the row's "Last activity" column is specifically about *messaging activity*, so users can spot when an agent in another space gets messaged without context-switching.
 
+For pass-through/mailbox agents, `last_work_received_at` is the queued mailbox
+item timestamp. It must be preserved while the item remains unread. Gateway must
+not overwrite it with status-refresh time, listener heartbeat time, or daemon
+restart time. See **GATEWAY-PASS-THROUGH-MAILBOX-001** for the mailbox count and
+row-label contract.
+
+Pass-through rows use mailbox vocabulary:
+
+- `New message` / `N new messages`
+- `Inbox ready`
+- `Checked`
+- `Sent message`
+- `Awaiting approval`
+
+They do not use `Active`, `Working`, or live-listener language unless the agent
+has a separate live receive path.
+
 ## User-authored vs agent-authored parity
 
 Currently the aX UI shows the "waiting" chip only on user-authored DMs. Agent-authored messages (e.g. switchboard test messages) don't get a chip. This is wrong: any incoming message that triggers a managed-runtime invocation should surface the same agent_processing events.
@@ -110,6 +127,22 @@ Currently the aX UI shows the "waiting" chip only on user-authored DMs. Agent-au
 Owner: aX UI team. Spec'd here so the gateway side commits to emitting the same events for both cases — which it already does — and so the UI ticket has a clear acceptance check.
 
 > **TODO**: cross-link the ax-frontend ticket once filed. Until then, this section IS the ticket spec — copy it verbatim into the issue body.
+
+## Lifecycle event synthesis from sentinel stdout (impl 2026-04-26)
+
+For supervised-subprocess runtimes (Hermes specifically), the gateway parses `AX_GATEWAY_EVENT` lines from the sentinel's stdout via `_consume_sentinel_stdout`. The parser does TWO things per event:
+
+1. **Forwards to backend** via `_publish_processing_status` → `POST /api/v1/agents/processing-status` (the main contract above). This drives the aX UI bubble.
+2. **Synthesizes gateway-side activity events** for the local simple-gateway drawer feed:
+   - First sight of any new `message_id` → `record_gateway_activity("message_received")`
+   - `status: accepted` → `record_gateway_activity("message_claimed")`
+   - `status: completed` → `record_gateway_activity("reply_sent")` — clears the "Working" indicator in the drawer
+   - `status: error` → `record_gateway_activity("runtime_error")`
+   - `tool_name` present + `status: processing` → `record_gateway_activity("runtime_activity", tool_name=...)`
+
+Without (2), supervised-subprocess runtimes had drawer feeds that never cleared past "Working" — the listener-loop path's `reply_sent` writer was bypassed. Synthesis from stdout closes that gap.
+
+`_publish_processing_status` and `_record_tool_call` lazy-init `_send_client` for runtimes that don't enter `_listener_loop()`. Without lazy init, every event was dropped with `processing-status drop (no send_client)` — the original "stuck on Working" demo blocker.
 
 ## Open questions
 
