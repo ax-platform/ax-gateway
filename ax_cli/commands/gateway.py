@@ -2348,11 +2348,7 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     # still return (e.g. agents whose runtime doesn't track listener_connected).
     # Skip when no daemon is running (e.g. tests, offline operator) since
     # nothing will produce the rebind events we are waiting on.
-    if (
-        previous_space_id
-        and previous_space_id != backend_space_id
-        and active_gateway_pid() is not None
-    ):
+    if previous_space_id and previous_space_id != backend_space_id and active_gateway_pid() is not None:
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             recent = load_recent_gateway_activity(limit=20, agent_name=name)
