@@ -19,12 +19,17 @@ from typing import Any
 from ax_cli.gateway import (
     _apply_placement_event,
     _post_placement_ack,
+    ensure_gateway_identity_binding,
+    evaluate_identity_space_binding,
     find_agent_entry,
     load_gateway_registry,
+    save_gateway_registry,
 )
 
 
-def _seed_registry(tmp_path, monkeypatch, name="probe_agent", agent_id="aaaa1111-2222-3333-4444-555566667777", space_id="space-A"):
+def _seed_registry(
+    tmp_path, monkeypatch, name="probe_agent", agent_id="aaaa1111-2222-3333-4444-555566667777", space_id="space-A"
+):
     """Set AX_GATEWAY_DIR to a tmp dir + write a minimal registry.json with one agent."""
     import json
     from pathlib import Path
@@ -77,9 +82,58 @@ def test_apply_placement_event_updates_registry(tmp_path, monkeypatch):
     persisted = find_agent_entry(registry, "probe_agent")
     assert persisted is not None
     assert persisted["space_id"] == "space-B"
+    assert persisted["active_space_id"] == "space-B"
+    assert persisted["default_space_id"] == "space-B"
     assert persisted["placement_state"] == "applied"
     assert persisted["placement_revision"] == 7
     assert persisted["placement_source"] == "ax_ui"
+
+
+def test_apply_placement_event_repairs_stale_identity_binding(tmp_path, monkeypatch):
+    """Placement events update active/default space so later sends don't use the old switchboard."""
+    entry = _seed_registry(tmp_path, monkeypatch, space_id="space-A")
+    registry = load_gateway_registry()
+    stored = find_agent_entry(registry, "probe_agent")
+    assert stored is not None
+    stored.update(
+        {
+            "base_url": "https://paxai.app",
+            "token_file": str(tmp_path / "probe.token"),
+            "credential_source": "gateway",
+            "install_id": "install-probe",
+            "active_space_id": "space-A",
+            "default_space_id": "space-A",
+            "allowed_spaces": [
+                {"space_id": "space-A", "name": "Old Space", "is_default": True},
+                {"space_id": "space-B", "name": "New Space", "is_default": False},
+            ],
+        }
+    )
+    ensure_gateway_identity_binding(registry, stored)
+    save_gateway_registry(registry)
+
+    result = _apply_placement_event(
+        dict(entry),
+        {
+            "agent_id": entry["agent_id"],
+            "current_space": "space-B",
+            "current_space_name": "New Space",
+            "placement_state": "applied",
+            "policy_revision": 8,
+        },
+    )
+
+    assert result["applied"] is True
+    registry = load_gateway_registry()
+    persisted = find_agent_entry(registry, "probe_agent")
+    assert persisted is not None
+    assert persisted["space_id"] == "space-B"
+    assert persisted["active_space_id"] == "space-B"
+    assert persisted["default_space_id"] == "space-B"
+    snapshot = evaluate_identity_space_binding(registry, persisted)
+    assert snapshot["active_space_id"] == "space-B"
+    assert snapshot["default_space_id"] == "space-B"
+    assert snapshot["space_status"] == "active_allowed"
 
 
 def test_apply_placement_event_idempotent_when_same_space(tmp_path, monkeypatch):
@@ -232,6 +286,7 @@ def test_post_placement_ack_skips_when_no_agent_id():
 
 def test_post_placement_ack_handles_http_exception_gracefully():
     """Connection error / TLS / etc shouldn't kill the listener."""
+
     class _ExplodingHttp:
         def patch(self, *a, **kw):
             raise RuntimeError("simulated network failure")

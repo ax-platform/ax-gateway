@@ -40,6 +40,22 @@ class _FakeLoginClient:
         return {"spaces": [{"id": "space-1", "name": "Workspace", "is_default": True}]}
 
 
+class _FakeHttpResponse:
+    def __init__(self, payload, status_code=200):
+        self.payload = payload
+        self.status_code = status_code
+        self.text = json.dumps(payload)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://example.test")
+            response = httpx.Response(self.status_code, request=request, json=self.payload)
+            raise httpx.HTTPStatusError("error", request=request, response=response)
+
+    def json(self):
+        return self.payload
+
+
 class _FakeUserClient:
     def update_agent(self, *args, **kwargs):
         return {"ok": True}
@@ -3205,6 +3221,103 @@ def test_gateway_agents_test_can_send_as_user(monkeypatch, tmp_path):
     assert payload["author"] == "user"
     assert payload["sender_agent"] is None
     assert payload["message"]["metadata"]["gateway"]["test_author"] == "user"
+
+
+def test_gateway_local_send_auto_connects_with_agent(monkeypatch):
+    calls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        if url.endswith("/local/connect"):
+            return _FakeHttpResponse(
+                {
+                    "status": "approved",
+                    "agent": {"name": "codex-pass-through"},
+                    "registry_ref": "#4",
+                    "session_token": "axgw_s_test.session",
+                }
+            )
+        if url.endswith("/local/send"):
+            return _FakeHttpResponse(
+                {
+                    "agent": "codex-pass-through",
+                    "message": {"id": "msg-1", "content": json["content"], "space_id": json.get("space_id")},
+                },
+                status_code=201,
+            )
+        raise AssertionError(f"unexpected POST {url}")
+
+    monkeypatch.setattr(gateway_cmd.httpx, "post", fake_post)
+
+    result = runner.invoke(
+        app,
+        [
+            "gateway",
+            "local",
+            "send",
+            "--agent",
+            "codex-pass-through",
+            "--url",
+            "http://127.0.0.1:8765",
+            "@night-owl please QA PR 114",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["url"].endswith("/local/connect")
+    assert calls[0]["json"]["agent_name"] == "codex-pass-through"
+    assert calls[1]["url"].endswith("/local/send")
+    assert calls[1]["headers"] == {"X-Gateway-Session": "axgw_s_test.session"}
+    assert calls[1]["json"]["content"] == "@night-owl please QA PR 114"
+    payload = json.loads(result.output)
+    assert payload["agent"] == "codex-pass-through"
+    assert payload["connect"]["agent"] == "codex-pass-through"
+
+
+def test_gateway_local_inbox_auto_connects_and_marks_read(monkeypatch):
+    calls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append({"method": "POST", "url": url, "json": json, "headers": headers, "timeout": timeout})
+        return _FakeHttpResponse(
+            {
+                "status": "approved",
+                "agent": {"name": "codex-pass-through"},
+                "registry_ref": "#4",
+                "session_token": "axgw_s_test.session",
+            }
+        )
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append({"method": "GET", "url": url, "params": params, "headers": headers, "timeout": timeout})
+        return _FakeHttpResponse({"agent": "codex-pass-through", "messages": [], "count": 0})
+
+    monkeypatch.setattr(gateway_cmd.httpx, "post", fake_post)
+    monkeypatch.setattr(gateway_cmd.httpx, "get", fake_get)
+
+    result = runner.invoke(
+        app,
+        [
+            "gateway",
+            "local",
+            "inbox",
+            "--agent",
+            "codex-pass-through",
+            "--url",
+            "http://127.0.0.1:8765",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["method"] == "POST"
+    assert calls[1]["method"] == "GET"
+    assert calls[1]["headers"] == {"X-Gateway-Session": "axgw_s_test.session"}
+    assert calls[1]["params"]["mark_read"] == "true"
+    payload = json.loads(result.output)
+    assert payload["agent"] == "codex-pass-through"
+    assert payload["connect"]["registry_ref"] == "#4"
 
 
 def test_gateway_agents_doctor_persists_structured_result(monkeypatch, tmp_path):

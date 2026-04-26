@@ -1394,6 +1394,57 @@ def _space_name_from_cache(allowed_spaces: list[dict[str, Any]], space_id: str |
     return None
 
 
+def apply_entry_current_space(
+    entry: dict[str, Any],
+    space_id: str,
+    *,
+    space_name: str | None = None,
+    make_default: bool = True,
+) -> dict[str, Any]:
+    """Update an agent registry row's placement fields as one coherent bundle."""
+    normalized_space_id = str(space_id or "").strip()
+    if not normalized_space_id:
+        return entry
+    current_allowed = _space_cache_rows(entry.get("allowed_spaces"))
+    normalized_name = (
+        str(space_name or "").strip()
+        or _space_name_from_cache(current_allowed, normalized_space_id)
+        or str(entry.get("space_name") or normalized_space_id)
+    )
+    rows: list[dict[str, Any]] = [
+        {
+            "space_id": normalized_space_id,
+            "name": normalized_name,
+            "is_default": bool(make_default),
+        }
+    ]
+    seen = {normalized_space_id}
+    for item in current_allowed:
+        item_space_id = str(item.get("space_id") or "").strip()
+        if not item_space_id or item_space_id in seen:
+            continue
+        seen.add(item_space_id)
+        rows.append(
+            {
+                "space_id": item_space_id,
+                "name": str(item.get("name") or item_space_id),
+                "is_default": False if make_default else bool(item.get("is_default", False)),
+            }
+        )
+
+    entry["space_id"] = normalized_space_id
+    entry["active_space_id"] = normalized_space_id
+    entry["active_space_name"] = normalized_name
+    if make_default:
+        entry["default_space_id"] = normalized_space_id
+        entry["default_space_name"] = normalized_name
+    elif not str(entry.get("default_space_id") or "").strip():
+        entry["default_space_id"] = normalized_space_id
+        entry["default_space_name"] = normalized_name
+    entry["allowed_spaces"] = rows
+    return entry
+
+
 def _fallback_allowed_spaces(entry: dict[str, Any], session: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     session = session or {}
     default_id = str(entry.get("default_space_id") or entry.get("space_id") or session.get("space_id") or "").strip()
@@ -2940,7 +2991,11 @@ def _apply_placement_event(
     if event_agent_id and entry_agent_id and event_agent_id != entry_agent_id:
         return {"applied": False, "reason": "agent_id_mismatch"}
 
-    new_space = str(event_data.get("current_space") or event_data.get("space_id") or "").strip()
+    raw_current_space = event_data.get("current_space")
+    if isinstance(raw_current_space, dict):
+        new_space = str(raw_current_space.get("space_id") or raw_current_space.get("id") or "").strip()
+    else:
+        new_space = str(raw_current_space or event_data.get("space_id") or "").strip()
     if not new_space:
         return {"applied": False, "reason": "missing_current_space"}
 
@@ -2952,10 +3007,16 @@ def _apply_placement_event(
     except (TypeError, ValueError):
         policy_revision_int = None
 
-    # Already in sync — ack-without-apply
+    # Already in sync — ack-without-apply unless older placement metadata would
+    # still route sends through a stale active/default space.
+    placement_stale = any(
+        str(entry.get(field) or "").strip() not in {"", new_space} for field in ("active_space_id", "default_space_id")
+    )
     if previous_space == new_space:
         existing_rev = entry.get("placement_revision")
-        if policy_revision_int is None or (existing_rev is not None and int(existing_rev) >= policy_revision_int):
+        if not placement_stale and (
+            policy_revision_int is None or (existing_rev is not None and int(existing_rev) >= policy_revision_int)
+        ):
             return {
                 "applied": False,
                 "reason": "already_at_target",
@@ -2976,16 +3037,28 @@ def _apply_placement_event(
             "previous_space": previous_space,
             "new_space": new_space,
         }
-    target_entry["space_id"] = new_space
+    space_name = (
+        str(
+            event_data.get("current_space_name") or event_data.get("space_name") or event_data.get("name") or ""
+        ).strip()
+        or None
+    )
+    if isinstance(event_data.get("current_space"), dict):
+        current_space = event_data["current_space"]
+        space_name = (
+            str(current_space.get("name") or current_space.get("space_name") or space_name or "").strip() or None
+        )
+    apply_entry_current_space(target_entry, new_space, space_name=space_name)
     target_entry["placement_state"] = placement_state
     if policy_revision_int is not None:
         target_entry["placement_revision"] = policy_revision_int
     if "current_space_set_by" in event_data:
         target_entry["placement_source"] = str(event_data["current_space_set_by"])
+    ensure_gateway_identity_binding(registry, target_entry)
     save_gateway_registry(registry)
 
     # Mirror to caller's `entry` so subsequent calls in same loop see the new value
-    entry["space_id"] = new_space
+    apply_entry_current_space(entry, new_space, space_name=space_name)
     entry["placement_state"] = placement_state
     if policy_revision_int is not None:
         entry["placement_revision"] = policy_revision_int

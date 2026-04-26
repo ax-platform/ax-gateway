@@ -48,6 +48,7 @@ from ..gateway import (
     agent_dir,
     agent_token_path,
     annotate_runtime_health,
+    apply_entry_current_space,
     approve_gateway_approval,
     clear_gateway_ui_state,
     daemon_log_path,
@@ -937,7 +938,7 @@ def _send_from_managed_agent(
         raise ValueError(f"@{name} is stopped. Start it before it can send.")
     snapshot = _identity_space_send_guard(entry, explicit_space_id=space_id)
     client = _load_managed_agent_client(entry)
-    selected_space_id = str(snapshot.get("active_space_id") or space_id or entry.get("space_id") or "")
+    selected_space_id = str(space_id or snapshot.get("active_space_id") or entry.get("space_id") or "")
     if not selected_space_id:
         raise ValueError(f"Managed agent is missing a space id: @{name}")
 
@@ -1565,8 +1566,10 @@ def _send_gateway_test_to_managed_agent(
         raise ValueError(f"@{name} is stopped. Start it before sending a test.")
     registry = load_gateway_registry()
     stored = find_agent_entry(registry, str(entry.get("name") or "")) or entry
+    ensure_gateway_identity_binding(registry, stored, session=load_gateway_session())
     snapshot = annotate_runtime_health(stored, registry=registry)
-    space_id = str(snapshot.get("active_space_id") or entry.get("space_id") or "")
+    save_gateway_registry(registry)
+    space_id = str(snapshot.get("active_space_id") or stored.get("space_id") or entry.get("space_id") or "")
     if not space_id:
         raise ValueError(f"Managed agent is missing a space id: @{name}")
 
@@ -1578,7 +1581,7 @@ def _send_gateway_test_to_managed_agent(
 
     sender_name = None
     if normalized_author == "agent":
-        target_for_sender = {**entry, "space_id": space_id}
+        target_for_sender = {**stored, "space_id": space_id}
         sender_error: str | None = None
         if sender_agent:
             sender_name = str(sender_agent).strip()
@@ -1598,10 +1601,10 @@ def _send_gateway_test_to_managed_agent(
             sent_via="gateway_test",
             metadata_extra={
                 "managed_target": True,
-                "target_agent_name": entry.get("name"),
-                "target_agent_id": entry.get("agent_id"),
-                "target_template": entry.get("template_id"),
-                "target_runtime_type": entry.get("runtime_type"),
+                "target_agent_name": stored.get("name"),
+                "target_agent_id": stored.get("agent_id"),
+                "target_template": stored.get("template_id"),
+                "target_runtime_type": stored.get("runtime_type"),
                 "test_author": "agent",
                 "test_sender_fallback": "self" if sender_error else None,
                 "test_sender_error": sender_error,
@@ -1616,10 +1619,10 @@ def _send_gateway_test_to_managed_agent(
             "control_plane": "gateway",
             "gateway": {
                 "managed_target": True,
-                "target_agent_name": entry.get("name"),
-                "target_agent_id": entry.get("agent_id"),
-                "target_template": entry.get("template_id"),
-                "target_runtime_type": entry.get("runtime_type"),
+                "target_agent_name": stored.get("name"),
+                "target_agent_id": stored.get("agent_id"),
+                "target_template": stored.get("template_id"),
+                "target_runtime_type": stored.get("runtime_type"),
                 "sent_via": "gateway_test",
                 "test_author": "user",
             },
@@ -2260,15 +2263,7 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     if bool(entry.get("pinned")):
         raise ValueError(f"@{name} is pinned to its current space. Unlock it before moving.")
     if str(entry.get("space_id") or "").strip() == new_space_id:
-        entry["active_space_id"] = new_space_id
-        entry["default_space_id"] = new_space_id
-        entry["active_space_name"] = entry.get("active_space_name") or entry.get("space_name") or new_space_id
-        entry["default_space_name"] = entry.get("default_space_name") or entry.get("space_name") or new_space_id
-        entry["allowed_spaces"] = _space_cache_with(
-            entry.get("allowed_spaces"),
-            new_space_id,
-            name=str(entry.get("active_space_name") or entry.get("space_name") or new_space_id),
-        )
+        apply_entry_current_space(entry, new_space_id)
         ensure_gateway_identity_binding(registry, entry, session=load_gateway_session())
         save_gateway_registry(registry)
         return annotate_runtime_health(entry, registry=registry)
@@ -2320,18 +2315,9 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
             # Resync best-effort; the placement write already succeeded.
             continue
     previous_space_id = str(entry.get("space_id") or "").strip() or None
-    entry["space_id"] = backend_space_id
-    entry["active_space_id"] = backend_space_id
-    entry["default_space_id"] = backend_space_id
-    entry["active_space_name"] = backend_space_id
-    entry["default_space_name"] = backend_space_id
     if backend_allowed_spaces is not None:
         entry["allowed_spaces"] = backend_allowed_spaces
-    entry["allowed_spaces"] = _space_cache_with(
-        entry.get("allowed_spaces"),
-        backend_space_id,
-        name=str(entry.get("active_space_name") or entry.get("space_name") or backend_space_id),
-    )
+    apply_entry_current_space(entry, backend_space_id)
     ensure_gateway_identity_binding(registry, entry, session=load_gateway_session())
     save_gateway_registry(registry)
     record_gateway_activity(
@@ -5084,9 +5070,42 @@ def local_connect(
     as_json: bool = JSON_OPTION,
 ):
     """Request Gateway access for a local polling/pass-through agent."""
+    try:
+        payload = _request_local_connect(
+            agent_name=agent_name,
+            registry_ref=registry_ref,
+            gateway_url=gateway_url,
+            workdir=workdir,
+            space_id=space_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if as_json:
+        print_json(payload)
+        return
+    status = str(payload.get("status") or "pending")
+    connected_name = str(payload.get("agent", {}).get("name") or agent_name or registry_ref or "")
+    console.print(f"[bold]local connect[/bold] @{connected_name}: {status}")
+    if payload.get("registry_ref"):
+        console.print(f"  registry = {payload['registry_ref']}")
+    if payload.get("approval_id"):
+        console.print(f"  approval = {payload['approval_id']}")
+    if payload.get("session_token"):
+        console.print(f"  session  = {payload['session_token']}")
+        console.print(f"  expires  = {payload.get('expires_at')}")
+
+
+def _request_local_connect(
+    *,
+    agent_name: str | None = None,
+    registry_ref: str | None = None,
+    gateway_url: str = "http://127.0.0.1:8765",
+    workdir: str | None = None,
+    space_id: str | None = None,
+) -> dict:
     display_name = str(agent_name or registry_ref or "").strip()
     if not display_name:
-        raise typer.BadParameter("Provide a local agent name or --registry/--ref.")
+        raise ValueError("Provide a local agent name or --registry/--ref.")
     fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=workdir)
     body = {"fingerprint": fingerprint}
     if agent_name:
@@ -5109,42 +5128,76 @@ def local_connect(
             detail = exc.response.json().get("error", detail)
         except Exception:
             pass
-        raise typer.BadParameter(f"Gateway local connect failed: {detail}") from exc
+        raise ValueError(f"Gateway local connect failed: {detail}") from exc
     except Exception as exc:
-        raise typer.BadParameter(f"Gateway local connect failed: {exc}") from exc
-    if as_json:
-        print_json(payload)
-        return
-    status = str(payload.get("status") or "pending")
-    connected_name = str(payload.get("agent", {}).get("name") or agent_name or registry_ref or "")
-    console.print(f"[bold]local connect[/bold] @{connected_name}: {status}")
-    if payload.get("registry_ref"):
-        console.print(f"  registry = {payload['registry_ref']}")
-    if payload.get("approval_id"):
-        console.print(f"  approval = {payload['approval_id']}")
-    if payload.get("session_token"):
-        console.print(f"  session  = {payload['session_token']}")
-        console.print(f"  expires  = {payload.get('expires_at')}")
+        raise ValueError(f"Gateway local connect failed: {exc}") from exc
+    return payload
+
+
+def _resolve_local_gateway_session(
+    *,
+    session_token: str | None,
+    agent_name: str | None = None,
+    registry_ref: str | None = None,
+    gateway_url: str = "http://127.0.0.1:8765",
+    workdir: str | None = None,
+    space_id: str | None = None,
+) -> tuple[str, dict | None]:
+    token = str(session_token or "").strip()
+    if token:
+        return token, None
+    payload = _request_local_connect(
+        agent_name=agent_name,
+        registry_ref=registry_ref,
+        gateway_url=gateway_url,
+        workdir=workdir,
+        space_id=space_id,
+    )
+    token = str(payload.get("session_token") or "").strip()
+    if not token:
+        status = str(payload.get("status") or "pending")
+        approval_id = str(payload.get("approval_id") or "").strip()
+        suffix = f" Approval: {approval_id}" if approval_id else ""
+        raise ValueError(f"Gateway local session is {status}; approve the agent before sending.{suffix}")
+    return token, payload
 
 
 @local_app.command("send")
 def local_send(
     session_token: str = typer.Option(
-        ..., "--session-token", envvar="AX_GATEWAY_SESSION", help="Gateway session token"
+        None, "--session-token", envvar="AX_GATEWAY_SESSION", help="Gateway session token"
     ),
     content: str = typer.Argument(..., help="Message content"),
     space_id: str = typer.Option(None, "--space-id", help="Space to send into"),
+    agent_name: str = typer.Option(
+        None, "--agent", "--name", help="Approved local pass-through agent to connect as if no session token is set"
+    ),
+    registry_ref: str = typer.Option(
+        None, "--registry", "--ref", help="Existing Gateway registry row to connect as if no session token is set"
+    ),
+    workdir: str = typer.Option(None, "--workdir", help="Workspace folder to fingerprint when auto-connecting"),
     gateway_url: str = typer.Option("http://127.0.0.1:8765", "--url", help="Local Gateway UI/API URL"),
     parent_id: str = typer.Option(None, "--parent-id", help="Optional parent message id"),
     as_json: bool = JSON_OPTION,
 ):
     """Send through an approved local pass-through Gateway session."""
+    try:
+        resolved_session_token, connect_payload = _resolve_local_gateway_session(
+            session_token=session_token,
+            agent_name=agent_name,
+            registry_ref=registry_ref,
+            gateway_url=gateway_url,
+            workdir=workdir,
+            space_id=space_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     body = {"content": content, "space_id": space_id, "parent_id": parent_id}
     try:
         response = httpx.post(
             f"{gateway_url.rstrip('/')}/local/send",
             json=body,
-            headers={"X-Gateway-Session": session_token},
+            headers={"X-Gateway-Session": resolved_session_token},
             timeout=20.0,
         )
         response.raise_for_status()
@@ -5159,6 +5212,14 @@ def local_send(
     except Exception as exc:
         raise typer.BadParameter(f"Gateway local send failed: {exc}") from exc
     if as_json:
+        if connect_payload:
+            payload["connect"] = {
+                "status": connect_payload.get("status"),
+                "registry_ref": connect_payload.get("registry_ref"),
+                "agent": (connect_payload.get("agent") or {}).get("name")
+                if isinstance(connect_payload.get("agent"), dict)
+                else None,
+            }
         print_json(payload)
         return
     console.print(f"[green]Sent through Gateway[/green] as @{payload.get('agent')}")
@@ -5167,11 +5228,18 @@ def local_send(
 @local_app.command("inbox")
 def local_inbox(
     session_token: str = typer.Option(
-        ..., "--session-token", envvar="AX_GATEWAY_SESSION", help="Gateway session token"
+        None, "--session-token", envvar="AX_GATEWAY_SESSION", help="Gateway session token"
     ),
     limit: int = typer.Option(20, "--limit", min=1, max=100, help="Max messages to return"),
     channel: str = typer.Option("main", "--channel", help="Message channel"),
     space_id: str = typer.Option(None, "--space-id", help="Space to poll"),
+    agent_name: str = typer.Option(
+        None, "--agent", "--name", help="Approved local pass-through agent to connect as if no session token is set"
+    ),
+    registry_ref: str = typer.Option(
+        None, "--registry", "--ref", help="Existing Gateway registry row to connect as if no session token is set"
+    ),
+    workdir: str = typer.Option(None, "--workdir", help="Workspace folder to fingerprint when auto-connecting"),
     mark_read: bool = typer.Option(
         True,
         "--mark-read/--no-mark-read",
@@ -5181,6 +5249,17 @@ def local_inbox(
     as_json: bool = JSON_OPTION,
 ):
     """Poll an approved local pass-through Gateway inbox."""
+    try:
+        resolved_session_token, connect_payload = _resolve_local_gateway_session(
+            session_token=session_token,
+            agent_name=agent_name,
+            registry_ref=registry_ref,
+            gateway_url=gateway_url,
+            workdir=workdir,
+            space_id=space_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     params = {
         "limit": limit,
         "channel": channel,
@@ -5193,7 +5272,7 @@ def local_inbox(
         response = httpx.get(
             f"{gateway_url.rstrip('/')}/local/inbox",
             params=params,
-            headers={"X-Gateway-Session": session_token},
+            headers={"X-Gateway-Session": resolved_session_token},
             timeout=20.0,
         )
         response.raise_for_status()
@@ -5208,6 +5287,14 @@ def local_inbox(
     except Exception as exc:
         raise typer.BadParameter(f"Gateway local inbox failed: {exc}") from exc
     if as_json:
+        if connect_payload:
+            payload["connect"] = {
+                "status": connect_payload.get("status"),
+                "registry_ref": connect_payload.get("registry_ref"),
+                "agent": (connect_payload.get("agent") or {}).get("name")
+                if isinstance(connect_payload.get("agent"), dict)
+                else None,
+            }
         print_json(payload)
         return
     messages = payload.get("messages") or []
