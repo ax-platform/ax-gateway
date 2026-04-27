@@ -83,3 +83,31 @@ See `tests/test_reminders_commands.py`:
 ## Change log
 
 - 2026-04-16 — Initial contract (@demo-agent). Ships with tests + `_task_lifecycle` helper in `alerts.py`. Picks up source task status on every `_fire_policy` call; one extra GET per due policy (cost acceptable for local dogfood loop).
+
+
+## Pause/resume and grooming workflow (2026-04-27)
+
+Reminder policies now have a reversible pause state separate from permanent disable:
+
+- `axctl reminders pause <policy-id> --reason "blocked/noisy" [--resume-at ISO | --minutes N]`
+- `axctl reminders snooze <policy-id> --minutes N --reason "waiting for owner"`
+- `axctl reminders resume <policy-id> [--fire-in-minutes N]`
+- `axctl reminders groom [--apply]` reports stale/noisy/completed/orphaned policies and can disable completed/source-terminal reminders.
+
+Pause metadata is stored on the local policy as `paused`, `paused_reason`, `paused_by`, `paused_at`, `resume_at`, and `snooze_until`. The runner skips paused policies. If `resume_at`/`snooze_until` has passed, the runner auto-resumes the policy before checking whether it is due.
+
+`axctl reminders list --json` remains parse-safe and now includes:
+
+- top-level `policies`: the sorted policy list for backwards-compatible automation
+- `groups`: policies grouped into `due`, `active`, `paused`, `disabled`, `completed`, and `stale`
+- `summary`: counts by group
+
+### Agile reminder hygiene
+
+1. **Continue useful work:** keep active reminders only for tasks that still need a response or check-in.
+2. **Close/disable completed work:** terminal source tasks are skipped by the runner and should be disabled/removed during grooming.
+3. **Pause blocked/noisy work:** use pause/snooze with a clear reason instead of permanently disabling when work may become actionable again.
+4. **Resume when actionable:** set `resume_at`/`snooze_until` when possible; otherwise run `axctl reminders resume` when the blocker clears.
+5. **Groom regularly:** review `due`, `paused`, `disabled`, `completed`, and `stale` groups so junk reminders do not crowd out current work.
+
+`groom --apply` is intentionally conservative: it only disables reminders that are already completed by max-fires or whose source task resolves as terminal. Stale/orphaned/no-source reminders are reported for human review rather than silently deleted.

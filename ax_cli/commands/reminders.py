@@ -33,6 +33,8 @@ from .alerts import (
 
 app = typer.Typer(name="reminders", help="Local task reminder policy runner", no_args_is_help=True)
 
+STALE_AFTER_DAYS = 7
+
 
 def _now() -> _dt.datetime:
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0)
@@ -117,20 +119,112 @@ def _find_policy(store: dict[str, Any], policy_id: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _policy_rows(store: dict[str, Any]) -> list[dict[str, Any]]:
+def _parse_optional_iso(value: Any) -> _dt.datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return _parse_iso(value)
+    except Exception:
+        return None
+
+
+def _pause_until(first_at: str | None, minutes: int | None) -> str | None:
+    if first_at:
+        return _validate_timestamp(first_at, flag="--resume-at")
+    if minutes is not None:
+        if minutes < 1:
+            raise typer.BadParameter("--minutes must be at least 1")
+        return _iso(_now() + _dt.timedelta(minutes=minutes))
+    return None
+
+
+def _is_completed(policy: dict[str, Any]) -> bool:
+    try:
+        return int(policy.get("fired_count", 0)) >= int(policy.get("max_fires", 1))
+    except Exception:
+        return False
+
+
+def _is_paused(policy: dict[str, Any], *, now: _dt.datetime | None = None) -> bool:
+    if not policy.get("paused", False):
+        return False
+    resume_at = _parse_optional_iso(policy.get("resume_at") or policy.get("snooze_until"))
+    if now is not None and resume_at and resume_at <= now:
+        _resume_policy(policy, now=now, automatic=True)
+        return False
+    return True
+
+
+def _resume_policy(policy: dict[str, Any], *, now: _dt.datetime, automatic: bool = False) -> None:
+    policy["paused"] = False
+    policy["paused_reason"] = None
+    policy["resume_at"] = None
+    policy["snooze_until"] = None
+    policy["resumed_at"] = _iso(now)
+    policy["resumed_by"] = "auto_resume_at" if automatic else "operator"
+    policy["updated_at"] = _iso(now)
+
+
+def _policy_state(policy: dict[str, Any], *, now: _dt.datetime) -> str:
+    if _is_paused(policy, now=now):
+        return "paused"
+    if _is_completed(policy):
+        return "completed"
+    if not policy.get("enabled", True):
+        return "disabled"
+    next_fire = _parse_optional_iso(policy.get("next_fire_at"))
+    if next_fire and next_fire < now - _dt.timedelta(days=STALE_AFTER_DAYS):
+        return "stale"
+    if next_fire and next_fire <= now:
+        return "due"
+    return "active"
+
+
+def _policy_sort_key(policy: dict[str, Any], *, now: _dt.datetime) -> tuple[int, _dt.datetime, str]:
+    state_rank = {"due": 0, "active": 1, "paused": 2, "stale": 3, "disabled": 4, "completed": 5}
+    state = _policy_state(policy, now=now)
+    next_fire = _parse_optional_iso(policy.get("next_fire_at")) or _dt.datetime.max.replace(tzinfo=_dt.timezone.utc)
+    if state == "paused":
+        next_fire = _parse_optional_iso(policy.get("resume_at") or policy.get("snooze_until")) or next_fire
+    return (state_rank.get(state, 99), next_fire, str(policy.get("id") or ""))
+
+
+def _grouped_policy_payload(store: dict[str, Any], *, now: _dt.datetime) -> dict[str, Any]:
+    policies = [p for p in store.get("policies", []) if isinstance(p, dict)]
+    ordered = sorted(policies, key=lambda p: _policy_sort_key(p, now=now))
+    groups: dict[str, list[dict[str, Any]]] = {
+        "due": [],
+        "active": [],
+        "paused": [],
+        "disabled": [],
+        "completed": [],
+        "stale": [],
+    }
+    for policy in ordered:
+        state = _policy_state(policy, now=now)
+        view = dict(policy)
+        view["state"] = state
+        groups.setdefault(state, []).append(view)
+    return {"policies": ordered, "groups": groups, "summary": {k: len(v) for k, v in groups.items()}}
+
+
+def _policy_rows(store: dict[str, Any], *, now: _dt.datetime | None = None) -> list[dict[str, Any]]:
     rows = []
-    for policy in store.get("policies", []):
-        if not isinstance(policy, dict):
-            continue
+    now = now or _now()
+    policies = [p for p in store.get("policies", []) if isinstance(p, dict)]
+    for policy in sorted(policies, key=lambda p: _policy_sort_key(p, now=now)):
+        state = _policy_state(policy, now=now)
         rows.append(
             {
                 "id": policy.get("id", ""),
+                "state": state,
                 "enabled": policy.get("enabled", True),
                 "task": policy.get("source_task_id", ""),
                 "target": policy.get("target") or "(task default)",
                 "next_fire": policy.get("next_fire_at", ""),
+                "resume_at": policy.get("resume_at") or policy.get("snooze_until") or "",
                 "fires": f"{policy.get('fired_count', 0)}/{policy.get('max_fires', '-')}",
-                "reason": policy.get("reason", ""),
+                "reason": policy.get("paused_reason") if state == "paused" else policy.get("reason", ""),
             }
         )
     return rows
@@ -211,17 +305,22 @@ def list_policies(
     """List local reminder policies."""
     path = _policy_file(policy_file)
     store = _load_store(path)
+    now = _now()
+    payload = _grouped_policy_payload(store, now=now)
     if as_json:
-        print_json({"file": str(path), "policies": store.get("policies", [])})
+        print_json({"file": str(path), **payload})
         return
-    rows = _policy_rows(store)
+    rows = _policy_rows(store, now=now)
     if not rows:
         console.print(f"No reminder policies in {path}")
         return
+    console.print(
+        "Reminder policy groups: " + ", ".join(f"{key}={value}" for key, value in payload["summary"].items() if value)
+    )
     print_table(
-        ["ID", "Enabled", "Task", "Target", "Next Fire", "Fires", "Reason"],
+        ["ID", "State", "Enabled", "Task", "Target", "Next Fire", "Resume At", "Fires", "Reason"],
         rows,
-        keys=["id", "enabled", "task", "target", "next_fire", "fires", "reason"],
+        keys=["id", "state", "enabled", "task", "target", "next_fire", "resume_at", "fires", "reason"],
     )
 
 
@@ -242,6 +341,190 @@ def disable(
         print_json({"policy": policy, "file": str(path)})
         return
     console.print(f"Disabled reminder policy {policy['id']}")
+
+
+@app.command("pause")
+def pause(
+    policy_id: str = typer.Argument(..., help="Policy ID or unique prefix"),
+    reason: str = typer.Option("Paused by operator.", "--reason", "-r", help="Why this reminder is not actionable"),
+    resume_at: Optional[str] = typer.Option(None, "--resume-at", help="Optional ISO-8601 auto-resume time"),
+    minutes: Optional[int] = typer.Option(None, "--minutes", help="Snooze/pause for N minutes"),
+    paused_by: Optional[str] = typer.Option(None, "--paused-by", help="Operator or agent pausing the policy"),
+    policy_file: Optional[str] = typer.Option(None, "--file", help="Reminder policy JSON file"),
+    as_json: bool = JSON_OPTION,
+) -> None:
+    """Pause a reminder without permanently disabling it."""
+    path = _policy_file(policy_file)
+    store = _load_store(path)
+    policy = _find_policy(store, policy_id)
+    now = _now()
+    until = _pause_until(resume_at, minutes)
+    policy["paused"] = True
+    policy["paused_reason"] = reason
+    policy["paused_by"] = paused_by or "operator"
+    policy["paused_at"] = _iso(now)
+    policy["resume_at"] = until
+    policy["snooze_until"] = until
+    policy["updated_at"] = _iso(now)
+    _save_store(path, store)
+    if as_json:
+        print_json({"policy": policy, "file": str(path), "state": "paused"})
+        return
+    console.print(f"Paused reminder policy {policy['id']}")
+
+
+@app.command("snooze")
+def snooze(
+    policy_id: str = typer.Argument(..., help="Policy ID or unique prefix"),
+    minutes: int = typer.Option(30, "--minutes", "-m", help="Minutes to pause before auto-resume"),
+    reason: str = typer.Option("Snoozed by operator.", "--reason", "-r", help="Why this reminder is being snoozed"),
+    policy_file: Optional[str] = typer.Option(None, "--file", help="Reminder policy JSON file"),
+    as_json: bool = JSON_OPTION,
+) -> None:
+    """Temporarily pause a reminder until a future time."""
+    pause(
+        policy_id,
+        reason=reason,
+        resume_at=None,
+        minutes=minutes,
+        paused_by="operator",
+        policy_file=policy_file,
+        as_json=as_json,
+    )
+
+
+@app.command("resume")
+def resume(
+    policy_id: str = typer.Argument(..., help="Policy ID or unique prefix"),
+    fire_in: int = typer.Option(0, "--fire-in-minutes", help="Set next fire to N minutes from now on resume"),
+    policy_file: Optional[str] = typer.Option(None, "--file", help="Reminder policy JSON file"),
+    as_json: bool = JSON_OPTION,
+) -> None:
+    """Resume a paused reminder policy."""
+    if fire_in < 0:
+        raise typer.BadParameter("--fire-in-minutes cannot be negative")
+    path = _policy_file(policy_file)
+    store = _load_store(path)
+    policy = _find_policy(store, policy_id)
+    now = _now()
+    _resume_policy(policy, now=now)
+    policy["enabled"] = True
+    policy["next_fire_at"] = _iso(now + _dt.timedelta(minutes=fire_in))
+    _save_store(path, store)
+    if as_json:
+        print_json({"policy": policy, "file": str(path), "state": _policy_state(policy, now=now)})
+        return
+    console.print(f"Resumed reminder policy {policy['id']}")
+
+
+def _groom_report(store: dict[str, Any], *, now: _dt.datetime, check_tasks: bool) -> dict[str, Any]:
+    client = get_client() if check_tasks else None
+    items = []
+    for policy in [p for p in store.get("policies", []) if isinstance(p, dict)]:
+        reasons: list[str] = []
+        state = _policy_state(policy, now=now)
+        if state in {"disabled", "completed"}:
+            reasons.append(f"state:{state}")
+        next_fire = _parse_optional_iso(policy.get("next_fire_at"))
+        if policy.get("next_fire_at") and not next_fire:
+            reasons.append("invalid_next_fire_at")
+        elif (
+            next_fire
+            and next_fire < now - _dt.timedelta(days=STALE_AFTER_DAYS)
+            and state not in {"disabled", "completed"}
+        ):
+            reasons.append("stale_next_fire_at")
+        if policy.get("paused") and not policy.get("paused_reason"):
+            reasons.append("paused_without_reason")
+        source_task = str(policy.get("source_task_id") or "")
+        if check_tasks and source_task and client is not None:
+            lifecycle = _task_lifecycle(client, source_task)
+            if lifecycle and lifecycle.get("is_terminal"):
+                reasons.append(f"source_task_terminal:{lifecycle.get('status')}")
+            elif lifecycle is None:
+                reasons.append("source_task_unresolved")
+        elif not source_task:
+            reasons.append("no_source_task")
+        recommendation = "keep"
+        if any(r.startswith("source_task_terminal") for r in reasons) or state == "completed":
+            recommendation = "disable_or_remove_completed"
+        elif state == "paused":
+            recommendation = "resume_when_actionable_or_disable_if_junk"
+        elif "stale_next_fire_at" in reasons or "source_task_unresolved" in reasons:
+            recommendation = "review_stale_or_orphaned"
+        elif state == "disabled":
+            recommendation = "remove_if_no_longer_needed"
+        if reasons:
+            items.append(
+                {
+                    "policy_id": policy.get("id"),
+                    "state": state,
+                    "source_task_id": source_task,
+                    "reasons": reasons,
+                    "recommendation": recommendation,
+                }
+            )
+    return {
+        "summary": {
+            "checked": len([p for p in store.get("policies", []) if isinstance(p, dict)]),
+            "needs_attention": len(items),
+        },
+        "items": items,
+        "hygiene": [
+            "Close or disable reminders for completed work.",
+            "Pause blocked/noisy reminders with a reason and resume_at when possible.",
+            "Resume reminders when work is actionable again; keep next_fire_at near the next useful check-in.",
+            "Use list groups to groom due, paused, disabled, completed, and stale reminders regularly.",
+        ],
+    }
+
+
+@app.command("groom")
+def groom(
+    check_tasks: bool = typer.Option(
+        True, "--check-tasks/--no-check-tasks", help="Fetch source tasks to identify terminal/orphaned reminders"
+    ),
+    apply: bool = typer.Option(False, "--apply", help="Disable completed/source-terminal reminder policies"),
+    policy_file: Optional[str] = typer.Option(None, "--file", help="Reminder policy JSON file"),
+    as_json: bool = JSON_OPTION,
+) -> None:
+    """Report noisy, stale, completed, or orphaned reminder policies."""
+    path = _policy_file(policy_file)
+    store = _load_store(path)
+    now = _now()
+    report = _groom_report(store, now=now, check_tasks=check_tasks)
+    changed: list[str] = []
+    if apply:
+        attention = {item["policy_id"]: item for item in report["items"]}
+        for policy in [p for p in store.get("policies", []) if isinstance(p, dict)]:
+            item = attention.get(policy.get("id"))
+            if not item:
+                continue
+            if item["recommendation"] == "disable_or_remove_completed":
+                policy["enabled"] = False
+                policy["paused"] = False
+                policy["disabled_reason"] = ",".join(item["reasons"])
+                policy["updated_at"] = _iso(now)
+                changed.append(str(policy.get("id")))
+        if changed:
+            _save_store(path, store)
+    report["file"] = str(path)
+    report["changed"] = changed
+    if as_json:
+        print_json(report)
+        return
+    console.print(
+        f"Reminder grooming: {report['summary']['needs_attention']} need attention / {report['summary']['checked']} checked"
+    )
+    if report["items"]:
+        print_table(
+            ["Policy", "State", "Task", "Reasons", "Recommendation"],
+            report["items"],
+            keys=["policy_id", "state", "source_task_id", "reasons", "recommendation"],
+        )
+    console.print("Hygiene:")
+    for item in report["hygiene"]:
+        console.print(f"  - {item}")
 
 
 def _fire_policy(client: Any, policy: dict[str, Any], *, now: _dt.datetime) -> dict[str, Any]:
@@ -337,6 +620,8 @@ def _due_policies(store: dict[str, Any], *, now: _dt.datetime) -> list[dict[str,
     due = []
     for policy in store.get("policies", []):
         if not isinstance(policy, dict) or not policy.get("enabled", True):
+            continue
+        if _is_paused(policy, now=now):
             continue
         if int(policy.get("fired_count", 0)) >= int(policy.get("max_fires", 1)):
             policy["enabled"] = False

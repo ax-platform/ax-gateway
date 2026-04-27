@@ -521,3 +521,185 @@ def test_run_once_pending_review_falls_back_to_creator_when_no_owner(monkeypatch
     assert sent["content"].startswith("@chatgpt Reminder:"), "falls back to creator"
     metadata = sent["metadata"]
     assert metadata["reminder_policy"]["target_resolved_from"] == "creator_fallback"
+
+
+def test_pause_skips_due_policy_and_resume_reactivates(monkeypatch, tmp_path):
+    fake = _FakeClient()
+    _install_fake_runtime(monkeypatch, fake)
+    policy_file = tmp_path / "reminders.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "policies": [
+                    {
+                        "id": "rem-pause",
+                        "enabled": True,
+                        "space_id": "space-abc",
+                        "source_task_id": "task-1",
+                        "reason": "review task state",
+                        "target": "demo-agent",
+                        "severity": "info",
+                        "cadence_seconds": 300,
+                        "next_fire_at": "2026-04-16T00:00:00Z",
+                        "max_fires": 2,
+                        "fired_count": 0,
+                        "fired_keys": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    pause_result = runner.invoke(
+        app,
+        [
+            "reminders",
+            "pause",
+            "rem-pause",
+            "--reason",
+            "blocked until review",
+            "--paused-by",
+            "cli_sentinel",
+            "--file",
+            str(policy_file),
+            "--json",
+        ],
+    )
+    assert pause_result.exit_code == 0, pause_result.output
+    stored = _load(policy_file)["policies"][0]
+    assert stored["paused"] is True
+    assert stored["paused_reason"] == "blocked until review"
+    assert stored["paused_by"] == "cli_sentinel"
+
+    run_result = runner.invoke(app, ["reminders", "run", "--once", "--file", str(policy_file), "--json"])
+    assert run_result.exit_code == 0, run_result.output
+    assert fake.sent == []
+    assert _load(policy_file)["policies"][0]["fired_count"] == 0
+
+    resume_result = runner.invoke(
+        app,
+        ["reminders", "resume", "rem-pause", "--fire-in-minutes", "0", "--file", str(policy_file), "--json"],
+    )
+    assert resume_result.exit_code == 0, resume_result.output
+    resumed = _load(policy_file)["policies"][0]
+    assert resumed["paused"] is False
+    assert resumed["enabled"] is True
+    assert resumed["resume_at"] is None
+
+    fired_result = runner.invoke(app, ["reminders", "run", "--once", "--file", str(policy_file), "--json"])
+    assert fired_result.exit_code == 0, fired_result.output
+    assert len(fake.sent) == 1
+
+
+def test_list_json_groups_policies_by_operational_state(tmp_path):
+    policy_file = tmp_path / "reminders.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "policies": [
+                    {
+                        "id": "rem-due",
+                        "enabled": True,
+                        "space_id": "space-abc",
+                        "source_task_id": "task-1",
+                        "next_fire_at": "2026-04-27T06:00:00Z",
+                        "max_fires": 5,
+                        "fired_count": 0,
+                    },
+                    {
+                        "id": "rem-paused",
+                        "enabled": True,
+                        "paused": True,
+                        "paused_reason": "too noisy",
+                        "resume_at": "2999-01-01T00:00:00Z",
+                        "source_task_id": "task-2",
+                        "next_fire_at": "2026-04-27T06:00:00Z",
+                        "max_fires": 5,
+                        "fired_count": 0,
+                    },
+                    {
+                        "id": "rem-disabled",
+                        "enabled": False,
+                        "source_task_id": "task-3",
+                        "next_fire_at": "2999-01-01T00:00:00Z",
+                        "max_fires": 5,
+                        "fired_count": 0,
+                    },
+                    {
+                        "id": "rem-complete",
+                        "enabled": False,
+                        "source_task_id": "task-4",
+                        "next_fire_at": "2999-01-01T00:00:00Z",
+                        "max_fires": 1,
+                        "fired_count": 1,
+                    },
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["reminders", "list", "--file", str(policy_file), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert [p["id"] for p in payload["groups"]["paused"]] == ["rem-paused"]
+    assert [p["id"] for p in payload["groups"]["disabled"]] == ["rem-disabled"]
+    assert [p["id"] for p in payload["groups"]["completed"]] == ["rem-complete"]
+    assert "summary" in payload
+    assert payload["policies"][0]["id"] in {"rem-due", "rem-paused", "rem-disabled", "rem-complete"}
+
+
+def test_groom_reports_terminal_source_task_and_apply_disables(monkeypatch, tmp_path):
+    _install_task_aware_client(
+        monkeypatch,
+        {
+            "/tasks/task-done": {
+                "task": {
+                    "id": "task-done",
+                    "title": "Already shipped",
+                    "status": "completed",
+                    "assignee_id": "agent-demo-agent",
+                }
+            },
+            "/agents/agent-demo-agent": {"agent": {"id": "agent-demo-agent", "name": "demo-agent"}},
+        },
+    )
+    policy_file = tmp_path / "reminders.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "policies": [
+                    {
+                        "id": "rem-groom",
+                        "enabled": True,
+                        "space_id": "space-abc",
+                        "source_task_id": "task-done",
+                        "reason": "finished work",
+                        "target": "demo-agent",
+                        "cadence_seconds": 300,
+                        "next_fire_at": "2999-01-01T00:00:00Z",
+                        "max_fires": 5,
+                        "fired_count": 0,
+                        "fired_keys": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(app, ["reminders", "groom", "--file", str(policy_file), "--json"])
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["summary"]["needs_attention"] == 1
+    assert report["items"][0]["reasons"] == ["source_task_terminal:completed"]
+    assert report["items"][0]["recommendation"] == "disable_or_remove_completed"
+    assert any("Pause blocked/noisy" in item for item in report["hygiene"])
+
+    apply_result = runner.invoke(app, ["reminders", "groom", "--apply", "--file", str(policy_file), "--json"])
+    assert apply_result.exit_code == 0, apply_result.output
+    assert json.loads(apply_result.output)["changed"] == ["rem-groom"]
+    stored = _load(policy_file)["policies"][0]
+    assert stored["enabled"] is False
+    assert stored["disabled_reason"] == "source_task_terminal:completed"
