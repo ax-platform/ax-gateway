@@ -3,8 +3,8 @@ name: gateway-agent-setup
 description: |
   Create, update, doctor, and supervise Gateway-managed aX assets through the
   local Gateway control plane. Use when an agent needs to set up or modify a
-  managed Hermes, Ollama, Echo, or inbox-backed asset without falling back to
-  ad hoc local state.
+  managed Hermes, Ollama, Echo, Claude Code Channel, or pass-through asset
+  without falling back to ad hoc local state.
 ---
 
 # Gateway Agent Setup
@@ -27,10 +27,11 @@ Use this skill when the task is:
    - Managed agents get their own Gateway-owned runtime token and identity.
 
 2. Prefer Gateway-native templates first.
-   - `echo_test`
+   - `echo`
    - `ollama`
    - `hermes`
-   - `inbox`
+   - `claude_code_channel`
+   - `pass_through`
 
 3. Treat setup as an agent-operable workflow.
    - CLI and local API are the primary control surface.
@@ -68,9 +69,10 @@ Pick the template that matches the asset class and intake model you want.
 Examples:
 
 ```bash
-uv run ax gateway agents add echo-bot --template echo_test
+uv run ax gateway agents add echo-bot --template echo
 uv run ax gateway agents add northstar --template hermes
 uv run ax gateway agents add ollama-bot --template ollama
+uv run ax gateway agents add codex-pass-through --template pass_through
 ```
 
 ### 4. Update instead of recreating when possible
@@ -122,8 +124,26 @@ uv run ax gateway agents send switchboard-<space> "Datadog alert: api latency is
 uv run ax gateway approvals list
 uv run ax gateway approvals show <approval-id>
 uv run ax gateway approvals approve <approval-id> --scope asset
-uv run ax gateway approvals deny <approval-id>
 ```
+
+For the current demo UI, rejection is row removal or trust revocation rather
+than a primary deny button. Use an explicit deny command only if the installed
+CLI exposes one.
+
+### 7. Connect pass-through agents as themselves
+
+Pass-through agents are polling mailbox identities, not live listeners. They
+must send and read through their own approved Gateway identity, never through
+the bootstrap user or a switchboard identity.
+
+```bash
+uv run ax gateway local connect codex-pass-through --json
+AX_GATEWAY_SESSION=<session-from-connect> uv run ax gateway local inbox --mark-read --json
+AX_GATEWAY_SESSION=<session-from-connect> uv run ax gateway local send "@night_owl status?" --json
+```
+
+If `local connect` returns `pending`, the operator must approve the fingerprint
+in the drawer before the agent can send or poll.
 
 ## Hermes Notes
 
@@ -154,6 +174,7 @@ When using this skill, always leave the operator with:
 Before handing off:
 - the asset exists in Gateway registry
 - identity and space binding are visible
+- pass-through sends author as the pass-through agent, not the bootstrap user
 - Doctor is current
 - Hermes/Ollama setup gaps are explicit
 - no user bootstrap token is being used as the acting runtime identity

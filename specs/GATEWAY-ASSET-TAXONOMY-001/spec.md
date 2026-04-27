@@ -117,6 +117,7 @@ How Gateway gets work into the asset.
 | --- | --- |
 | `live_listener` | Asset is already listening and can claim work now |
 | `launch_on_send` | Gateway launches or invokes the asset when work arrives |
+| `polling_mailbox` | Gateway holds work until an approved local agent checks its mailbox |
 | `queue_accept` | Gateway can durably accept work for later handling |
 | `queue_drain` | Worker process drains already-queued work |
 | `scheduled_run` | Gateway invokes the asset because of a schedule |
@@ -130,6 +131,8 @@ What started a particular invocation.
 | Value | Meaning |
 | --- | --- |
 | `direct_message` | User or agent sent a normal message |
+| `mailbox_poll` | A pass-through agent checked its Gateway mailbox |
+| `manual_check` | Operator or local process explicitly checked for work |
 | `queued_job` | Work item was pulled from a queue |
 | `scheduled_invocation` | Scheduler fired |
 | `external_alert` | External system event or alert fired |
@@ -143,6 +146,7 @@ Where the outcome is expected to go.
 | Value | Meaning |
 | --- | --- |
 | `inline_reply` | Normal reply in the current conversation or thread |
+| `manual_reply` | Pass-through agent replies when it next checks in |
 | `sender_inbox` | Result lands in the sender's inbox or notification stream |
 | `summary_post` | Background result is summarized later |
 | `task_update` | Outcome updates a task/job record rather than posting a chat reply |
@@ -166,9 +170,11 @@ Queue-backed assets may also declare how queued work is later processed.
 
 | Value | Meaning |
 | --- | --- |
+| `agent_check_in` | An approved local agent checks/polls Gateway for mailbox work |
 | `queue_drain` | One or more workers later claim work from the durable queue |
 
-This field is only relevant when `intake_model=queue_accept`.
+This field is relevant when work is held by Gateway and later claimed by a
+separate process, including `queue_accept` and `polling_mailbox`.
 
 ## Queue-backed Semantics
 
@@ -195,6 +201,7 @@ UX:
 
 - `Live Listener`
 - `On-Demand Agent`
+- `Pass-through Agent`
 - `Inbox Worker`
 - `Scheduled Job`
 - `Alert Listener`
@@ -210,6 +217,12 @@ Already listening now. Messages can be picked up immediately.
 #### `On-Demand Agent`
 
 Starts or attaches when work arrives. Cold start may apply.
+
+#### `Pass-through Agent`
+
+Mailbox-backed identity for a local agent that checks Gateway when available.
+Gateway can accept messages for it, but the UI must not imply it is listening
+live.
 
 #### `Inbox Worker`
 
@@ -267,6 +280,17 @@ intake_model=queue_accept
 worker_model=queue_drain
 -> placement=mailbox
 -> activation=queue_worker
+-> mode=INBOX
+```
+
+#### Pass-through mailbox agent
+
+```text
+asset_class=interactive_agent
+intake_model=polling_mailbox
+worker_model=agent_check_in
+-> placement=mailbox
+-> activation=attach_only
 -> mode=INBOX
 ```
 
@@ -366,6 +390,27 @@ reply: REPLY
 If Codex later keeps a live attached session instead of launching on send, the
 taxonomy changes to `intake_model=live_listener` but it remains an
 `interactive_agent`.
+
+### Codex pass-through
+
+```yaml
+asset_class: interactive_agent
+intake_model: polling_mailbox
+worker_model: agent_check_in
+trigger_source:
+  - mailbox_poll
+  - manual_check
+return_path:
+  - manual_reply
+  - summary_post
+telemetry_shape: basic
+mode: INBOX
+reply: SUMMARY
+```
+
+The user-facing category is `Pass-through Agent`. See
+**GATEWAY-PASS-THROUGH-MAILBOX-001** for approval, fingerprinting, and mailbox
+count semantics.
 
 ### Inbox docs worker
 

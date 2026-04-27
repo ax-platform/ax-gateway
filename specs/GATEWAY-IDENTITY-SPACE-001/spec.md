@@ -3,7 +3,7 @@
 **Status:** Draft  
 **Owner:** @madtank  
 **Date:** 2026-04-22  
-**Related:** GATEWAY-CONNECTIVITY-001, CONNECTED-ASSET-GOVERNANCE-001, RUNTIME-CONFIG-001, AGENT-PAT-001, IDENTIFIER-DISPLAY-001, CONTRACT-QA-001
+**Related:** GATEWAY-CONNECTIVITY-001, GATEWAY-AGENT-REGISTRY-001, CONNECTED-ASSET-GOVERNANCE-001, RUNTIME-CONFIG-001, AGENT-PAT-001, IDENTIFIER-DISPLAY-001, CONTRACT-QA-001
 
 ## Purpose
 
@@ -37,6 +37,9 @@ explicitly.
 - [CONNECTED-ASSET-GOVERNANCE-001](../CONNECTED-ASSET-GOVERNANCE-001/spec.md)
   defines asset registry, provenance, approvals, attestation, grants, and
   audit.
+- [GATEWAY-AGENT-REGISTRY-001](../GATEWAY-AGENT-REGISTRY-001/spec.md)
+  defines the local registry row, `.ax/config.toml` pointer, local origin
+  fingerprint, and self-profile model.
 - This spec defines the missing identity-and-space layer between them:
   - who Gateway is acting as,
   - where it is acting,
@@ -97,6 +100,8 @@ These must not be conflated.
   space
 - sender actions succeed through a user credential path when the operator
   expected agent-authored behavior
+- a pass-through agent sends through the Gateway bootstrap user session instead
+  of its own Gateway-managed agent credential
 
 ### Correct behavior
 
@@ -106,6 +111,8 @@ These must not be conflated.
 - Gateway shows `allowed spaces: ax-cli-dev, madtank's Workspace`
 - if `codex` has no prod binding or no access to `ax-cli-dev`, Gateway blocks
   the action and says so
+- once approved, `codex` sends, reads tasks, and polls messages through its own
+  managed agent identity from that registered directory
 
 ## Definitions
 

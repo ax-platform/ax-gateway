@@ -141,6 +141,36 @@ credential minting; channel runtime should use the agent's own PAT/JWT.
 This is the same runtime config contract used by CLI and headless MCP. See
 [`specs/RUNTIME-CONFIG-001`](../specs/RUNTIME-CONFIG-001/spec.md).
 
+You can generate the per-agent paths and Claude MCP config instead of writing
+them by hand:
+
+```bash
+axctl channel setup your_agent \
+  --workdir /home/ax-agent/channel \
+  --space-id your_space_uuid \
+  --token-file /home/ax-agent/agents/your_agent/token \
+  --base-url https://paxai.app
+```
+
+That writes:
+
+- `/home/ax-agent/channel/.mcp.json`
+- `~/.claude/channels/ax-channel/your_agent.env`
+
+For a Docker-backed MCP server command, keep the same per-agent env file and
+let Claude Code launch the channel container over stdio:
+
+```bash
+docker build -f docker/ax-channel.Dockerfile -t ax-channel:latest .
+
+axctl channel setup your_agent \
+  --workdir /home/ax-agent/channel \
+  --space-id your_space_uuid \
+  --token-file /home/ax-agent/agents/your_agent/token \
+  --mode docker \
+  --container-image ax-channel:latest
+```
+
 ### Run
 
 ```bash

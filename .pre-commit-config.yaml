@@ -2,10 +2,14 @@
 # are caught before they reach a PR.
 #
 # CI runs (.github/workflows/ci.yml):
+#   - pytest tests/ -v --tb=short
+#   - pytest tests/ --cov=ax_cli --cov-report=term-missing --cov-fail-under=9
 #   - ruff check ax_cli/
 #   - ruff format --check ax_cli/
+#   - python -m build
+#   - twine check dist/*
 #
-# These hooks run the same checks locally on every git commit. If a commit
+# These hooks run the same gates locally on every git commit. If a commit
 # would fail in CI, it fails locally first — no more red PRs from things that
 # could have been caught at commit time.
 #
@@ -40,3 +44,12 @@ repos:
         files: ^ax_cli/.*\.py$
       - id: ruff-format
         files: ^ax_cli/.*\.py$
+
+  - repo: local
+    hooks:
+      - id: ci-test-build
+        name: CI tests, coverage, build, and twine check
+        entry: uv run --with build --with twine --with pytest-cov --with ruff scripts/ci-check.sh
+        language: system
+        pass_filenames: false
+        always_run: true

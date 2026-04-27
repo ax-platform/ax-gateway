@@ -88,7 +88,15 @@ For non-Gateway agents: `applied` is the best aX can confirm; UI must show `runt
 4. Gateway (on receiving event):
    - Validates locally (defense in depth).
    - Updates its local SQLite placement table.
-   - Signals the agent runtime — for `hermes_sentinel`/`exec`, this is an environment update on next dispatch; for long-running runtimes with a session, the Gateway sends a control message.
+   - Rebinds the agent runtime before the next dispatch. For simple listener
+     runtimes this means canceling/restarting the listener in the new space.
+     For long-running session runtimes this may become a control message, but
+     the runtime cannot continue consuming from the previous space after the
+     placement record changes.
+   - If the runtime is currently processing work, Gateway should surface a
+     pending move and let the operator wait or force-cancel. The MVP may
+     force-rebind immediately for correctness, but must log `runtime_rebinding`
+     so the interruption is visible.
    - Posts `PATCH /api/v1/agents/{id}/placement/ack` with `{placement_state: applied | acked | failed, runtime_pid, ack_at}`.
 5. Backend transitions state and emits a second SSE for any UI listening.
 
@@ -128,7 +136,11 @@ CREATE TABLE agent_placement (
 );
 ```
 
-This **replaces** scattered `.ax/config.toml` `space_id` fields for Gateway-managed agents. Direct-mode agents continue to read their `.ax/config.toml` until they migrate.
+This **replaces** scattered `.ax/config.toml` `space_id` fields for
+Gateway-managed agents. A Gateway registry pointer may still include an
+expected `space_id` to explain drift, but it is not authoritative and changing
+it does not move the agent. Direct-mode agents continue to read their
+credential-bearing `.ax/config.toml` until they migrate.
 
 A periodic reconcile loop (every 60s, or on SSE event) calls `GET /api/v1/agents/{id}/placement` and rectifies divergence. Drift longer than 60s flags an alert in the activity stream.
 

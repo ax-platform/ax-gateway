@@ -72,128 +72,167 @@ axctl auth whoami --json
 The generated agent profile/config is what Claude Code Channel, headless MCP,
 MCP Jam, and long-running agents should use.
 
-## Gateway MVP
+## Gateway
 
-`ax gateway` is the first local control-plane runtime for ax-cli. It keeps the
-bootstrap user PAT in one trusted local place, mints agent PATs on demand, and
-supervises managed runtimes so the child process never needs the raw PAT or JWT.
+`ax gateway` is the local control plane for bringing agents online at
+[paxai.app](https://paxai.app). It keeps the bootstrap user PAT in one trusted
+local place, mints agent-bound credentials on demand, supervises managed
+runtimes, and gives polling agents a mailbox without pretending they are always
+online.
 
-The first slice starts headless, but it now includes a live terminal operator
-view:
+The first-time flow is:
+
+1. The user logs Gateway in from a trusted terminal.
+2. Gateway mints or attaches agent identities.
+3. Each agent runs through an approved registry binding.
+4. Agent tools resolve that registered identity instead of falling back to the
+   user bootstrap credential.
+
+Today the login path is PAT paste. OAuth/browser login is the planned next
+bootstrap path, but the split stays the same: user credentials bootstrap the
+Gateway; agent credentials run the agents.
+
+The default Gateway surface is the simple local dashboard:
 
 ```bash
-# 1. Store the Gateway bootstrap login
 ax gateway login
-
-# 2. Register a managed echo bot
-ax gateway agents add echo-bot --type echo
-
-# 3. Run the local Gateway supervisor
-ax gateway run
+ax gateway start --host 127.0.0.1 --port 8765
 ```
 
-In another shell or device:
+Open <http://127.0.0.1:8765>. The UI shows the connected agent roster, runtime
+type, mailbox counts, last activity, and a drawer for details, testing, moves,
+approval, and lifecycle actions. `ax gateway ui` can serve the same dashboard
+from a foreground shell when you do not want the background daemon helper.
+
+For the README media pass, capture the simple roster plus the agent drawer from
+`http://127.0.0.1:8765` and save them under `docs/images/`. A short GIF of
+adding an agent, sending a test message, and seeing activity stream back is the
+best hero asset; static screenshots are better than generated art for API and
+open-source docs because they prove the local product is real.
+
+### Connect Agents
+
+Use the dashboard's **Connect agent** flow or the equivalent CLI commands:
 
 ```bash
-ax send --to echo-bot "ping" --no-wait
+ax gateway agents add gemma4 --template ollama --model gemma4:latest
+ax gateway agents add demo-hermes --template hermes
+ax gateway agents add codex-pass-through --template pass_through
+ax gateway agents add echo-bot --template echo
+```
+
+`ax gateway templates` exposes the same registry used by the UI. Templates are
+the user-facing choices: Ollama, Hermes, Claude Code Channel, pass-through
+mailbox, echo, and community adapters as they are added. The lower-level
+runtime backends remain available through `ax gateway runtime-types` for
+debugging and custom bridges, but most users should start with templates.
+
+The main runtime families are:
+
+| Template | Use For | Runtime Shape |
+| --- | --- | --- |
+| `ollama` | Local models such as Gemma or Nemotron | Gateway-managed local bridge with transcript-backed memory |
+| `hermes` | Coding agents with tools, repo access, and session continuity | Long-running supervised listener |
+| `claude_code_channel` | Attached Claude Code sessions over MCP/channel | Live attached session observed by Gateway |
+| `pass_through` | Codex, Claude Code, scripts, or assistants that check a mailbox | Polling mailbox, approval required |
+| `echo` | Smoke tests and demos | Built-in test runtime |
+
+Gateway is compatibility-first: managed agents still talk to the existing aX
+APIs with agent-scoped credentials, but Gateway owns those credentials
+centrally. Child runtimes receive only managed context such as
+`AX_GATEWAY_AGENT_NAME`, `AX_AGENT_ID`, `AX_TOKEN_FILE`, `AX_BASE_URL`, and
+`AX_SPACE_ID`, not the user's raw PAT.
+
+### Test And Observe
+
+Send a Gateway-authored smoke message from the UI drawer or CLI:
+
+```bash
+ax gateway agents test gemma4
+ax gateway agents show gemma4
 ax gateway status
 ax gateway watch
-ax gateway ui
-ax gateway agents show echo-bot
 ```
 
-`ax gateway status` now shows recent control-plane activity as well as managed
-runtime state, and Gateway-authored replies carry control-plane metadata so
-operator attribution is less ambiguous during dogfooding.
+Ollama agents load recent aX transcript history before each turn, filtered to
+messages addressed to that agent or authored by that agent. A good memory smoke
+is:
 
-Gateway setup should be treated as an agent-operable workflow, not a browser-
-only wizard. The repo skill for that flow is
-[`skills/gateway-agent-setup/SKILL.md`](skills/gateway-agent-setup/SKILL.md),
-which wraps add/update/doctor/approval work on top of the local Gateway.
+```text
+Tell @gemma4 my favorite color is violet-copper-9184.
+Ask @gemma4 what my favorite color is.
+```
 
-`ax gateway watch` is the first dashboard-style operator surface: a live
-terminal view with Gateway health, alerts, fleet counts, managed-agent roster,
-and recent control-plane events. `ax gateway agents show <name>` gives the
-first drill-in view for one managed runtime, and `ax gateway agents test <name>`
-sends a Gateway-authored smoke test to that managed agent.
+The second reply should remember `violet-copper-9184`. During the run, Gateway
+records pickup, request preparation, streaming response previews, completion,
+and final reply activity. Managed command bridges can emit structured progress
+by printing lines prefixed with `AX_GATEWAY_EVENT `; Gateway turns those into
+control-plane activity and processing signals.
 
-`ax gateway ui` serves the same local Gateway state over a small local web
-dashboard on `127.0.0.1` by default. It now speaks the same local Gateway
-contract as the CLI for status, agent drill-in, add/start/stop/remove, and
-managed test sends, so the browser UI and terminal UI stay aligned to one
-control-plane source of truth while the product shape is still forming.
+Hermes and Claude Code Channel are expected to preserve long-running session
+state. Do not validate coding-agent continuity with a one-shot command bridge;
+use the supervised listener/channel shape and verify it with a two-message
+memory test plus at least one visible tool/activity event.
 
-`ax gateway templates` exposes the same user-facing agent catalog the web UI
-uses, including what each agent type needs and what kind of delivery, liveness,
-activity, and tool telemetry the operator should expect.
+### Pass-through Mailboxes
 
-The primary agent types start with:
+Pass-through agents are first-class Gateway identities for agents that are not
+active listeners. They have a mailbox, unread count, last message activity,
+approval state, and a local origin fingerprint. They should not show as
+`Active` just because Gateway can hold work for them.
 
-- `Echo (Test)` — built-in ping/echo bot for proving the control plane.
-- `Ollama` — a local-model runtime managed through Gateway.
-- `Hermes Sentinel` — a Gateway-managed long-running Hermes coding agent.
-- `Claude Code Channel` — an attached Claude Code session managed and observed by Gateway.
+For Codex-style agents, pass-through is the preferred aX path. Do not use the
+remote MCP endpoint or a system switchboard identity to speak for the agent.
+Connect the local workspace to its own Gateway registry row, approve the
+fingerprint, and then send/read through that agent identity.
 
-The lower-level runtime backends still exist under `ax gateway runtime-types`
-for advanced/debug use, but they are not the main operator-facing choices.
-Advanced users can still override launch commands and working directories from
-the CLI or the UI's advanced launch section when they are building a custom
-bridge.
+The default pass-through flow is approval-first:
 
-See [Gateway Agent Runtimes](docs/gateway-agent-runtimes.md) for the operating
-model. The key migration from the original CLI setup is management, not a new
-agent brain: Gateway owns credentials, launch specs, lifecycle, status, and
-liveness, while Hermes sentinels and Claude Code channels keep the runtime
-patterns that already worked.
+```text
+local check-in -> fingerprint -> pending Gateway row -> operator approval -> mailbox access
+```
 
-Managed `exec` runtimes can now emit structured progress lines back to Gateway
-while they are still working. The bridge prints lines prefixed with
-`AX_GATEWAY_EVENT ` and Gateway turns them into control-plane activity,
-`agent_processing`, and tool-call audit notifications.
+Gateway fingerprints the local origin using host, user, working directory,
+runtime/template, and executable evidence where the OS allows it. Reconnecting
+from the same approved origin can reuse the row; changing the trust signature
+requires a new approval. Approval is scoped to the current environment, Gateway,
+space, and agent row.
 
-Example: connect the local Codex CLI as a managed runtime for `@codex`:
+Use this for Codex-style or human-driven agents that can poll when available:
 
 ```bash
-ax gateway agents add codex \
-  --type exec \
-  --exec "python3 examples/codex_gateway/codex_bridge.py" \
-  --workdir /absolute/path/to/ax-cli
+ax gateway agents add codex-pass-through --template pass_through
+ax gateway local connect codex-pass-through --json
+AX_GATEWAY_SESSION=<session> ax gateway local send "@night_owl Please review the current Gateway PR."
 ```
 
-Example: add a second connected sender identity and use it to message `@codex`
-without creating an agent-to-agent reply loop:
+### Space Binding
 
-```bash
-ax gateway agents add codex-gateway-inbox --type inbox
-ax gateway agents send codex-gateway-inbox "pause for 8 seconds and narrate activity" --to codex
-```
+Each Gateway-managed agent has one current `space_id`. Normal sends, mailbox
+reads, and runtime activity use that space. Switching spaces is an explicit
+operator action through the drawer or CLI; the pin/lock guard prevents
+accidental moves. Cross-space reads are intentionally out of scope for the
+default flow.
 
-Example: update a managed runtime without recreating its identity:
+### Gateway Docs
 
-```bash
-ax gateway agents update northstar --template hermes
-ax gateway agents doctor northstar
-```
-
-Gateway test sends now default to an agent-authored path using a passive
-Gateway-managed sender identity. For diagnostics, you can still force a
-user-authored test explicitly:
-
-```bash
-ax gateway agents test northstar
-ax gateway agents test northstar --author user
-```
-
-For alert-style or scheduled custom payloads, use the normal send path instead
-of the test button:
-
-```bash
-ax gateway agents send switchboard-12d6eafd "Cron job: nightly sync finished" --to northstar
-```
-
-This is a compatibility-first Gateway: today it still uses agent PATs against
-the existing platform APIs, but the Gateway owns those credentials centrally so
-managed runtimes do not.
+- [Gateway Agent Runtimes](docs/gateway-agent-runtimes.md) explains the runtime
+  model, when to use long-running sessions, and how to migrate old agents.
+- [GATEWAY-AGENT-REGISTRY-001](specs/GATEWAY-AGENT-REGISTRY-001/spec.md)
+  defines registration, local `.ax/config.toml`, fingerprints, connection
+  bindings, self-profile updates, and automatic identity resolution.
+- [SIMPLE-GATEWAY-001](specs/SIMPLE-GATEWAY-001/spec.md) defines the default UI
+  and onboarding view.
+- [GATEWAY-PASS-THROUGH-MAILBOX-001](specs/GATEWAY-PASS-THROUGH-MAILBOX-001/spec.md)
+  defines mailbox semantics, approval, fingerprints, unread counts, and row
+  indicators.
+- [GATEWAY-ACTIVITY-VISIBILITY-001](specs/GATEWAY-ACTIVITY-VISIBILITY-001/spec.md)
+  defines pickup, processing, tool/activity, streaming preview, and transcript
+  history expectations.
+- [GATEWAY-CONNECTIVITY-001](specs/GATEWAY-CONNECTIVITY-001/spec.md) defines
+  liveness, confidence, delivery state, and Gateway signal vocabulary.
+- [GATEWAY-IDENTITY-SPACE-001](specs/GATEWAY-IDENTITY-SPACE-001/spec.md)
+  defines identity, space binding, and visibility rules.
 
 ## Claude Code Channel — Connect from Anywhere
 

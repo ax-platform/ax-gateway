@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import shutil
@@ -10,13 +11,15 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 import webbrowser
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
+import httpx
 import typer
 from rich import box
 from rich.columns import Columns
@@ -45,6 +48,7 @@ from ..gateway import (
     agent_dir,
     agent_token_path,
     annotate_runtime_health,
+    apply_entry_current_space,
     approve_gateway_approval,
     clear_gateway_ui_state,
     daemon_log_path,
@@ -54,12 +58,15 @@ from ..gateway import (
     ensure_local_asset_binding,
     evaluate_runtime_attestation,
     find_agent_entry,
+    find_agent_entry_by_ref,
     gateway_dir,
     gateway_environment,
     get_gateway_approval,
     hermes_setup_status,
     infer_asset_descriptor,
+    issue_local_session,
     list_gateway_approvals,
+    load_agent_pending_messages,
     load_gateway_managed_agent_token,
     load_gateway_registry,
     load_gateway_session,
@@ -67,11 +74,13 @@ from ..gateway import (
     ollama_setup_status,
     record_gateway_activity,
     remove_agent_entry,
+    save_agent_pending_messages,
     save_gateway_registry,
     save_gateway_session,
     ui_log_path,
     ui_status,
     upsert_agent_entry,
+    verify_local_session_token,
     write_gateway_ui_state,
 )
 from ..gateway_runtime_types import (
@@ -88,9 +97,11 @@ approvals_app = typer.Typer(name="approvals", help="Review and decide Gateway ap
 runtime_app = typer.Typer(
     name="runtime", help="Install and inspect runtime templates (Hermes, etc.)", no_args_is_help=True
 )
+local_app = typer.Typer(name="local", help="Connect local pass-through agents to Gateway", no_args_is_help=True)
 app.add_typer(agents_app, name="agents")
 app.add_typer(approvals_app, name="approvals")
 app.add_typer(runtime_app, name="runtime")
+app.add_typer(local_app, name="local")
 
 _STATE_STYLES = {
     "running": "green",
@@ -177,6 +188,31 @@ def _load_managed_agent_or_exit(name: str) -> dict:
     return entry
 
 
+def _registry_ref_for_agent(registry: dict, target: dict) -> str | None:
+    target_name = str(target.get("name") or "").lower()
+    target_install_id = str(target.get("install_id") or "")
+    for index, entry in enumerate(registry.get("agents", []), start=1):
+        if (
+            entry is target
+            or (target_name and str(entry.get("name") or "").lower() == target_name)
+            or (target_install_id and str(entry.get("install_id") or "") == target_install_id)
+        ):
+            return f"#{index}"
+    return None
+
+
+def _with_registry_refs(registry: dict, agent: dict) -> dict:
+    annotated = dict(agent)
+    ref = _registry_ref_for_agent(registry, agent)
+    if ref:
+        annotated["registry_ref"] = ref
+        annotated["registry_index"] = int(ref.lstrip("#"))
+    install_id = str(annotated.get("install_id") or "")
+    if install_id:
+        annotated["registry_code"] = install_id[:8]
+    return annotated
+
+
 def _load_managed_agent_client(entry: dict) -> AxClient:
     try:
         token = load_gateway_managed_agent_token(entry)
@@ -189,6 +225,276 @@ def _load_managed_agent_client(entry: dict) -> AxClient:
         agent_name=str(entry.get("name") or ""),
         agent_id=str(entry.get("agent_id") or "") or None,
     )
+
+
+def _local_process_fingerprint(
+    *,
+    agent_name: str,
+    cwd: str | None = None,
+    pid: int | None = None,
+    exe_path: str | None = None,
+) -> dict:
+    resolved_pid = int(pid or os.getpid())
+    resolved_cwd = str(Path(cwd or os.getcwd()).expanduser().resolve())
+    resolved_exe = str(Path(exe_path or sys.executable).expanduser())
+    fingerprint = {
+        "agent_name": agent_name,
+        "pid": resolved_pid,
+        "parent_pid": os.getppid() if resolved_pid == os.getpid() else None,
+        "cwd": resolved_cwd,
+        "exe_path": resolved_exe,
+        "user": getpass.getuser(),
+        "platform": sys.platform,
+    }
+    try:
+        fingerprint["exe_sha256"] = gateway_core._file_sha256(Path(resolved_exe))  # type: ignore[attr-defined]
+    except Exception:
+        fingerprint["exe_sha256"] = None
+    return fingerprint
+
+
+def _local_trust_signature(agent_name: str, fingerprint: dict) -> str:
+    payload = {
+        "agent_name": agent_name,
+        "exe_path": str(fingerprint.get("exe_path") or ""),
+        "cwd": str(fingerprint.get("cwd") or ""),
+        "user": str(fingerprint.get("user") or ""),
+    }
+    return gateway_core._payload_hash(payload)  # type: ignore[attr-defined]
+
+
+def _local_fingerprint_verification(fingerprint: dict) -> dict:
+    """Best-effort OS cross-check for the self-reported local fingerprint."""
+    pid = str(fingerprint.get("pid") or "").strip()
+    if not pid or not pid.isdigit():
+        return {"status": "unverified", "reason": "missing_pid"}
+    proc_root = Path("/proc") / pid
+    if not proc_root.exists():
+        return {"status": "unavailable", "reason": "procfs_unavailable"}
+    observed: dict[str, str] = {}
+    try:
+        observed["exe_path"] = str((proc_root / "exe").resolve())
+    except OSError:
+        pass
+    try:
+        observed["cwd"] = str((proc_root / "cwd").resolve())
+    except OSError:
+        pass
+    mismatches = []
+    for key in ("exe_path", "cwd"):
+        reported = str(fingerprint.get(key) or "")
+        if observed.get(key) and reported and observed[key] != reported:
+            mismatches.append({"field": key, "reported": reported, "observed": observed[key]})
+    if mismatches:
+        return {"status": "mismatch", "reason": "fingerprint_mismatch", "observed": observed, "mismatches": mismatches}
+    return {"status": "verified", "observed": observed}
+
+
+def _connect_local_pass_through_agent(
+    *,
+    agent_name: str | None = None,
+    registry_ref: str | None = None,
+    fingerprint: dict,
+    space_id: str | None = None,
+    auto_create: bool = True,
+) -> dict:
+    requested_name = str(agent_name or "").strip()
+    requested_ref = str(registry_ref or "").strip()
+    if not requested_name and not requested_ref:
+        raise ValueError("Local agent name or registry ref is required.")
+    registry = load_gateway_registry()
+    entry = find_agent_entry_by_ref(registry, requested_ref) if requested_ref else None
+    if requested_ref and entry is None:
+        raise LookupError(f"Gateway registry agent not found: {requested_ref}")
+    if entry is not None and str(entry.get("template_id") or "").strip() not in {"", "pass_through"}:
+        raise ValueError("registry_ref_not_attachable")
+    normalized_name = str(entry.get("name") if entry else requested_name).strip()
+    if not normalized_name:
+        raise ValueError("Local agent name is required.")
+    verification = _local_fingerprint_verification(fingerprint)
+    if verification.get("status") == "mismatch":
+        record_gateway_activity(
+            "local_connect_fingerprint_mismatch",
+            agent_name=normalized_name,
+            fingerprint=fingerprint,
+            verification=verification,
+        )
+        raise ValueError("fingerprint_mismatch")
+
+    if entry is None:
+        entry = find_agent_entry(registry, normalized_name)
+    if entry is None:
+        if not auto_create:
+            raise LookupError(f"Managed agent not found: {normalized_name}")
+        entry = _register_managed_agent(
+            name=normalized_name,
+            template_id="pass_through",
+            workdir=str(fingerprint.get("cwd") or "").strip() or None,
+            space_id=str(space_id or "").strip() or None,
+            start=True,
+        )
+        registry = load_gateway_registry()
+        entry = find_agent_entry(registry, normalized_name) or entry
+
+    entry["template_id"] = entry.get("template_id") or "pass_through"
+    entry["template_label"] = entry.get("template_label") or "Pass-through"
+    entry["runtime_type"] = entry.get("runtime_type") or "inbox"
+    if space_id:
+        entry["space_id"] = str(space_id).strip()
+    entry["workdir"] = str(fingerprint.get("cwd") or entry.get("workdir") or "").strip() or None
+    entry["local_connection_mode"] = "pass_through"
+    entry["local_auth_mode"] = "gateway-session"
+    entry["credential_source"] = "gateway"
+    entry["local_fingerprint"] = dict(fingerprint)
+    entry["local_trust_signature"] = _local_trust_signature(normalized_name, fingerprint)
+    entry["local_fingerprint_verification"] = verification
+    entry["last_local_connect_at"] = datetime.now(timezone.utc).isoformat()
+    if requested_ref:
+        entry["last_local_registry_ref"] = requested_ref
+    entry.update(evaluate_runtime_attestation(registry, entry))
+    save_gateway_registry(registry)
+
+    approved = (
+        str(entry.get("approval_state") or "").lower() in {"not_required", "approved"}
+        and str(entry.get("attestation_state") or "").lower() == "verified"
+    )
+    payload = {
+        "status": "approved" if approved else "pending",
+        "agent": _with_registry_refs(registry, annotate_runtime_health(entry, registry=registry)),
+        "approval_id": entry.get("approval_id"),
+        "registry_ref": _registry_ref_for_agent(registry, entry),
+        "fingerprint": fingerprint,
+        "fingerprint_verification": verification,
+    }
+    if approved:
+        session_payload = issue_local_session(registry, entry, fingerprint=fingerprint)
+        save_gateway_registry(registry)
+        payload["session_token"] = session_payload["session_token"]
+        payload["expires_at"] = session_payload["session"]["expires_at"]
+    record_gateway_activity(
+        "local_connect_requested",
+        entry=entry,
+        status=payload["status"],
+        approval_id=entry.get("approval_id"),
+        fingerprint_signature=entry.get("local_trust_signature"),
+    )
+    return payload
+
+
+def _send_local_session_message(*, session_token: str, body: dict) -> dict:
+    registry = load_gateway_registry()
+    session = verify_local_session_token(registry, session_token)
+    entry = find_agent_entry(registry, str(session.get("agent_name") or ""))
+    if not entry:
+        raise LookupError("Local session agent is no longer registered.")
+    annotated = annotate_runtime_health(entry, registry=registry)
+    if str(annotated.get("approval_state") or "").lower() not in {"not_required", "approved"}:
+        raise ValueError("Local session agent is not approved.")
+    space_id = str(body.get("space_id") or entry.get("space_id") or "").strip()
+    content = str(body.get("content") or "").strip()
+    if not space_id:
+        raise ValueError("space_id is required.")
+    if not content:
+        raise ValueError("content is required.")
+    client = _load_managed_agent_client(entry)
+    metadata = {
+        **(body.get("metadata") if isinstance(body.get("metadata"), dict) else {}),
+        "gateway_local_session_id": session.get("session_id"),
+        "gateway_pass_through_agent": entry.get("name"),
+        "gateway_pass_through_agent_id": entry.get("agent_id"),
+        "gateway_pass_through_fingerprint_signature": session.get("fingerprint_signature"),
+    }
+    parent_id = str(body.get("parent_id") or "").strip()
+    payload = client.send_message(
+        space_id,
+        content,
+        agent_id=str(entry.get("agent_id") or "") or None,
+        channel=str(body.get("channel") or "main"),
+        parent_id=parent_id or None,
+        metadata=metadata,
+        message_type=str(body.get("message_type") or "text"),
+    )
+    record_gateway_activity("local_message_sent", entry=entry, message_id=(payload.get("message") or {}).get("id"))
+    return {"agent": entry.get("name"), "message": payload, "session": session}
+
+
+def _local_session_inbox(
+    *,
+    session_token: str,
+    limit: int = 20,
+    channel: str = "main",
+    space_id: str | None = None,
+    unread_only: bool = True,
+    mark_read: bool = True,
+) -> dict:
+    registry = load_gateway_registry()
+    session = verify_local_session_token(registry, session_token)
+    entry = find_agent_entry(registry, str(session.get("agent_name") or ""))
+    if not entry:
+        raise LookupError("Local session agent is no longer registered.")
+    annotated = annotate_runtime_health(entry, registry=registry)
+    if str(annotated.get("approval_state") or "").lower() not in {"not_required", "approved"}:
+        raise ValueError("Local session agent is not approved.")
+
+    selected_space = str(space_id or entry.get("space_id") or "").strip() or None
+    client = _load_managed_agent_client(entry)
+    data = client.list_messages(
+        limit=limit,
+        channel=channel,
+        space_id=selected_space,
+        agent_id=str(entry.get("agent_id") or "") or None,
+        unread_only=unread_only,
+        mark_read=mark_read,
+    )
+    messages = data if isinstance(data, list) else data.get("messages", [])
+    local_marked_read_count = 0
+    if mark_read:
+        agent_name = str(entry.get("name") or "")
+        pending_items = load_agent_pending_messages(agent_name)
+        # The local queue powers the unread badge. Once the inbox has been
+        # checked with mark_read enabled, stale local notifications should not
+        # keep the Gateway UI saying there is new mail.
+        remaining: list[dict] = []
+        local_marked_read_count = len(pending_items) - len(remaining)
+        save_agent_pending_messages(agent_name, remaining)
+        registry = load_gateway_registry()
+        stored = find_agent_entry(registry, agent_name) or entry
+        stored["backlog_depth"] = len(remaining)
+        stored["queue_depth"] = len(remaining)
+        stored["current_status"] = "queued" if remaining else None
+        stored["current_activity"] = (
+            gateway_core._gateway_pickup_activity(str(stored.get("runtime_type") or ""), len(remaining))[:240]
+            if remaining
+            else None
+        )
+        if remaining:
+            last_pending = remaining[-1]
+            stored["last_received_message_id"] = last_pending.get("message_id")
+            stored["last_work_received_at"] = (
+                last_pending.get("queued_at") or last_pending.get("created_at") or stored.get("last_work_received_at")
+            )
+        else:
+            stored["last_received_message_id"] = None
+        save_gateway_registry(registry)
+    record_gateway_activity(
+        "local_inbox_polled",
+        entry=entry,
+        message_count=len(messages),
+        mark_read=mark_read,
+        local_marked_read_count=local_marked_read_count,
+        session_id=session.get("session_id"),
+    )
+    return {
+        "agent": entry.get("name"),
+        "messages": messages,
+        "unread_count": data.get("unread_count") if isinstance(data, dict) else None,
+        "marked_read_count": (
+            data.get("marked_read_count", local_marked_read_count)
+            if isinstance(data, dict)
+            else local_marked_read_count
+        ),
+        "session": session,
+    }
 
 
 def _normalize_runtime_type(runtime_type: str) -> str:
@@ -217,6 +523,56 @@ def _normalize_timeout_seconds(timeout_seconds: int | None) -> int | None:
     if normalized < 1:
         raise ValueError("Timeout must be at least 1 second.")
     return normalized
+
+
+def _agent_row_space_ids(registry: dict) -> set[str]:
+    return {
+        str(item.get("space_id") or "").strip()
+        for item in registry.get("agents", [])
+        if isinstance(item, dict) and str(item.get("space_id") or "").strip()
+    }
+
+
+def _space_list_from_response(raw: object) -> list[dict]:
+    items = raw.get("spaces", raw) if isinstance(raw, dict) else raw
+    return [item for item in (items or []) if isinstance(item, dict)]
+
+
+def _resolve_gateway_agent_home_space(
+    *,
+    client: AxClient,
+    session: dict,
+    registry: dict,
+    explicit_space_id: str | None = None,
+) -> str:
+    explicit = str(explicit_space_id or "").strip()
+    if explicit:
+        return explicit
+    session_space = str(session.get("space_id") or "").strip()
+    if session_space:
+        return session_space
+
+    row_spaces = _agent_row_space_ids(registry)
+    if len(row_spaces) == 1:
+        return next(iter(row_spaces))
+
+    try:
+        selected = auth_cmd._select_login_space(_space_list_from_response(client.list_spaces()))
+        selected_id = auth_cmd._candidate_space_id(selected or {})
+        if selected_id:
+            return selected_id
+    except Exception:
+        pass
+
+    if len(row_spaces) > 1:
+        raise ValueError(
+            "Multiple agent spaces are present. Pick a home space once with --space-id, "
+            "or move an existing agent row to the intended space."
+        )
+    raise ValueError(
+        "No agent home space could be inferred. Pick a home space once with --space-id; "
+        "after the agent row exists, Gateway will use the row's space_id."
+    )
 
 
 def _register_managed_agent(
@@ -260,12 +616,15 @@ def _register_managed_agent(
     _validate_runtime_registration(runtime_type, exec_cmd)
     timeout_effective = _normalize_timeout_seconds(timeout_seconds)
 
-    session = _load_gateway_session_or_exit()
-    selected_space = space_id or session.get("space_id")
-    if not selected_space:
-        raise ValueError("No space selected. Use --space-id or re-run `ax gateway login` with one.")
-
     client = _load_gateway_user_client()
+    session = _load_gateway_session_or_exit()
+    registry = load_gateway_registry()
+    selected_space = _resolve_gateway_agent_home_space(
+        client=client,
+        session=session,
+        registry=registry,
+        explicit_space_id=space_id,
+    )
     existing = _find_agent_in_space(client, name, selected_space)
     if existing:
         agent = existing
@@ -293,35 +652,37 @@ def _register_managed_agent(
     )
     token_file = _save_agent_token(name, token)
 
-    registry = load_gateway_registry()
-    entry = upsert_agent_entry(
-        registry,
-        {
-            "name": name,
-            "template_id": template.get("id") if template else None,
-            "template_label": template.get("label") if template else None,
-            "agent_id": agent_id,
-            "space_id": selected_space,
-            "base_url": session["base_url"],
-            "runtime_type": runtime_type,
-            "exec_command": exec_cmd,
-            "workdir": workdir,
-            "ollama_model": normalized_ollama_model,
-            "timeout_seconds": timeout_effective,
-            "token_file": str(token_file),
-            "desired_state": "running" if start else "stopped",
-            "effective_state": "stopped",
-            "transport": "gateway",
-            "credential_source": "gateway",
-            "last_error": None,
-            "backlog_depth": 0,
-            "processed_count": 0,
-            "dropped_count": 0,
-            "pat_source": pat_source,
-            "added_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
-    ensure_local_asset_binding(registry, entry, created_via="cli", auto_approve=True)
+    requires_approval = bool((template or {}).get("requires_approval", False))
+    entry_payload = {
+        "name": name,
+        "template_id": template.get("id") if template else None,
+        "template_label": template.get("label") if template else None,
+        "agent_id": agent_id,
+        "space_id": selected_space,
+        "base_url": session["base_url"],
+        "runtime_type": runtime_type,
+        "exec_command": exec_cmd,
+        "workdir": workdir,
+        "ollama_model": normalized_ollama_model,
+        "timeout_seconds": timeout_effective,
+        "token_file": str(token_file),
+        "desired_state": "running" if start else "stopped",
+        "effective_state": "stopped",
+        "transport": "gateway",
+        "credential_source": "gateway",
+        "last_error": None,
+        "backlog_depth": 0,
+        "processed_count": 0,
+        "dropped_count": 0,
+        "pat_source": pat_source,
+        "requires_approval": requires_approval,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if requires_approval:
+        entry_payload["install_id"] = str(uuid.uuid4())
+    entry = upsert_agent_entry(registry, entry_payload)
+    if not requires_approval:
+        ensure_local_asset_binding(registry, entry, created_via="cli", auto_approve=True)
     ensure_gateway_identity_binding(registry, entry, session=session, created_via="cli")
     entry.update(evaluate_runtime_attestation(registry, entry))
     hermes_status = hermes_setup_status(entry)
@@ -566,16 +927,19 @@ def _send_from_managed_agent(
     content: str,
     to: str | None = None,
     parent_id: str | None = None,
+    space_id: str | None = None,
     sent_via: str = "gateway_cli",
     metadata_extra: dict[str, object] | None = None,
 ) -> dict:
     if not content.strip():
         raise ValueError("Message content is required.")
     entry = _load_managed_agent_or_exit(name)
-    snapshot = _identity_space_send_guard(entry)
+    if str(entry.get("desired_state") or "").strip().lower() == "stopped":
+        raise ValueError(f"@{name} is stopped. Start it before it can send.")
+    snapshot = _identity_space_send_guard(entry, explicit_space_id=space_id)
     client = _load_managed_agent_client(entry)
-    space_id = str(snapshot.get("active_space_id") or entry.get("space_id") or "")
-    if not space_id:
+    selected_space_id = str(space_id or snapshot.get("active_space_id") or entry.get("space_id") or "")
+    if not selected_space_id:
         raise ValueError(f"Managed agent is missing a space id: @{name}")
 
     message_content = content.strip()
@@ -602,7 +966,7 @@ def _send_from_managed_agent(
         if isinstance(gateway_meta, dict):
             gateway_meta.update(metadata_extra)
     result = client.send_message(
-        space_id,
+        selected_space_id,
         message_content,
         agent_id=str(entry.get("agent_id") or "") or None,
         parent_id=parent_id or None,
@@ -631,6 +995,28 @@ def _gateway_test_sender_name(space_id: str) -> str:
     return f"switchboard-{suffix}"
 
 
+def _space_cache_with(space_rows: object, space_id: str, *, name: str | None = None) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    if isinstance(space_rows, list):
+        for item in space_rows:
+            if isinstance(item, dict):
+                item_space_id = str(item.get("space_id") or item.get("id") or "").strip()
+                item_name = str(item.get("name") or item.get("space_name") or item_space_id)
+                is_default = bool(item.get("is_default", False))
+            else:
+                item_space_id = str(item or "").strip()
+                item_name = item_space_id
+                is_default = False
+            if not item_space_id or item_space_id in seen:
+                continue
+            seen.add(item_space_id)
+            rows.append({"space_id": item_space_id, "name": item_name, "is_default": is_default})
+    if space_id and space_id not in seen:
+        rows.append({"space_id": space_id, "name": name or space_id, "is_default": not rows})
+    return rows
+
+
 def _ensure_gateway_test_sender(target_entry: dict) -> dict:
     target_space = str(target_entry.get("space_id") or "").strip()
     if not target_space:
@@ -654,7 +1040,10 @@ def _status_payload(*, activity_limit: int = 10) -> dict:
     ui = ui_status()
     session = load_gateway_session()
     registry = daemon["registry"]
-    agents = [annotate_runtime_health(agent, registry=registry) for agent in registry.get("agents", [])]
+    agents = [
+        _with_registry_refs(registry, annotate_runtime_health(agent, registry=registry))
+        for agent in registry.get("agents", [])
+    ]
     approvals = list_gateway_approvals()
     pending_approvals = [item for item in approvals if str(item.get("status") or "") == "pending"]
     live_agents = [a for a in agents if str(a.get("mode") or "") == "LIVE"]
@@ -670,12 +1059,28 @@ def _status_payload(*, activity_limit: int = 10) -> dict:
     if not daemon["running"]:
         gateway["effective_state"] = "stopped"
         gateway["pid"] = None
+    # Active space fallback. The gateway session sometimes ships without a
+    # space_id (older sessions, sessions minted before we resolved the user's
+    # default workspace). Without this, the operator overview shows Space=—
+    # even though every managed agent has a space_id. Pick the most-used space
+    # across agents as the implicit active space for display.
+    fallback_space_id: str | None = None
+    if not (session and session.get("space_id")):
+        space_counts: dict[str, int] = {}
+        for agent in agents:
+            sid = str(agent.get("space_id") or "").strip()
+            if not sid:
+                continue
+            space_counts[sid] = space_counts.get(sid, 0) + 1
+        if space_counts:
+            fallback_space_id = max(space_counts.items(), key=lambda item: item[1])[0]
+
     payload = {
         "gateway_dir": str(gateway_dir()),
         "gateway_environment": gateway_environment(),
         "connected": bool(session),
         "base_url": session.get("base_url") if session else None,
-        "space_id": session.get("space_id") if session else None,
+        "space_id": (session.get("space_id") if session else None) or fallback_space_id,
         "space_name": session.get("space_name") if session else None,
         "user": session.get("username") if session else None,
         "daemon": {
@@ -1074,18 +1479,28 @@ def _agent_templates_payload() -> dict:
     templates = [_annotate_template_taxonomy(item) for item in agent_template_list()]
     ollama_status = ollama_setup_status()
     for item in templates:
-        if str(item.get("id") or "").strip().lower() != "ollama":
-            continue
-        defaults = dict(item.get("defaults") or {})
-        recommended_model = str(ollama_status.get("recommended_model") or "").strip() or None
-        if recommended_model and not str(defaults.get("ollama_model") or "").strip():
-            defaults["ollama_model"] = recommended_model
-        item["defaults"] = defaults
-        item["ollama_server_reachable"] = bool(ollama_status.get("server_reachable"))
-        item["ollama_available_models"] = list(ollama_status.get("available_models") or [])
-        item["ollama_local_models"] = list(ollama_status.get("local_models") or [])
-        item["ollama_recommended_model"] = recommended_model
-        item["ollama_summary"] = str(ollama_status.get("summary") or "")
+        template_id = str(item.get("id") or "").strip().lower()
+        if template_id == "ollama":
+            defaults = dict(item.get("defaults") or {})
+            recommended_model = str(ollama_status.get("recommended_model") or "").strip() or None
+            if recommended_model and not str(defaults.get("ollama_model") or "").strip():
+                defaults["ollama_model"] = recommended_model
+            item["defaults"] = defaults
+            item["ollama_server_reachable"] = bool(ollama_status.get("server_reachable"))
+            item["ollama_available_models"] = list(ollama_status.get("available_models") or [])
+            item["ollama_local_models"] = list(ollama_status.get("local_models") or [])
+            item["ollama_recommended_model"] = recommended_model
+            item["ollama_summary"] = str(ollama_status.get("summary") or "")
+        elif template_id == "hermes":
+            hermes_status = hermes_setup_status({"template_id": "hermes"})
+            item["hermes_ready"] = bool(hermes_status.get("ready"))
+            item["hermes_resolved_path"] = hermes_status.get("resolved_path")
+            item["hermes_expected_path"] = hermes_status.get("expected_path")
+            item["hermes_summary"] = str(hermes_status.get("summary") or "")
+            item["hermes_detail"] = str(hermes_status.get("detail") or hermes_status.get("summary") or "")
+            # We don't ship a canonical clone URL — operators may use a private
+            # fork. Surface the env var the gateway honors instead.
+            item["hermes_fix_command"] = "export HERMES_REPO_PATH=/path/to/your/hermes-agent"
     return {"templates": templates, "count": len(templates)}
 
 
@@ -1147,7 +1562,14 @@ def _send_gateway_test_to_managed_agent(
     sender_agent: str | None = None,
 ) -> dict:
     entry = _load_managed_agent_or_exit(name)
-    space_id = str(entry.get("space_id") or "")
+    if str(entry.get("desired_state") or "").strip().lower() == "stopped":
+        raise ValueError(f"@{name} is stopped. Start it before sending a test.")
+    registry = load_gateway_registry()
+    stored = find_agent_entry(registry, str(entry.get("name") or "")) or entry
+    ensure_gateway_identity_binding(registry, stored, session=load_gateway_session())
+    snapshot = annotate_runtime_health(stored, registry=registry)
+    save_gateway_registry(registry)
+    space_id = str(snapshot.get("active_space_id") or stored.get("space_id") or entry.get("space_id") or "")
     if not space_id:
         raise ValueError(f"Managed agent is missing a space id: @{name}")
 
@@ -1159,21 +1581,33 @@ def _send_gateway_test_to_managed_agent(
 
     sender_name = None
     if normalized_author == "agent":
-        sender_name = str(sender_agent or "").strip() or str(_ensure_gateway_test_sender(entry).get("name") or "")
+        target_for_sender = {**stored, "space_id": space_id}
+        sender_error: str | None = None
+        if sender_agent:
+            sender_name = str(sender_agent).strip()
+        else:
+            try:
+                sender_name = str(_ensure_gateway_test_sender(target_for_sender).get("name") or "")
+            except Exception as exc:  # noqa: BLE001
+                sender_error = str(exc)
+                sender_name = target
         if not sender_name:
             raise ValueError("Gateway could not resolve a managed sender for the test message.")
         result = _send_from_managed_agent(
             name=sender_name,
             content=prompt,
             to=target,
+            space_id=space_id,
             sent_via="gateway_test",
             metadata_extra={
                 "managed_target": True,
-                "target_agent_name": entry.get("name"),
-                "target_agent_id": entry.get("agent_id"),
-                "target_template": entry.get("template_id"),
-                "target_runtime_type": entry.get("runtime_type"),
+                "target_agent_name": stored.get("name"),
+                "target_agent_id": stored.get("agent_id"),
+                "target_template": stored.get("template_id"),
+                "target_runtime_type": stored.get("runtime_type"),
                 "test_author": "agent",
+                "test_sender_fallback": "self" if sender_error else None,
+                "test_sender_error": sender_error,
             },
         )
         payload = result.get("message", result) if isinstance(result, dict) else result
@@ -1185,10 +1619,10 @@ def _send_gateway_test_to_managed_agent(
             "control_plane": "gateway",
             "gateway": {
                 "managed_target": True,
-                "target_agent_name": entry.get("name"),
-                "target_agent_id": entry.get("agent_id"),
-                "target_template": entry.get("template_id"),
-                "target_runtime_type": entry.get("runtime_type"),
+                "target_agent_name": stored.get("name"),
+                "target_agent_id": stored.get("agent_id"),
+                "target_template": stored.get("template_id"),
+                "target_runtime_type": stored.get("runtime_type"),
                 "sent_via": "gateway_test",
                 "test_author": "user",
             },
@@ -1789,6 +2223,212 @@ def _render_gateway_dashboard(payload: dict) -> Group:
     )
 
 
+def _spaces_payload() -> dict:
+    client = _load_gateway_user_client()
+    raw = client.list_spaces()
+    items = raw.get("spaces", raw) if isinstance(raw, dict) else raw
+    spaces: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        space_id = str(item.get("id") or item.get("space_id") or "").strip()
+        if not space_id:
+            continue
+        spaces.append(
+            {
+                "id": space_id,
+                "name": str(item.get("name") or item.get("space_name") or space_id),
+                "slug": str(item.get("slug") or "").strip() or None,
+            }
+        )
+    session = load_gateway_session() or {}
+    return {
+        "spaces": spaces,
+        "active_space_id": str(session.get("space_id") or "").strip() or None,
+        "active_space_name": str(session.get("space_name") or "").strip() or None,
+    }
+
+
+def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
+    name = name.strip()
+    new_space_id = new_space_id.strip()
+    if not name:
+        raise ValueError("Managed agent name is required.")
+    if not new_space_id:
+        raise ValueError("Target space_id is required.")
+    registry = load_gateway_registry()
+    entry = find_agent_entry(registry, name)
+    if not entry:
+        raise LookupError(f"Managed agent not found: {name}")
+    if bool(entry.get("pinned")):
+        raise ValueError(f"@{name} is pinned to its current space. Unlock it before moving.")
+    if str(entry.get("space_id") or "").strip() == new_space_id:
+        apply_entry_current_space(entry, new_space_id)
+        ensure_gateway_identity_binding(registry, entry, session=load_gateway_session())
+        save_gateway_registry(registry)
+        return annotate_runtime_health(entry, registry=registry)
+    client = _load_gateway_user_client()
+    identifier = str(entry.get("agent_id") or name)
+    try:
+        client.set_agent_placement(identifier, space_id=new_space_id, pinned=bool(entry.get("pinned")))
+    except AttributeError:
+        try:
+            client.update_agent(identifier, space_id=new_space_id)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"Backend rejected move: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Backend rejected move: {exc}") from exc
+    # Re-read the canonical record from backend — gateway local registry is a view,
+    # never the source of truth.
+    backend_space_id = new_space_id
+    backend_allowed_spaces: list[dict[str, object]] | None = None
+    read_back_methods = [
+        method
+        for method in (getattr(client, "get_agent_placement", None), getattr(client, "get_agent", None))
+        if callable(method)
+    ]
+    for read_back in read_back_methods:
+        try:
+            record = read_back(identifier)
+            if isinstance(record, dict) and isinstance(record.get("_record"), dict):
+                record = record["_record"]
+            elif isinstance(record, dict):
+                record = record.get("agent", record)
+            if not isinstance(record, dict):
+                continue
+            canonical = str(
+                record.get("space_id") or record.get("current_space") or record.get("default_space_id") or ""
+            ).strip()
+            if canonical:
+                backend_space_id = canonical
+            allowed = record.get("allowed_spaces")
+            if isinstance(allowed, list):
+                backend_allowed_spaces = [
+                    item
+                    if isinstance(item, dict)
+                    else {"space_id": str(item), "name": str(item), "is_default": str(item) == backend_space_id}
+                    for item in allowed
+                    if item
+                ]
+            break
+        except Exception:  # noqa: BLE001
+            # Resync best-effort; the placement write already succeeded.
+            continue
+    previous_space_id = str(entry.get("space_id") or "").strip() or None
+    if backend_allowed_spaces is not None:
+        entry["allowed_spaces"] = backend_allowed_spaces
+    apply_entry_current_space(entry, backend_space_id)
+    ensure_gateway_identity_binding(registry, entry, session=load_gateway_session())
+    # Capture the rebind marker BEFORE writing the registry so the wait below
+    # is guaranteed to see only post-move runtime/listener events.
+    rebind_marker = datetime.now(timezone.utc).isoformat()
+    save_gateway_registry(registry)
+    record_gateway_activity(
+        "managed_agent_moved_space",
+        entry=entry,
+        new_space_id=backend_space_id,
+        requested_space_id=new_space_id,
+        previous_space_id=previous_space_id,
+    )
+    if backend_space_id != new_space_id:
+        # Backend coerced the move (likely allowed_spaces enforcement). Surface to operator
+        # logs so backend_sentinel can pick it up if it indicates a quarantine gap.
+        record_gateway_activity(
+            "managed_agent_move_coerced",
+            entry=entry,
+            requested_space_id=new_space_id,
+            applied_space_id=backend_space_id,
+        )
+    # Wait for the daemon to finish the rebind before returning. The daemon
+    # is a separate process polling the registry every ~1s; once it sees
+    # space_id changed it stops the old runtime and starts a new one.
+    # Without this wait, a follow-up POST /api/agents/<name>/test can land
+    # on the new switchboard before the new SSE listener has connected,
+    # stranding the message. Cap at 5s — if no listener event appears we
+    # still return (e.g. agents whose runtime doesn't track listener_connected).
+    # Skip when no daemon is running (e.g. tests, offline operator) since
+    # nothing will produce the rebind events we are waiting on.
+    if previous_space_id and previous_space_id != backend_space_id and active_gateway_pid() is not None:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            recent = load_recent_gateway_activity(limit=20, agent_name=name)
+            if any(
+                (event.get("ts") or "") > rebind_marker
+                and event.get("event") in {"listener_connected", "runtime_started"}
+                for event in recent
+            ):
+                break
+            time.sleep(0.2)
+    return annotate_runtime_health(entry, registry=registry)
+
+
+def _ack_managed_agent_message(
+    name: str,
+    *,
+    message_id: str,
+    reply_id: str | None = None,
+    reply_preview: str | None = None,
+) -> dict:
+    """Pass-through ack: agent reports it processed message_id and optionally
+    sent reply_id. Updates local registry's reply timestamps + counters, drops
+    the message from the pending queue, fires reply_sent activity event so
+    the simple-gateway drawer surfaces 'Replied · just now' on the row.
+    """
+    name = name.strip()
+    if not name:
+        raise ValueError("Managed agent name is required.")
+    message_id = (message_id or "").strip()
+    if not message_id:
+        raise ValueError("message_id is required.")
+    registry = load_gateway_registry()
+    entry = find_agent_entry(registry, name)
+    if not entry:
+        raise LookupError(f"Managed agent not found: {name}")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Drop from pending queue (best-effort; the agent may have already cleaned
+    # it up locally).
+    items = load_agent_pending_messages(name)
+    remaining = [item for item in items if str(item.get("message_id") or "") != message_id]
+    if len(remaining) != len(items):
+        save_agent_pending_messages(name, remaining)
+    # Update registry entry so the row's last-action label and counters reflect
+    # the reply that just went out via the agent's PAT.
+    entry["last_work_completed_at"] = now_iso
+    entry["last_reply_at"] = now_iso
+    entry["last_received_message_id"] = message_id
+    if reply_id:
+        entry["last_reply_message_id"] = reply_id
+    if reply_preview:
+        entry["last_reply_preview"] = reply_preview[:240]
+    entry["processed_count"] = int(entry.get("processed_count") or 0) + 1
+    save_gateway_registry(registry)
+    record_gateway_activity(
+        "reply_sent",
+        entry=entry,
+        message_id=message_id,
+        reply_message_id=reply_id,
+        reply_preview=reply_preview,
+    )
+    return annotate_runtime_health(entry, registry=registry)
+
+
+def _set_managed_agent_pin(name: str, pinned: bool) -> dict:
+    name = name.strip()
+    if not name:
+        raise ValueError("Managed agent name is required.")
+    registry = load_gateway_registry()
+    entry = find_agent_entry(registry, name)
+    if not entry:
+        raise LookupError(f"Managed agent not found: {name}")
+    entry["pinned"] = bool(pinned)
+    save_gateway_registry(registry)
+    record_gateway_activity(
+        "managed_agent_pinned" if pinned else "managed_agent_unpinned",
+        entry=entry,
+    )
+    return annotate_runtime_health(entry, registry=registry)
+
+
 def _render_gateway_ui_page(*, refresh_ms: int) -> str:
     template = """<!doctype html>
 <html lang="en">
@@ -1796,6 +2436,7 @@ def _render_gateway_ui_page(*, refresh_ms: int) -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ax gateway ui</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     :root {
       --bg: #081018;
@@ -2374,7 +3015,7 @@ def _render_gateway_ui_page(*, refresh_ms: int) -> str:
     <section class="panel">
       <div class="panel-body hero">
         <div class="hero-copy">
-          <div class="badge">Gateway Control Plane · Agent Operated</div>
+          <div class="badge"><a href="/" style="color:inherit; text-decoration:none;">← Back to quick view</a> · Gateway Control Plane · Agent Operated</div>
           <h1>One local Gateway. Every agent in one place.</h1>
           <p>
             This dashboard is served locally by <code>ax gateway ui</code> and reads the
@@ -3192,6 +3833,38 @@ def _render_gateway_ui_page(*, refresh_ms: int) -> str:
     return template.replace("__REFRESH_MS__", str(refresh_ms))
 
 
+_DEMO_HTML_PATH = Path(__file__).resolve().parent.parent / "static" / "demo.html"
+
+# Brand-mark favicon. Same connected-agent node mark as the topbar brand chip
+# so the browser tab matches what users see on the page.
+# Inline so no separate static asset is needed; served at /favicon.svg.
+_GATEWAY_FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5eead4"/>
+      <stop offset="100%" stop-color="#7dd3fc"/>
+    </linearGradient>
+  </defs>
+  <rect width="40" height="40" rx="13" fill="url(#g)"/>
+  <path d="M12 12 20 20 12 28M20 20h8" stroke="#062018" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+  <circle cx="12" cy="12" r="4.1" fill="#062018"/>
+  <circle cx="12" cy="28" r="4.1" fill="#062018"/>
+  <circle cx="28" cy="20" r="4.1" fill="#062018"/>
+  <circle cx="20" cy="20" r="5.2" fill="#062018"/>
+  <circle cx="12" cy="12" r="1.25" fill="#a7fff1"/>
+  <circle cx="12" cy="28" r="1.25" fill="#a7fff1"/>
+  <circle cx="28" cy="20" r="1.25" fill="#a7fff1"/>
+  <circle cx="20" cy="20" r="1.8" fill="#a7fff1"/>
+</svg>
+""".strip()
+
+
+def _render_gateway_demo_page(*, refresh_ms: int) -> str:
+    body = _DEMO_HTML_PATH.read_text(encoding="utf-8")
+    inject = f"<script>window.__GATEWAY_DEMO_REFRESH_MS__ = {int(refresh_ms)};</script></head>"
+    return body.replace("</head>", inject, 1)
+
+
 class _GatewayUiServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -3241,19 +3914,85 @@ def _build_gateway_ui_handler(*, activity_limit: int, refresh_ms: int):
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if parsed.path == "/":
+                _write_html_response(self, _render_gateway_demo_page(refresh_ms=refresh_ms))
+                return
+            if parsed.path == "/operator":
                 _write_html_response(self, _render_gateway_ui_page(refresh_ms=refresh_ms))
+                return
+            if parsed.path == "/demo":
+                _write_html_response(self, _render_gateway_demo_page(refresh_ms=refresh_ms))
                 return
             if parsed.path == "/healthz":
                 _write_json_response(self, {"ok": True})
                 return
+            if parsed.path == "/favicon.svg" or parsed.path == "/favicon.ico":
+                body = _GATEWAY_FAVICON_SVG.encode("utf-8")
+                self.send_response(HTTPStatus.OK.value)
+                self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if parsed.path == "/api/status":
                 _write_json_response(self, _status_payload(activity_limit=activity_limit))
+                return
+            if parsed.path == "/local/inbox":
+                query = parse_qs(parsed.query)
+                session_token = str(self.headers.get("X-Gateway-Session") or "").strip()
+                limit = int((query.get("limit") or ["20"])[0] or 20)
+                channel = str((query.get("channel") or ["main"])[0] or "main")
+                space_id = str((query.get("space_id") or [""])[0] or "").strip() or None
+                unread_only = str((query.get("unread_only") or ["true"])[0]).lower() not in {"0", "false", "no"}
+                mark_read = str((query.get("mark_read") or ["true"])[0]).lower() not in {"0", "false", "no"}
+                payload = _local_session_inbox(
+                    session_token=session_token,
+                    limit=limit,
+                    channel=channel,
+                    space_id=space_id,
+                    unread_only=unread_only,
+                    mark_read=mark_read,
+                )
+                _write_json_response(self, payload)
+                return
+            if parsed.path == "/local/sessions":
+                registry = load_gateway_registry()
+                sessions = list(registry.get("local_sessions") or [])
+                _write_json_response(self, {"sessions": sessions, "count": len(sessions)})
                 return
             if parsed.path == "/api/runtime-types":
                 _write_json_response(self, _runtime_types_payload())
                 return
             if parsed.path == "/api/templates":
                 _write_json_response(self, _agent_templates_payload())
+                return
+            if parsed.path == "/api/approvals":
+                query = parse_qs(parsed.query)
+                status_filter = (query.get("status") or [None])[0]
+                _write_json_response(self, _approval_rows_payload(status=status_filter))
+                return
+            if parsed.path.startswith("/api/approvals/"):
+                approval_id = unquote(parsed.path.removeprefix("/api/approvals/")).strip()
+                try:
+                    _write_json_response(self, _approval_detail_payload(approval_id))
+                except LookupError as exc:
+                    _write_json_response(self, {"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                return
+            if parsed.path == "/api/spaces":
+                try:
+                    _write_json_response(self, _spaces_payload())
+                except typer.Exit:
+                    _write_json_response(
+                        self,
+                        {"error": "Gateway is not logged in.", "spaces": [], "active_space_id": None},
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _write_json_response(
+                        self,
+                        {"error": str(exc), "spaces": [], "active_space_id": None},
+                        status=HTTPStatus.BAD_GATEWAY,
+                    )
                 return
             if parsed.path.startswith("/api/agents/"):
                 name = unquote(parsed.path.removeprefix("/api/agents/")).strip()
@@ -3327,6 +4066,26 @@ def _build_gateway_ui_handler(*, activity_limit: int, refresh_ms: int):
                     )
                     _write_json_response(self, payload, status=HTTPStatus.CREATED)
                     return
+                if parsed.path == "/local/connect":
+                    agent_name = str(body.get("agent_name") or body.get("name") or "").strip()
+                    registry_ref = str(
+                        body.get("registry_ref") or body.get("registry") or body.get("ref") or ""
+                    ).strip()
+                    fingerprint = body.get("fingerprint") if isinstance(body.get("fingerprint"), dict) else {}
+                    payload = _connect_local_pass_through_agent(
+                        agent_name=agent_name or None,
+                        registry_ref=registry_ref or None,
+                        fingerprint=fingerprint,
+                        space_id=str(body.get("space_id") or "").strip() or None,
+                    )
+                    status = HTTPStatus.OK if payload.get("status") == "approved" else HTTPStatus.ACCEPTED
+                    _write_json_response(self, payload, status=status)
+                    return
+                if parsed.path == "/local/send":
+                    session_token = str(self.headers.get("X-Gateway-Session") or "").strip()
+                    payload = _send_local_session_message(session_token=session_token, body=body)
+                    _write_json_response(self, payload, status=HTTPStatus.CREATED)
+                    return
                 if parsed.path.endswith("/start") and parsed.path.startswith("/api/agents/"):
                     name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/start")).strip()
                     payload = _set_managed_agent_desired_state(name, "running")
@@ -3357,11 +4116,72 @@ def _build_gateway_ui_handler(*, activity_limit: int, refresh_ms: int):
                     )
                     _write_json_response(self, payload, status=HTTPStatus.CREATED)
                     return
+                if parsed.path.endswith("/ack") and parsed.path.startswith("/api/agents/"):
+                    # Pass-through agents that reply via their own PAT (not via
+                    # gateway-mediated send) call this to tell the gateway "I
+                    # processed message_id, here's my reply_id." Updates the
+                    # registry's last_reply_at + processed_count, drops the
+                    # message from the local pending queue, fires a reply_sent
+                    # activity event so the simple-gateway drawer surfaces it.
+                    name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/ack")).strip()
+                    payload = _ack_managed_agent_message(
+                        name,
+                        message_id=str(body.get("message_id") or "").strip(),
+                        reply_id=str(body.get("reply_id") or "").strip() or None,
+                        reply_preview=str(body.get("reply_preview") or "").strip() or None,
+                    )
+                    _write_json_response(self, payload)
+                    return
+                if parsed.path.endswith("/move") and parsed.path.startswith("/api/agents/"):
+                    name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/move")).strip()
+                    payload = _move_managed_agent_space(
+                        name,
+                        str(body.get("space_id") or "").strip(),
+                    )
+                    _write_json_response(self, payload)
+                    return
+                if parsed.path.endswith("/pin") and parsed.path.startswith("/api/agents/"):
+                    name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/pin")).strip()
+                    payload = _set_managed_agent_pin(name, bool(body.get("pinned", True)))
+                    _write_json_response(self, payload)
+                    return
                 if parsed.path.endswith("/doctor") and parsed.path.startswith("/api/agents/"):
                     name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/doctor")).strip()
                     payload = _run_gateway_doctor(
                         name,
                         send_test=bool(body.get("send_test", False)),
+                    )
+                    _write_json_response(self, payload, status=HTTPStatus.CREATED)
+                    return
+                if parsed.path.endswith("/approve") and parsed.path.startswith("/api/agents/"):
+                    name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/approve")).strip()
+                    detail = _agent_detail_payload(name, activity_limit=activity_limit)
+                    if detail is None:
+                        _write_json_response(
+                            self,
+                            {"error": f"Managed agent not found: {name}"},
+                            status=HTTPStatus.NOT_FOUND,
+                        )
+                        return
+                    approval_id = str((detail.get("agent") or {}).get("approval_id") or "").strip()
+                    if not approval_id:
+                        _write_json_response(
+                            self,
+                            {"error": f"@{name} does not have a pending Gateway approval."},
+                            status=HTTPStatus.BAD_REQUEST,
+                        )
+                        return
+                    payload = approve_gateway_approval(
+                        approval_id,
+                        scope=str(body.get("scope") or "asset").strip() or "asset",
+                    )
+                    _write_json_response(self, payload, status=HTTPStatus.CREATED)
+                    return
+                if parsed.path.endswith("/approve") and parsed.path.startswith("/api/approvals/"):
+                    approval_id = unquote(parsed.path.removeprefix("/api/approvals/").removesuffix("/approve")).strip()
+                    payload = approve_gateway_approval(
+                        approval_id,
+                        scope=str(body.get("scope") or "asset").strip() or "asset",
                     )
                     _write_json_response(self, payload, status=HTTPStatus.CREATED)
                     return
@@ -4258,6 +5078,257 @@ def deny_approval(
     err_console.print(f"  asset = {payload.get('asset_id')}")
 
 
+@local_app.command("connect")
+def local_connect(
+    agent_name: str | None = typer.Argument(None, help="Local pass-through agent name"),
+    registry_ref: str = typer.Option(
+        None,
+        "--registry",
+        "--ref",
+        help="Existing Gateway registry row, name, install id, or id prefix to reconnect",
+    ),
+    gateway_url: str = typer.Option("http://127.0.0.1:8765", "--url", help="Local Gateway UI/API URL"),
+    workdir: str = typer.Option(None, "--workdir", help="Workspace folder to fingerprint"),
+    space_id: str = typer.Option(None, "--space-id", help="Initial home space if Gateway cannot infer one"),
+    as_json: bool = JSON_OPTION,
+):
+    """Request Gateway access for a local polling/pass-through agent."""
+    try:
+        payload = _request_local_connect(
+            agent_name=agent_name,
+            registry_ref=registry_ref,
+            gateway_url=gateway_url,
+            workdir=workdir,
+            space_id=space_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if as_json:
+        print_json(payload)
+        return
+    status = str(payload.get("status") or "pending")
+    connected_name = str(payload.get("agent", {}).get("name") or agent_name or registry_ref or "")
+    console.print(f"[bold]local connect[/bold] @{connected_name}: {status}")
+    if payload.get("registry_ref"):
+        console.print(f"  registry = {payload['registry_ref']}")
+    if payload.get("approval_id"):
+        console.print(f"  approval = {payload['approval_id']}")
+    if payload.get("session_token"):
+        console.print(f"  session  = {payload['session_token']}")
+        console.print(f"  expires  = {payload.get('expires_at')}")
+
+
+def _request_local_connect(
+    *,
+    agent_name: str | None = None,
+    registry_ref: str | None = None,
+    gateway_url: str = "http://127.0.0.1:8765",
+    workdir: str | None = None,
+    space_id: str | None = None,
+) -> dict:
+    display_name = str(agent_name or registry_ref or "").strip()
+    if not display_name:
+        raise ValueError("Provide a local agent name or --registry/--ref.")
+    fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=workdir)
+    body = {"fingerprint": fingerprint}
+    if agent_name:
+        body["agent_name"] = agent_name
+    if registry_ref:
+        body["registry_ref"] = registry_ref
+    if space_id:
+        body["space_id"] = space_id
+    try:
+        response = httpx.post(
+            f"{gateway_url.rstrip('/')}/local/connect",
+            json=body,
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise ValueError(f"Gateway local connect failed: {detail}") from exc
+    except Exception as exc:
+        raise ValueError(f"Gateway local connect failed: {exc}") from exc
+    return payload
+
+
+def _resolve_local_gateway_session(
+    *,
+    session_token: str | None,
+    agent_name: str | None = None,
+    registry_ref: str | None = None,
+    gateway_url: str = "http://127.0.0.1:8765",
+    workdir: str | None = None,
+    space_id: str | None = None,
+) -> tuple[str, dict | None]:
+    token = str(session_token or "").strip()
+    if token:
+        return token, None
+    payload = _request_local_connect(
+        agent_name=agent_name,
+        registry_ref=registry_ref,
+        gateway_url=gateway_url,
+        workdir=workdir,
+        space_id=space_id,
+    )
+    token = str(payload.get("session_token") or "").strip()
+    if not token:
+        status = str(payload.get("status") or "pending")
+        approval_id = str(payload.get("approval_id") or "").strip()
+        suffix = f" Approval: {approval_id}" if approval_id else ""
+        raise ValueError(f"Gateway local session is {status}; approve the agent before sending.{suffix}")
+    return token, payload
+
+
+@local_app.command("send")
+def local_send(
+    session_token: str = typer.Option(
+        None, "--session-token", envvar="AX_GATEWAY_SESSION", help="Gateway session token"
+    ),
+    content: str = typer.Argument(..., help="Message content"),
+    space_id: str = typer.Option(None, "--space-id", help="Space to send into"),
+    agent_name: str = typer.Option(
+        None, "--agent", "--name", help="Approved local pass-through agent to connect as if no session token is set"
+    ),
+    registry_ref: str = typer.Option(
+        None, "--registry", "--ref", help="Existing Gateway registry row to connect as if no session token is set"
+    ),
+    workdir: str = typer.Option(None, "--workdir", help="Workspace folder to fingerprint when auto-connecting"),
+    gateway_url: str = typer.Option("http://127.0.0.1:8765", "--url", help="Local Gateway UI/API URL"),
+    parent_id: str = typer.Option(None, "--parent-id", help="Optional parent message id"),
+    as_json: bool = JSON_OPTION,
+):
+    """Send through an approved local pass-through Gateway session."""
+    try:
+        resolved_session_token, connect_payload = _resolve_local_gateway_session(
+            session_token=session_token,
+            agent_name=agent_name,
+            registry_ref=registry_ref,
+            gateway_url=gateway_url,
+            workdir=workdir,
+            space_id=space_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    body = {"content": content, "space_id": space_id, "parent_id": parent_id}
+    try:
+        response = httpx.post(
+            f"{gateway_url.rstrip('/')}/local/send",
+            json=body,
+            headers={"X-Gateway-Session": resolved_session_token},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway local send failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway local send failed: {exc}") from exc
+    if as_json:
+        if connect_payload:
+            payload["connect"] = {
+                "status": connect_payload.get("status"),
+                "registry_ref": connect_payload.get("registry_ref"),
+                "agent": (connect_payload.get("agent") or {}).get("name")
+                if isinstance(connect_payload.get("agent"), dict)
+                else None,
+            }
+        print_json(payload)
+        return
+    console.print(f"[green]Sent through Gateway[/green] as @{payload.get('agent')}")
+
+
+@local_app.command("inbox")
+def local_inbox(
+    session_token: str = typer.Option(
+        None, "--session-token", envvar="AX_GATEWAY_SESSION", help="Gateway session token"
+    ),
+    limit: int = typer.Option(20, "--limit", min=1, max=100, help="Max messages to return"),
+    channel: str = typer.Option("main", "--channel", help="Message channel"),
+    space_id: str = typer.Option(None, "--space-id", help="Space to poll"),
+    agent_name: str = typer.Option(
+        None, "--agent", "--name", help="Approved local pass-through agent to connect as if no session token is set"
+    ),
+    registry_ref: str = typer.Option(
+        None, "--registry", "--ref", help="Existing Gateway registry row to connect as if no session token is set"
+    ),
+    workdir: str = typer.Option(None, "--workdir", help="Workspace folder to fingerprint when auto-connecting"),
+    mark_read: bool = typer.Option(
+        True,
+        "--mark-read/--no-mark-read",
+        help="Mark returned messages as read. Use --no-mark-read to peek without clearing.",
+    ),
+    gateway_url: str = typer.Option("http://127.0.0.1:8765", "--url", help="Local Gateway UI/API URL"),
+    as_json: bool = JSON_OPTION,
+):
+    """Poll an approved local pass-through Gateway inbox."""
+    try:
+        resolved_session_token, connect_payload = _resolve_local_gateway_session(
+            session_token=session_token,
+            agent_name=agent_name,
+            registry_ref=registry_ref,
+            gateway_url=gateway_url,
+            workdir=workdir,
+            space_id=space_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    params = {
+        "limit": limit,
+        "channel": channel,
+        "unread_only": "true",
+        "mark_read": "true" if mark_read else "false",
+    }
+    if space_id:
+        params["space_id"] = space_id
+    try:
+        response = httpx.get(
+            f"{gateway_url.rstrip('/')}/local/inbox",
+            params=params,
+            headers={"X-Gateway-Session": resolved_session_token},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway local inbox failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway local inbox failed: {exc}") from exc
+    if as_json:
+        if connect_payload:
+            payload["connect"] = {
+                "status": connect_payload.get("status"),
+                "registry_ref": connect_payload.get("registry_ref"),
+                "agent": (connect_payload.get("agent") or {}).get("name")
+                if isinstance(connect_payload.get("agent"), dict)
+                else None,
+            }
+        print_json(payload)
+        return
+    messages = payload.get("messages") or []
+    console.print(f"[bold]local inbox[/bold] @{payload.get('agent')}: {len(messages)} unread")
+    for message in messages:
+        created = str(message.get("created_at") or "")
+        author = str(message.get("display_name") or message.get("agent_name") or message.get("sender") or "-")
+        content = str(message.get("content") or "").replace("\n", " ")
+        console.print(f"  {created} {author}: {content[:160]}")
+
+
 @agents_app.command("add")
 def add_agent(
     name: str = typer.Argument(..., help="Managed agent name"),
@@ -4371,9 +5442,9 @@ def list_agents(as_json: bool = JSON_OPTION):
         print_json({"agents": agents, "count": len(agents)})
         return
     print_table(
-        ["Agent", "Type", "Mode", "Presence", "Output", "Confidence", "Space"],
+        ["Ref", "Agent", "Type", "Mode", "Presence", "Output", "Confidence", "Space"],
         [{**agent, "type": _agent_type_label(agent), "output": _agent_output_label(agent)} for agent in agents],
-        keys=["name", "type", "mode", "presence", "output", "confidence", "space_id"],
+        keys=["registry_ref", "name", "type", "mode", "presence", "output", "confidence", "space_id"],
     )
 
 
@@ -4418,6 +5489,29 @@ def test_agent(
     message_payload = result.get("message") or {}
     if isinstance(message_payload, dict) and message_payload.get("id"):
         err_console.print(f"  message_id = {message_payload['id']}")
+
+
+@agents_app.command("move")
+def move_agent(
+    name: str = typer.Argument(..., help="Managed agent name"),
+    space_id: str = typer.Option(..., "--space-id", "-s", help="Target space id"),
+    as_json: bool = JSON_OPTION,
+):
+    """Move a Gateway-managed agent to another allowed space."""
+    try:
+        result = _move_managed_agent_space(name, space_id)
+    except (LookupError, ValueError) as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+    if as_json:
+        print_json(result)
+        return
+
+    err_console.print(f"[green]Managed agent moved:[/green] @{name}")
+    err_console.print(
+        f"  space = {result.get('active_space_name') or result.get('active_space_id') or result.get('space_id')}"
+    )
 
 
 @agents_app.command("doctor")

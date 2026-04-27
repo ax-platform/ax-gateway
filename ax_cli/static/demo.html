@@ -1,0 +1,2097 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Connect agents · ax gateway</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=connected-agents-3" />
+  <link rel="alternate icon" type="image/png" href="/favicon.png" />
+  <style>
+    :root {
+      --bg-0: #07101a;
+      --bg-1: #0b1521;
+      --panel: rgba(14, 26, 36, 0.78);
+      --panel-solid: #0e1a24;
+      --panel-strong: rgba(20, 32, 44, 0.96);
+      --line: rgba(255, 255, 255, 0.08);
+      --line-strong: rgba(255, 255, 255, 0.16);
+      --text: #eaf4ff;
+      --muted: #8aa3b6;
+      --muted-2: #5d7488;
+      --accent: #5eead4;
+      --accent-2: #7dd3fc;
+      --accent-soft: rgba(94, 234, 212, 0.14);
+      --green: #4ade80;
+      --green-soft: rgba(74, 222, 128, 0.18);
+      --amber: #fbbf24;
+      --amber-soft: rgba(251, 191, 36, 0.18);
+      --red: #fb7185;
+      --red-soft: rgba(251, 113, 133, 0.18);
+      --shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --sans: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", "Helvetica Neue", sans-serif;
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 600px at 12% -10%, rgba(94, 234, 212, 0.10), transparent 60%),
+        radial-gradient(900px 500px at 88% 0%, rgba(125, 211, 252, 0.10), transparent 60%),
+        linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+      color: var(--text);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.005em;
+    }
+
+    .shell { width: min(1180px, calc(100vw - 40px)); margin: 0 auto; padding: 28px 0 80px; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 44px; flex-wrap: wrap; }
+
+    .brand { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 13px; letter-spacing: 0.04em; color: var(--muted); }
+    .brand-mark { width: 40px; height: 40px; border-radius: 13px; box-shadow: 0 12px 30px rgba(94, 234, 212, 0.28); display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
+    .brand-mark svg { display: block; }
+
+    .topbar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+    .power-link { color: var(--muted); text-decoration: none; font-family: var(--mono); font-size: 12px; letter-spacing: 0.05em; padding: 6px 10px; border-radius: 8px; border: 1px solid transparent; transition: border-color 120ms ease, color 120ms ease; }
+    .power-link:hover { color: var(--text); border-color: var(--line-strong); }
+
+    .space-wrap { position: relative; }
+    .space-selector { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(8px); font-size: 13px; color: var(--muted); }
+    .space-selector select { appearance: none; background: transparent; border: none; color: var(--text); font-family: var(--sans); font-size: 13px; padding: 0 18px 0 0; cursor: pointer; outline: none; max-width: 240px; }
+    .space-wrap::after { content: "▾"; pointer-events: none; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 10px; }
+    .space-selector[data-disabled="true"] select { opacity: 0.5; cursor: not-allowed; }
+
+    .conn-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    .conn-pill .dot { width: 8px; height: 8px; }
+    .system-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-family: var(--mono); font-size: 11px; color: var(--muted); cursor: pointer; transition: border-color 120ms ease, color 120ms ease; }
+    .system-toggle:hover { border-color: var(--line-strong); color: var(--text); }
+    .system-toggle.on { border-color: rgba(94,234,212,0.4); color: var(--accent); background: rgba(94,234,212,0.08); }
+    .chip.system { color: var(--muted); border-color: var(--line); background: rgba(255,255,255,0.04); }
+
+    .hero { display: grid; grid-template-columns: 1fr; gap: 24px; margin-bottom: 40px; }
+    .hero-eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); margin-bottom: 18px; }
+    .hero h1 { margin: 0 0 18px; font-size: clamp(40px, 5.6vw, 72px); line-height: 1.02; letter-spacing: -0.035em; font-weight: 600; max-width: 18ch; }
+    .hero h1 .accent { background: linear-gradient(120deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero p { margin: 0; max-width: 56ch; color: var(--muted); font-size: 18px; line-height: 1.55; }
+
+    .hero-actions { display: flex; align-items: center; gap: 18px; margin-top: 32px; flex-wrap: wrap; }
+
+    .btn { appearance: none; border: none; cursor: pointer; font-family: var(--sans); font-size: 15px; letter-spacing: -0.005em; transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-primary { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #062018; font-weight: 600; box-shadow: 0 14px 40px rgba(94, 234, 212, 0.3); }
+    .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 18px 50px rgba(94, 234, 212, 0.4); }
+    .btn-ghost { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 12px; background: transparent; color: var(--text); border: 1px solid var(--line-strong); }
+    .btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .btn-danger { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px; background: rgba(251, 113, 133, 0.08); color: var(--red); border: 1px solid rgba(251, 113, 133, 0.4); font-size: 13px; }
+    .btn-danger:hover:not(:disabled) { background: rgba(251, 113, 133, 0.14); }
+
+    .cli-hint { display: inline-flex; align-items: center; gap: 12px; padding: 10px 14px 10px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .cli-hint code { color: var(--accent); font-family: var(--mono); }
+    .cli-hint .hint-label { color: var(--muted-2); letter-spacing: 0.05em; text-transform: uppercase; font-size: 10px; }
+
+    .section-title { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
+    .section-title h2 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.005em; }
+    .section-title .count { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); }
+    .section-title .count[hidden] { display: none; }
+
+    /* Connect card (disconnected state) */
+    .connect-card { padding: 36px 32px; border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--panel); backdrop-filter: blur(10px); }
+    .connect-card h3 { margin: 0 0 8px; font-size: 22px; font-weight: 500; letter-spacing: -0.015em; }
+    .connect-card p { margin: 0 0 18px; color: var(--muted); line-height: 1.55; max-width: 60ch; }
+    .connect-card p a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted rgba(94, 234, 212, 0.5); }
+    .cli-block { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-radius: 12px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line); font-family: var(--mono); font-size: 14px; color: var(--text); margin-bottom: 14px; }
+    .cli-block code { flex: 1; color: var(--accent); }
+    .copy-btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--text); font-family: var(--sans); font-size: 12px; cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
+    .copy-btn:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.08); }
+    .copy-btn.copied { border-color: var(--accent); color: var(--accent); }
+    .connect-card .hint { color: var(--muted-2); font-size: 13px; margin-bottom: 0; }
+
+    /* Agent list (rows) */
+    .agent-list { border-radius: var(--radius); border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px); overflow: hidden; }
+    .agent-grid-cols { display: grid; grid-template-columns: 38px minmax(220px, 1.15fr) minmax(150px, 0.72fr) minmax(210px, 1fr) minmax(40px, auto); gap: 14px; align-items: center; }
+    .agent-list-head { padding: 12px 20px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-2); }
+    .agent-row { padding: 16px 20px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; transition: background 120ms ease; text-align: left; font: inherit; width: 100%; }
+    .agent-row:last-child { border-bottom: 0; }
+    .agent-row:hover { background: rgba(255, 255, 255, 0.03); }
+    .agent-row:focus-visible { outline: 2px solid rgba(94, 234, 212, 0.5); outline-offset: -2px; }
+    .agent-row.active-row { background: rgba(94, 234, 212, 0.06); }
+
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; justify-self: center; background: var(--muted-2); transition: background 200ms ease, box-shadow 200ms ease; }
+    .dot.tone-ok { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+    .dot.tone-warning { background: var(--amber); box-shadow: 0 0 0 4px var(--amber-soft); }
+    .dot.tone-error { background: var(--red); box-shadow: 0 0 0 4px var(--red-soft); }
+    .dot.tone-muted { background: var(--muted-2); }
+    .mailbox-indicator { display: inline-flex; align-items: center; gap: 5px; justify-self: start; min-width: 0; transform: translateX(-2px); }
+    .mailbox-icon { width: 34px; height: 26px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; position: relative; border: 1px solid rgba(125, 211, 252, 0.34); background: rgba(125, 211, 252, 0.09); color: #7dd3fc; flex: 0 0 34px; }
+    .mailbox-icon::before { content: ""; width: 16px; height: 11px; border: 2px solid currentColor; border-radius: 3px; box-sizing: border-box; }
+    .mailbox-icon::after { content: ""; position: absolute; width: 10px; height: 10px; border-left: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(-45deg); }
+    .mailbox-count { position: absolute; top: -9px; right: -9px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(250, 204, 21, 0.5); background: #2c260d; color: var(--amber); font: 800 10px/1 var(--mono); letter-spacing: 0; box-shadow: 0 0 0 2px var(--bg-1); box-sizing: border-box; }
+    .mailbox-badge { height: 24px; padding: 0 8px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(125, 211, 252, 0.3); background: rgba(125, 211, 252, 0.08); color: #7dd3fc; font: 700 11px/1 var(--mono); letter-spacing: 0.02em; white-space: nowrap; }
+    .mailbox-badge.task { border-color: rgba(196, 181, 253, 0.36); background: rgba(196, 181, 253, 0.1); color: #c4b5fd; }
+
+    .row-agent { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .type-mark { width: 34px; height: 34px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--muted); }
+    .type-mark svg { width: 20px; height: 20px; display: block; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .type-mark.type-ollama { color: #4ade80; border-color: rgba(74, 222, 128, 0.32); background: rgba(74, 222, 128, 0.1); }
+    .type-mark.type-hermes { color: #7dd3fc; border-color: rgba(125, 211, 252, 0.34); background: rgba(125, 211, 252, 0.1); }
+    .type-mark.type-pass { color: #facc15; border-color: rgba(250, 204, 21, 0.34); background: rgba(250, 204, 21, 0.1); }
+    .type-mark.type-channel { color: #c4b5fd; border-color: rgba(196, 181, 253, 0.34); background: rgba(196, 181, 253, 0.1); }
+    .type-mark.type-inbox { color: #a5b4fc; border-color: rgba(165, 180, 252, 0.3); background: rgba(165, 180, 252, 0.09); }
+    .type-mark.type-echo { color: var(--accent); border-color: rgba(94, 234, 212, 0.3); background: rgba(94, 234, 212, 0.1); }
+    .row-agent-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .row-name { font-weight: 600; font-size: 16px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-type-label { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-type-chip { justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-last-seen { color: var(--muted); font-size: 13px; font-family: var(--mono); letter-spacing: 0.02em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-last-seen.fresh { color: var(--accent); }
+    .row-space { color: var(--text); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-space.muted { color: var(--muted); }
+    .row-chev { color: var(--muted-2); font-size: 18px; line-height: 1; text-align: right; }
+    .row-action { display: flex; justify-content: flex-end; align-items: center; min-width: 0; }
+    .row-approve {
+      appearance: none;
+      border: 1px solid rgba(94, 234, 212, 0.45);
+      background: rgba(94, 234, 212, 0.12);
+      color: var(--accent);
+      border-radius: 999px;
+      padding: 7px 12px;
+      font: 600 12px/1 var(--sans);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+    }
+    .row-approve:hover:not(:disabled) { background: rgba(94, 234, 212, 0.2); border-color: rgba(125, 211, 252, 0.7); transform: translateY(-1px); }
+    .row-approve:disabled { opacity: 0.55; cursor: progress; transform: none; }
+
+    .chip { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line); font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; color: var(--muted); }
+    .chip.template { color: var(--accent); border-color: rgba(94, 234, 212, 0.3); background: var(--accent-soft); }
+
+    .empty { padding: 56px 32px; text-align: center; border-radius: var(--radius); border: 1px dashed var(--line-strong); background: var(--panel); backdrop-filter: blur(10px); }
+    .empty h3 { margin: 0 0 8px; font-size: 22px; font-weight: 500; letter-spacing: -0.015em; }
+    .empty p { margin: 0 auto 24px; color: var(--muted); max-width: 50ch; line-height: 1.55; }
+    .empty.empty-quiet { padding: 28px 24px; }
+    .empty.empty-quiet p { margin: 0; }
+    .empty-cli { display: inline-flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .empty-cli code { color: var(--accent); }
+
+    /* Drawer */
+    .drawer-wrap { position: fixed; inset: 0; z-index: 60; display: none; }
+    .drawer-wrap.open { display: block; }
+    .drawer-overlay { position: absolute; inset: 0; background: rgba(4, 9, 14, 0.55); backdrop-filter: blur(4px); opacity: 0; transition: opacity 200ms ease; }
+    .drawer-wrap.open .drawer-overlay { opacity: 1; }
+    .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--panel-strong); border-left: 1px solid var(--line-strong); box-shadow: -24px 0 60px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; transform: translateX(100%); transition: transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1); }
+    .drawer-wrap.open .drawer { transform: translateX(0); }
+    .drawer-head { display: flex; align-items: center; gap: 12px; padding: 22px 24px 16px; border-bottom: 1px solid var(--line); }
+    .drawer-head .dot { width: 12px; height: 12px; }
+    .drawer-name { flex: 1; min-width: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .drawer-close { width: 32px; height: 32px; border-radius: 8px; border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 22px; display: flex; align-items: center; justify-content: center; }
+    .drawer-close:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+    .drawer-body { flex: 1; overflow-y: auto; padding: 18px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
+    .drawer-section { display: flex; flex-direction: column; gap: 8px; }
+    .drawer-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-2); }
+    .drawer-value { font-size: 14px; color: var(--text); line-height: 1.5; }
+    .drawer-value.muted { color: var(--muted); }
+    .drawer-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+    .drawer-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .drawer-actions .btn-ghost, .drawer-actions .btn-primary { padding: 10px 16px; font-size: 14px; }
+    .message-composer { display: grid; gap: 10px; width: 100%; }
+    .message-composer textarea { width: 100%; min-height: 88px; resize: vertical; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,0.035); color: var(--text); padding: 12px 14px; font: 13px/1.45 var(--font); outline: none; }
+    .message-composer textarea:focus { border-color: rgba(132,245,231,0.8); box-shadow: 0 0 0 3px rgba(94,234,212,0.12); }
+    .message-composer textarea::placeholder { color: var(--muted-2); }
+    .message-composer-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
+    .message-composer-meta strong { color: var(--text); font-weight: 600; }
+    .message-composer-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .drawer-foot { padding: 16px 24px 22px; border-top: 1px solid var(--line); }
+    .drawer-select { width: 100%; padding: 10px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line); color: var(--text); font-family: var(--sans); font-size: 14px; outline: none; }
+    .drawer-select:focus { border-color: var(--accent); }
+    .status-detail { padding: 12px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .status-detail.warning { border-color: rgba(251, 191, 36, 0.3); background: rgba(251, 191, 36, 0.06); color: var(--text); }
+    .status-detail.error { border-color: rgba(251, 113, 133, 0.3); background: rgba(251, 113, 133, 0.06); color: var(--text); }
+
+    .pin-toggle { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
+    .pin-toggle:hover { border-color: var(--line-strong); }
+    .pin-toggle.on { border-color: rgba(94,234,212,0.4); background: rgba(94,234,212,0.06); }
+    .pin-toggle-label { display: flex; flex-direction: column; gap: 2px; }
+    .pin-toggle-title { font-size: 14px; color: var(--text); font-weight: 500; }
+    .pin-toggle-hint { font-size: 12px; color: var(--muted); }
+    .switch { position: relative; width: 38px; height: 22px; border-radius: 999px; background: rgba(255,255,255,0.1); transition: background 160ms ease; flex-shrink: 0; }
+    .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--text); transition: transform 160ms ease; }
+    .pin-toggle.on .switch { background: var(--accent); }
+    .pin-toggle.on .switch::after { transform: translateX(16px); background: #062018; }
+    .row.pinned-row .row-name::after { content: "·  pinned"; color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 400; margin-left: 6px; letter-spacing: 0.04em; }
+
+    .activity { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+    .activity-empty { padding: 14px; border-radius: 10px; border: 1px dashed var(--line); color: var(--muted); font-size: 13px; text-align: center; }
+    .activity-event { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--line); animation: eventIn 200ms ease both; }
+    @keyframes eventIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .activity-event.send { background: rgba(94,234,212,0.06); border-color: rgba(94,234,212,0.25); }
+    .activity-event.reply { background: rgba(74,222,128,0.07); border-color: rgba(74,222,128,0.3); }
+    .activity-event.work { background: rgba(125,211,252,0.05); border-color: rgba(125,211,252,0.22); }
+    .activity-event.error { background: rgba(251,113,133,0.07); border-color: rgba(251,113,133,0.3); }
+    .activity-event-icon { width: 22px; height: 22px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1; }
+    .activity-event-icon.dot { display: inline-flex; }
+    .activity-event-icon.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .activity-event.send .activity-event-icon.dot::before { background: var(--accent); }
+    .activity-event.reply .activity-event-icon.dot::before { background: var(--green); }
+    .activity-event.work .activity-event-icon.dot::before { background: var(--accent-2); }
+    .activity-event.error .activity-event-icon.dot::before { background: var(--red); }
+    .activity-event-body { flex: 1; min-width: 0; }
+    .activity-event-title { font-size: 13px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .activity-event-title .thinking-dots { margin-left: 4px; }
+    .activity-event-detail { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.45; word-break: break-word; }
+    .activity-event-time { font-family: var(--mono); font-size: 10px; color: var(--muted-2); margin-top: 6px; letter-spacing: 0.05em; }
+    .activity-count { font-family: var(--mono); font-size: 10px; color: var(--accent); border: 1px solid rgba(94,234,212,0.25); background: rgba(94,234,212,0.08); padding: 2px 7px; border-radius: 999px; }
+    .activity-subevents { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); display: grid; gap: 6px; }
+    .activity-subevent { display: grid; grid-template-columns: minmax(86px, auto) 1fr auto; gap: 8px; align-items: baseline; font-size: 11px; color: var(--muted); }
+    .activity-subevent strong { color: var(--text); font-weight: 500; }
+    .activity-subevent-time { font-family: var(--mono); color: var(--muted-2); white-space: nowrap; }
+    .thinking-dots { display: inline-flex; gap: 3px; align-items: center; }
+    .thinking-dots span { width: 4px; height: 4px; border-radius: 999px; background: var(--accent); animation: bounce 1.2s ease-in-out infinite; }
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
+
+    /* Modal (wizard) */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(4, 9, 14, 0.7); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 24px; z-index: 70; animation: fadeIn 160ms ease both; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .modal-backdrop.open { display: flex; }
+
+    .modal { width: min(640px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; border-radius: var(--radius); background: linear-gradient(180deg, rgba(20, 32, 44, 0.98), rgba(10, 21, 29, 0.98)); border: 1px solid var(--line-strong); box-shadow: var(--shadow); animation: modalIn 200ms cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+    @keyframes modalIn { from { opacity: 0; transform: translateY(20px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+    .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 8px; }
+    .modal-head h2 { margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.015em; }
+    .modal-close { width: 32px; height: 32px; border-radius: 8px; border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 20px; }
+    .modal-close:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+    .modal-body { padding: 16px 24px 24px; }
+    .modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px 22px; border-top: 1px solid var(--line); margin-top: 8px; }
+
+    .template-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 24px; }
+    .template-select { width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--text); font: 500 15px/1.2 var(--sans); outline: none; }
+    .template-select:focus { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(94, 234, 212, 0.32); }
+    .template-card { padding: 18px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); cursor: pointer; transition: border-color 120ms ease, background 120ms ease; text-align: left; }
+    .template-card:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.04); }
+    .template-card.selected { border-color: var(--accent); background: rgba(94, 234, 212, 0.12); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .template-card.summary { cursor: default; }
+    .template-card.summary:hover { border-color: var(--line); background: rgba(255, 255, 255, 0.02); }
+    .template-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
+    .template-card.selected .template-name { color: #f2fbff; }
+    .template-tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+    .template-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+    .field { margin-bottom: 18px; }
+    .field label { display: block; font-size: 12px; font-family: var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+    .field input[type="text"], .field select { width: 100%; padding: 12px 14px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line); color: var(--text); font-family: var(--sans); font-size: 15px; outline: none; transition: border-color 120ms ease, background 120ms ease; }
+    .field input[type="text"]:focus, .field select:focus { border-color: var(--accent); background: rgba(94, 234, 212, 0.06); }
+    .field-hint { margin-top: 6px; font-size: 12px; color: var(--muted); }
+
+    .form-error { margin-top: 12px; padding: 10px 14px; border-radius: 10px; background: rgba(251, 113, 133, 0.1); border: 1px solid rgba(251, 113, 133, 0.35); color: var(--red); font-size: 13px; }
+    .form-status { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .spinner { width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.1); border-top-color: var(--accent); border-radius: 999px; animation: spin 720ms linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 12px 20px; border-radius: 12px; background: var(--panel-solid); border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: 14px; z-index: 90; display: none; }
+    .toast.open { display: block; animation: toastIn 200ms ease both; }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+    .toast.ok { border-color: rgba(74, 222, 128, 0.4); }
+    .toast.err { border-color: rgba(251, 113, 133, 0.4); color: var(--red); }
+
+    @media (max-width: 960px) {
+      .agent-grid-cols { grid-template-columns: 38px minmax(170px, 1fr) minmax(128px, 0.65fr) minmax(154px, 0.82fr) minmax(30px, auto); gap: 12px; }
+      .row-space { font-size: 12px; }
+    }
+    @media (max-width: 720px) {
+      .template-grid { grid-template-columns: 1fr; }
+      .hero h1 { font-size: 44px; }
+      .topbar { margin-bottom: 28px; }
+      .agent-grid-cols { grid-template-columns: 34px minmax(0, 1fr) minmax(96px, 0.55fr) minmax(116px, 0.65fr) minmax(22px, auto); gap: 10px; }
+      .type-mark { width: 30px; height: 30px; border-radius: 9px; }
+      .type-mark svg { width: 18px; height: 18px; }
+      .row-agent { gap: 9px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="brand-grad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#5eead4"/>
+                <stop offset="100%" stop-color="#7dd3fc"/>
+              </linearGradient>
+            </defs>
+            <rect width="40" height="40" rx="13" fill="url(#brand-grad)"/>
+            <path d="M12 12 20 20 12 28M20 20h8" stroke="#062018" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+            <circle cx="12" cy="12" r="4.1" fill="#062018"/>
+            <circle cx="12" cy="28" r="4.1" fill="#062018"/>
+            <circle cx="28" cy="20" r="4.1" fill="#062018"/>
+            <circle cx="20" cy="20" r="5.2" fill="#062018"/>
+            <circle cx="12" cy="12" r="1.25" fill="#a7fff1"/>
+            <circle cx="12" cy="28" r="1.25" fill="#a7fff1"/>
+            <circle cx="28" cy="20" r="1.25" fill="#a7fff1"/>
+            <circle cx="20" cy="20" r="1.8" fill="#a7fff1"/>
+          </svg>
+        </div>
+        <span>ax · gateway</span>
+      </div>
+      <div class="topbar-right">
+        <span class="conn-pill" id="conn-pill" title="Gateway connection state">
+          <span class="dot tone-muted" id="conn-dot"></span>
+          <span id="conn-text">connecting…</span>
+        </span>
+        <div class="space-wrap">
+          <div class="space-selector" id="space-selector">
+            <span>Space</span>
+            <select id="space-select"></select>
+          </div>
+        </div>
+        <a class="power-link" href="/operator" title="Open the full operator dashboard">Advanced view →</a>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <div class="hero-eyebrow">Onboarding</div>
+        <h1>Bring your agents <span class="accent">online</span>.</h1>
+        <p>One place to connect Ollama, Hermes, and other runtimes to the aX platform. Pick a runtime, name it, and it's live in seconds.</p>
+        <div class="hero-actions">
+          <button class="btn btn-primary" id="open-wizard" disabled>
+            <span>Connect agent</span>
+            <span style="font-size: 18px; line-height: 1;">→</span>
+          </button>
+          <div class="cli-hint">
+            <span class="hint-label">CLI</span>
+            <code>ax gateway agents add &lt;name&gt; --template ollama</code>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h2 id="list-title">Your agents</h2>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button type="button" class="system-toggle" id="system-toggle" title="Show gateway-internal agents like switchboards">Show system agents</button>
+          <span class="count" id="agent-count" hidden></span>
+        </div>
+      </div>
+      <div id="agent-region"></div>
+    </section>
+  </div>
+
+  <!-- Drawer -->
+  <div class="drawer-wrap" id="drawer-wrap" role="dialog" aria-modal="true" aria-labelledby="drawer-name">
+    <div class="drawer-overlay" id="drawer-overlay"></div>
+    <aside class="drawer">
+      <header class="drawer-head">
+        <span class="dot tone-muted" id="drawer-dot"></span>
+        <span class="drawer-name" id="drawer-name">—</span>
+        <button class="drawer-close" id="drawer-close" aria-label="Close">×</button>
+      </header>
+      <div class="drawer-body" id="drawer-body"></div>
+      <footer class="drawer-foot">
+        <button class="btn-danger" id="drawer-remove">Remove agent</button>
+      </footer>
+    </aside>
+  </div>
+
+  <!-- Wizard -->
+  <div class="modal-backdrop" id="wizard">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+      <div class="modal-head">
+        <h2 id="wizard-title">Connect an agent</h2>
+        <button class="modal-close" id="wizard-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Runtime</label>
+          <div class="template-grid" id="template-grid"></div>
+        </div>
+        <div class="field">
+          <label for="agent-name-input">Name</label>
+          <input id="agent-name-input" type="text" placeholder="my-agent" autocomplete="off" spellcheck="false" />
+          <div class="field-hint">Letters, numbers, dashes, or underscores.</div>
+        </div>
+        <div class="field" id="ollama-model-field" style="display: none;">
+          <label for="ollama-model-input">Ollama model</label>
+          <select id="ollama-model-input"></select>
+          <div class="field-hint" id="ollama-hint"></div>
+        </div>
+        <div class="field" id="hermes-preflight-field" style="display: none;">
+          <div class="status-detail warning" id="hermes-preflight">
+            <div style="font-weight: 500; color: var(--text); margin-bottom: 8px;">Heads up — Hermes setup not detected</div>
+            <div id="hermes-preflight-detail" style="margin-bottom: 10px; line-height: 1.5;"></div>
+            <div class="cli-block" style="margin: 0;">
+              <code id="hermes-preflight-cmd">export HERMES_REPO_PATH=/path/to/your/hermes-agent</code>
+              <button class="copy-btn" type="button" id="hermes-preflight-copy">Copy</button>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.5;">You can still hit Connect — the agent will register, but the runtime will fail to launch with this same error until the checkout is in place.</div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="agent-space-input">Space</label>
+          <select id="agent-space-input"></select>
+        </div>
+        <div id="form-error" class="form-error" style="display: none;"></div>
+        <div id="form-status" class="form-status" style="display: none;">
+          <div class="spinner"></div>
+          <span id="form-status-text">Connecting…</span>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="wizard-cancel">Cancel</button>
+        <button class="btn btn-primary" id="wizard-submit">
+          <span>Connect</span>
+          <span style="font-size: 18px; line-height: 1;">→</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const refreshMs = window.__GATEWAY_DEMO_REFRESH_MS__ || 3000;
+
+    const TEMPLATE_COPY = {
+      ollama: { name: "Ollama", tag: "Local model", desc: "Run a local LLM on this machine. Pickup, liveness, and streaming activity." },
+      hermes: { name: "Hermes", tag: "Coding agent", desc: "Persistent live listener with tool use, repo access, and session continuity." },
+      sentinel_cli: { name: "Sentinel CLI", tag: "Session agent", desc: "Long-lived Claude or Codex CLI runtime with session resume and tool activity." },
+      claude_code_channel: { name: "Claude Code Channel", tag: "MCP channel", desc: "Planned live Claude Code channel adapter for a supervised Gateway session." },
+      pass_through: { name: "Pass-through", tag: "Polling inbox", desc: "Mailbox identity for agents that check Gateway instead of listening live. Requires approval." },
+      echo_test: { name: "Echo", tag: "Test runtime", desc: "Zero setup. Confirms your gateway can deliver and receive in real time." },
+      inbox: { name: "Passive Inbox", tag: "Advanced queue", desc: "Receives queued work without launching an answering runtime." },
+    };
+
+    const state = {
+      connected: null,
+      baseUrl: null,
+      user: null,
+      agents: [],
+      spaces: [],
+      activeSpaceId: null,
+      sessionSpaceId: null,
+      templates: [],
+      selectedTemplateId: "ollama",
+      submitting: false,
+      drawerAgentName: null,
+      drawerActivity: [],
+      drawerActivityKey: "",
+      drawerPollHandle: null,
+      rowsByName: new Map(),
+      lastRenderMode: null, // "disconnected" | "connect" | "list"
+      showSystemAgents: false,
+    };
+
+    // Restore system-agent toggle state from localStorage so the choice persists across reloads.
+    try {
+      state.showSystemAgents = window.localStorage.getItem("ax-demo-show-system") === "1";
+    } catch (_) { /* ignore */ }
+    function isSystemAgent(agent) {
+      const name = String(agent.name || "");
+      if (name.startsWith("switchboard-")) return true;
+      const tmpl = String(agent.template_id || "").toLowerCase();
+      const runtime = String(agent.runtime_type || "").toLowerCase();
+      // Heuristic: gateway-internal inbox-mode agents that the user did not author.
+      if (tmpl === "inbox" && runtime === "inbox" && name.startsWith("switchboard")) return true;
+      return false;
+    }
+
+    function $(id) { return document.getElementById(id); }
+    function clearChildren(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+    function makeEl(tag, props, children) {
+      const el = document.createElement(tag);
+      if (props) {
+        for (const key of Object.keys(props)) {
+          const value = props[key];
+          if (value == null || value === false) continue;
+          if (key === "class") el.className = value;
+          else if (key === "text") el.textContent = String(value);
+          else if (key === "dataset") {
+            for (const dk of Object.keys(value)) el.dataset[dk] = String(value[dk]);
+          } else if (key === "style") {
+            for (const sk of Object.keys(value)) el.style[sk] = value[sk];
+          } else if (key.startsWith("on") && typeof value === "function") {
+            el.addEventListener(key.slice(2).toLowerCase(), value);
+          } else if (value === true) {
+            el.setAttribute(key, "");
+          } else {
+            el.setAttribute(key, String(value));
+          }
+        }
+      }
+      if (children) {
+        for (const child of children) {
+          if (child == null || child === false) continue;
+          if (typeof child === "string") el.appendChild(document.createTextNode(child));
+          else el.appendChild(child);
+        }
+      }
+      return el;
+    }
+
+    const TYPE_ICON_PATHS = {
+      ollama: [
+        '<rect x="5" y="5" width="14" height="14" rx="3"></rect>',
+        '<path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"></path>',
+        '<path d="M9 12h6"></path>',
+      ],
+      hermes: [
+        '<path d="M12 18v3"></path>',
+        '<path d="M8 21h8"></path>',
+        '<circle cx="12" cy="14" r="2"></circle>',
+        '<path d="M7 10a7 7 0 0 1 10 0"></path>',
+        '<path d="M4 7a11 11 0 0 1 16 0"></path>',
+      ],
+      pass: [
+        '<path d="M4 7h8a4 4 0 0 1 0 8H4"></path>',
+        '<path d="M12 15h8"></path>',
+        '<path d="M17 12l3 3-3 3"></path>',
+      ],
+      channel: [
+        '<path d="M8 9l-4 3 4 3"></path>',
+        '<path d="M16 9l4 3-4 3"></path>',
+        '<path d="M14 5l-4 14"></path>',
+      ],
+      sentinel: [
+        '<path d="M12 3v3"></path>',
+        '<path d="M5 12a7 7 0 0 1 14 0"></path>',
+        '<path d="M8 12a4 4 0 0 1 8 0"></path>',
+        '<path d="M12 12v8"></path>',
+        '<path d="M9 20h6"></path>',
+      ],
+      echo: [
+        '<path d="M17 2l4 4-4 4"></path>',
+        '<path d="M3 11V9a3 3 0 0 1 3-3h15"></path>',
+        '<path d="M7 22l-4-4 4-4"></path>',
+        '<path d="M21 13v2a3 3 0 0 1-3 3H3"></path>',
+      ],
+      inbox: [
+        '<rect x="4" y="4" width="16" height="16" rx="2"></rect>',
+        '<path d="M4 13h4l2 3h4l2-3h4"></path>',
+      ],
+      system: [
+        '<circle cx="12" cy="12" r="3"></circle>',
+        '<path d="M19.4 15a8 8 0 0 0 .1-2l2-1.5-2-3.5-2.4 1a7 7 0 0 0-1.7-1L15 5h-4l-.4 3a7 7 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a8 8 0 0 0 .1 2l-2 1.5 2 3.5 2.4-1a7 7 0 0 0 1.7 1l.4 3h4l.4-3a7 7 0 0 0 1.7-1l2.4 1 2-3.5z"></path>',
+      ],
+      custom: [
+        '<rect x="4" y="4" width="16" height="16" rx="4"></rect>',
+        '<path d="M9 7h6"></path>',
+        '<path d="M9 12h6"></path>',
+        '<path d="M9 17h6"></path>',
+      ],
+    };
+
+    function typeIcon(name, label) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      svg.setAttribute("focusable", "false");
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = label || name || "Agent type";
+      svg.appendChild(title);
+      const paths = TYPE_ICON_PATHS[name] || TYPE_ICON_PATHS.custom;
+      for (const raw of paths) {
+        const template = document.createElement("template");
+        template.innerHTML = `<svg>${raw}</svg>`;
+        const node = template.content.firstChild.firstChild;
+        if (node) svg.appendChild(document.importNode(node, true));
+      }
+      return svg;
+    }
+
+    function templateLabel(agent) {
+      const id = String(agent.template_id || "").toLowerCase();
+      if (TEMPLATE_COPY[id]) return TEMPLATE_COPY[id].name;
+      return String(agent.template_label || agent.runtime_type || "Custom");
+    }
+
+    function agentTypeMeta(agent, sys) {
+      if (sys) return { icon: "system", label: "System", className: "type-inbox" };
+      const template = String(agent.template_id || "").toLowerCase();
+      const runtime = String(agent.runtime_type || "").toLowerCase();
+      const intake = String(agent.intake_model || "").toLowerCase();
+      if (template === "ollama") return { icon: "ollama", label: "Ollama", className: "type-ollama" };
+      if (template === "hermes" || runtime === "hermes_sentinel") return { icon: "hermes", label: "Hermes", className: "type-hermes" };
+      if (template === "pass_through" || agent.local_connection_mode === "pass_through") return { icon: "pass", label: "Pass-through", className: "type-pass" };
+      if (template === "claude_code_channel") return { icon: "channel", label: "Claude Code", className: "type-channel" };
+      if (template === "sentinel_cli") return { icon: "sentinel", label: "Sentinel CLI", className: "type-hermes" };
+      if (template === "echo_test" || runtime === "echo") return { icon: "echo", label: "Echo", className: "type-echo" };
+      if (template === "inbox" || intake === "queue_accept" || runtime === "inbox") return { icon: "inbox", label: "Inbox", className: "type-inbox" };
+      return { icon: "custom", label: templateLabel(agent), className: "type-custom" };
+    }
+
+    function spaceLabel(agent) {
+      // Prefer the agent's home space (space_id) over the gateway's runtime
+      // operating space (active_space_id). active_space_id reflects what the
+      // gateway is *sending as*, not where the agent lives.
+      const id = String(agent.space_id || agent.default_space_id || agent.active_space_id || "").trim();
+      const looksLikeId = (s) => /^[0-9a-f]{8}-[0-9a-f-]{13,}$/i.test(String(s || ""));
+      const explicit = String(agent.space_name || agent.default_space_name || agent.active_space_name || "").trim();
+      const match = state.spaces.find((space) => space.id === id);
+      if (match) return match.name;
+      if (explicit && !looksLikeId(explicit)) return explicit;
+      return id || "—";
+    }
+
+    function countFrom(agent, keys) {
+      let max = 0;
+      for (const key of keys) {
+        const n = Number(agent[key] || 0);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+      return max;
+    }
+
+    function mailboxCounts(agent) {
+      return {
+        messages: countFrom(agent, ["backlog_depth", "queue_depth", "unread_count", "unread_message_count", "pending_message_count"]),
+        tasks: countFrom(agent, ["task_count", "open_task_count", "pending_task_count", "queued_task_count"]),
+      };
+    }
+
+    function friendlyStatus(agent) {
+      const desired = String(agent.desired_state || "").toLowerCase();
+      const presence = String(agent.presence || "").toUpperCase();
+      const confidence = String(agent.confidence || "").toUpperCase();
+      const reason = String(agent.confidence_reason || "").toLowerCase();
+      const approval = String(agent.approval_state || "").toLowerCase();
+      const detail = String(agent.confidence_detail || "").trim();
+      const counts = mailboxCounts(agent);
+      const unread = counts.messages;
+      const tasks = counts.tasks;
+
+      // Operator intent overrides observed presence — if the user hit Stop,
+      // the agent should read "Stopped" immediately, even if a stale heartbeat
+      // is still draining out of the system.
+      if (desired === "stopped") {
+        return {
+          label: "Stopped",
+          tone: "muted",
+          detail: "Stopped via the gateway. New messages won't be delivered or processed until you Start it again.",
+        };
+      }
+      if (approval === "pending") {
+        return { label: "Needs approval", tone: "warning", detail: detail || "Approve the fingerprinted Gateway binding before this agent can pass work through." };
+      }
+      if (approval === "rejected") {
+        return { label: "Rejected", tone: "error", detail: detail || "This Gateway binding was rejected." };
+      }
+      if (presence === "ERROR" || reason === "setup_blocked") {
+        return { label: "Setup error", tone: "error", detail: detail || "Something is missing for this runtime to start." };
+      }
+      if (confidence === "BLOCKED" && reason === "binding_drift") {
+        return { label: "Needs approval", tone: "warning", detail: detail || "Re-approve the runtime binding in Gateway." };
+      }
+      if (confidence === "BLOCKED") {
+        return { label: "Blocked", tone: "warning", detail: detail || "Gateway has blocked this runtime." };
+      }
+      if (isMailboxRuntime(agent)) {
+        if (unread > 0 || tasks > 0) {
+          const parts = [];
+          if (unread > 0) parts.push(unread === 1 ? "1 new message" : `${unread} new messages`);
+          if (tasks > 0) parts.push(tasks === 1 ? "1 task" : `${tasks} tasks`);
+          return { label: parts.join(" · "), tone: "warning", detail: "Mailbox has queued work waiting for the agent to check in." };
+        }
+        return { label: "Inbox", tone: "muted", detail: detail || "Mailbox is available. It is not a live listener." };
+      }
+      if (presence === "STALE") return { label: "Stale", tone: "warning", detail: detail || "Heartbeat is overdue." };
+      if (presence === "OFFLINE") return { label: "Offline", tone: "muted", detail: detail || "Runtime is not currently connected." };
+      if (presence === "ACTIVE" || presence === "LIVE" || agent.connected) {
+        return { label: "Active", tone: "ok", detail: detail || "Live and ready." };
+      }
+      if (confidence === "MEDIUM" && reason === "launch_available") {
+        return { label: "Ready", tone: "ok", detail: detail || "Cold-starts on send." };
+      }
+      if (confidence === "HIGH") return { label: "Ready", tone: "ok", detail: detail || "Gateway can route traffic now." };
+      if (presence === "IDLE") return { label: "Idle", tone: "muted", detail: detail || "Waiting for traffic." };
+      return { label: "Idle", tone: "muted", detail: detail || "" };
+    }
+
+    function showToast(message, kind) {
+      const toast = $("toast");
+      toast.textContent = message;
+      toast.className = "toast open " + (kind || "");
+      window.clearTimeout(showToast._t);
+      showToast._t = window.setTimeout(() => { toast.className = "toast"; }, 2400);
+    }
+
+    async function api(method, path, body) {
+      const init = { method, headers: { "Accept": "application/json" } };
+      if (body !== undefined) {
+        init.headers["Content-Type"] = "application/json";
+        init.body = JSON.stringify(body);
+      }
+      const res = await fetch(path, init);
+      let payload = null;
+      try { payload = await res.json(); } catch (_) { /* ignore */ }
+      if (!res.ok) {
+        const message = (payload && payload.error) || ("Request failed (" + res.status + ")");
+        const err = new Error(message);
+        err.status = res.status;
+        throw err;
+      }
+      return payload;
+    }
+
+    /* --- Data loading ------------------------------------------------ */
+
+    async function loadStatus() {
+      let status;
+      try {
+        status = await api("GET", "/api/status");
+      } catch (err) {
+        renderDisconnectedState(err.message || "Gateway daemon is not responding.");
+        return;
+      }
+      state.connected = !!status.connected;
+      state.baseUrl = status.base_url || null;
+      state.user = status.user || null;
+      state.agents = Array.isArray(status.agents) ? status.agents : [];
+      state.sessionSpaceId = status.space_id || null;
+      // activeSpaceId stays "" (= All spaces) unless user explicitly picks one.
+      renderConnectionPill();
+      if (!state.connected) {
+        renderConnectPrompt();
+        return;
+      }
+      ensureListMode();
+      renderAgentList();
+      if (state.drawerAgentName) refreshDrawer();
+    }
+
+    async function loadSpaces() {
+      try {
+        const payload = await api("GET", "/api/spaces");
+        state.spaces = Array.isArray(payload.spaces) ? payload.spaces : [];
+        // activeSpaceId default = "" → "All spaces" filter. User picks a specific space to narrow.
+        renderSpaceSelect();
+        renderAgentSpaceOptions();
+      } catch (err) {
+        state.spaces = [];
+        renderSpaceSelect();
+      }
+    }
+
+    async function loadTemplates() {
+      try {
+        const payload = await api("GET", "/api/templates");
+        state.templates = Array.isArray(payload.templates) ? payload.templates : [];
+        if (!state.templates.some((t) => String(t.id || "").toLowerCase() === state.selectedTemplateId)) {
+          state.selectedTemplateId = String((state.templates[0] || {}).id || "ollama").toLowerCase();
+        }
+        renderTemplateGrid();
+        renderOllamaModelField();
+        renderHermesPreflight();
+      } catch (err) {
+        state.templates = [];
+      }
+    }
+
+    /* --- Connection pill --------------------------------------------- */
+
+    function renderConnectionPill() {
+      const dot = $("conn-dot");
+      const text = $("conn-text");
+      if (state.connected) {
+        dot.className = "dot tone-ok";
+        const where = state.baseUrl ? state.baseUrl.replace(/^https?:\/\//, "") : "aX";
+        text.textContent = "connected · " + where;
+      } else {
+        dot.className = "dot tone-muted";
+        text.textContent = "not connected";
+      }
+    }
+
+    /* --- Disconnected / connect-prompt UI ---------------------------- */
+
+    function disableHeader(disabled) {
+      const sel = $("space-selector");
+      sel.dataset.disabled = disabled ? "true" : "false";
+      $("space-select").disabled = !!disabled;
+      // Connect agent is gated only by the gateway connection. Spaces may still
+      // be loading the first time we render — the wizard handles that.
+      $("open-wizard").disabled = !!disabled;
+    }
+
+    function renderDisconnectedState(message) {
+      state.connected = false;
+      renderConnectionPill();
+      const region = $("agent-region");
+      if (state.lastRenderMode === "disconnected") {
+        const msg = region.querySelector(".connect-card .hint");
+        if (msg) msg.textContent = message;
+        return;
+      }
+      state.lastRenderMode = "disconnected";
+      state.rowsByName.clear();
+      clearChildren(region);
+      $("list-title").textContent = "Gateway";
+      setAgentCount(0);
+      disableHeader(true);
+      const card = makeEl("div", { class: "connect-card" }, [
+        makeEl("h3", null, ["Gateway is offline"]),
+        makeEl("p", null, [message || "The local Gateway daemon isn't responding. Start it and refresh this page."]),
+        makeEl("div", { class: "cli-block" }, [
+          makeEl("code", null, ["ax gateway start"]),
+          makeEl("button", { class: "copy-btn", onclick: copyHandler("ax gateway start") }, ["Copy"]),
+        ]),
+        makeEl("p", { class: "hint" }, ["Once the daemon is running this page will reconnect automatically."]),
+      ]);
+      region.appendChild(card);
+    }
+
+    function renderConnectPrompt() {
+      const region = $("agent-region");
+      $("list-title").textContent = "Connect this Gateway";
+      setAgentCount(0);
+      disableHeader(true);
+      if (state.lastRenderMode === "connect") return;
+      state.lastRenderMode = "connect";
+      state.rowsByName.clear();
+      clearChildren(region);
+      const cmd = "ax gateway login --url https://paxai.app";
+      const card = makeEl("div", { class: "connect-card" }, [
+        makeEl("h3", null, ["Connect this Gateway to aX"]),
+        makeEl("p", null, [
+          "Get a token from ",
+          makeEl("a", { href: "https://paxai.app", target: "_blank", rel: "noopener" }, ["paxai.app"]),
+          " → Settings → Credentials, then run this in your terminal:",
+        ]),
+        makeEl("div", { class: "cli-block" }, [
+          makeEl("code", null, [cmd]),
+          makeEl("button", { class: "copy-btn", onclick: copyHandler(cmd) }, ["Copy"]),
+        ]),
+        makeEl("p", { class: "hint" }, ["This page refreshes the moment the gateway connects."]),
+      ]);
+      region.appendChild(card);
+    }
+
+    function copyHandler(text) {
+      return async (event) => {
+        const btn = event.currentTarget;
+        try {
+          await navigator.clipboard.writeText(text);
+          const original = btn.textContent;
+          btn.textContent = "Copied";
+          btn.classList.add("copied");
+          window.setTimeout(() => { btn.textContent = original; btn.classList.remove("copied"); }, 1400);
+        } catch (_) {
+          showToast("Copy failed — select the command manually", "err");
+        }
+      };
+    }
+
+    function ensureListMode() {
+      if (state.lastRenderMode === "list") return;
+      state.lastRenderMode = "list";
+      state.rowsByName.clear();
+      clearChildren($("agent-region"));
+      $("list-title").textContent = "Your agents";
+      disableHeader(false);
+    }
+
+    /* --- Space + template + wizard renders --------------------------- */
+
+    function renderSpaceSelect() {
+      const select = $("space-select");
+      const allSpaces = state.spaces.length
+        ? state.spaces
+        : state.sessionSpaceId
+        ? [{ id: state.sessionSpaceId, name: "Current space" }]
+        : [];
+      clearChildren(select);
+      // Always include the "All spaces" option as the default filter.
+      const allOpt = makeEl("option", { value: "" }, ["All spaces"]);
+      if (!state.activeSpaceId) allOpt.selected = true;
+      select.appendChild(allOpt);
+      for (const space of allSpaces) {
+        const opt = makeEl("option", { value: space.id }, [String(space.name)]);
+        if (space.id === state.activeSpaceId) opt.selected = true;
+        select.appendChild(opt);
+      }
+    }
+
+    function renderAgentSpaceOptions() {
+      const select = $("agent-space-input");
+      const spaces = state.spaces.length
+        ? state.spaces
+        : state.sessionSpaceId
+        ? [{ id: state.sessionSpaceId, name: "Current space" }]
+        : [];
+      clearChildren(select);
+      if (!spaces.length) {
+        select.appendChild(makeEl("option", { value: "" }, ["No spaces available"]));
+        return;
+      }
+      // For the wizard, default to the user's logged-in space (or the active filter, if any),
+      // so new agents land somewhere sensible.
+      const current = state.activeSpaceId || state.sessionSpaceId || spaces[0].id;
+      for (const space of spaces) {
+        const opt = makeEl("option", { value: space.id }, [String(space.name)]);
+        if (space.id === current) opt.selected = true;
+        select.appendChild(opt);
+      }
+    }
+
+    function renderTemplateGrid() {
+      const grid = $("template-grid");
+      clearChildren(grid);
+      if (!state.templates.length) {
+        grid.appendChild(makeEl("div", { style: { gridColumn: "1/-1", color: "var(--muted)", fontSize: "13px" } }, ["Loading runtimes…"]));
+        return;
+      }
+      const select = makeEl("select", {
+        class: "template-select",
+        onchange: (event) => {
+          state.selectedTemplateId = String(event.target.value || "").toLowerCase();
+          renderTemplateGrid();
+          renderOllamaModelField();
+          renderHermesPreflight();
+        },
+      });
+      for (const tmpl of state.templates) {
+        const id = String(tmpl.id || "").toLowerCase();
+        const copy = TEMPLATE_COPY[id] || { name: tmpl.label || id, tag: "", desc: tmpl.summary || "" };
+        const disabled = tmpl.launchable === false;
+        const suffix = disabled ? " · coming soon" : "";
+        select.appendChild(makeEl("option", { value: id, selected: state.selectedTemplateId === id, disabled }, [copy.name + suffix]));
+      }
+      grid.appendChild(select);
+      const selected = state.templates.find((t) => String(t.id || "").toLowerCase() === state.selectedTemplateId) || state.templates[0];
+      const id = String((selected || {}).id || "").toLowerCase();
+      const copy = TEMPLATE_COPY[id] || { name: selected.label || id || "Runtime", tag: selected.availability || "", desc: selected.operator_summary || selected.description || "" };
+      grid.appendChild(makeEl("div", { class: "template-card summary selected" }, [
+        makeEl("div", { class: "template-tag" }, [copy.tag || String(selected.availability || "Runtime")]),
+        makeEl("div", { class: "template-name" }, [copy.name]),
+        makeEl("div", { class: "template-desc" }, [copy.desc || String(selected.description || "")]),
+      ]));
+    }
+
+    function renderHermesPreflight() {
+      const field = $("hermes-preflight-field");
+      const detail = $("hermes-preflight-detail");
+      const cmdEl = $("hermes-preflight-cmd");
+      // Always keep submit enabled — the wizard surfaces the missing-checkout
+      // warning, but the operator gets to make the call. If they hit Connect
+      // anyway, the runtime will fail with the real "Hermes checkout not found"
+      // error and the drawer's status will reflect it (same path a fresh user
+      // would walk through naturally).
+      if (state.selectedTemplateId !== "hermes") {
+        field.style.display = "none";
+        return;
+      }
+      const tmpl = state.templates.find((t) => String(t.id || "").toLowerCase() === "hermes");
+      if (!tmpl) { field.style.display = "none"; return; }
+      if (tmpl.hermes_ready) {
+        field.style.display = "none";
+        return;
+      }
+      field.style.display = "block";
+      detail.textContent = String(tmpl.hermes_detail || tmpl.hermes_summary || "Hermes checkout missing.");
+      const cmd = String(tmpl.hermes_fix_command || "export HERMES_REPO_PATH=/path/to/your/hermes-agent");
+      cmdEl.textContent = cmd;
+    }
+
+    function renderOllamaModelField() {
+      const field = $("ollama-model-field");
+      const select = $("ollama-model-input");
+      const hint = $("ollama-hint");
+      if (state.selectedTemplateId !== "ollama") { field.style.display = "none"; return; }
+      const tmpl = state.templates.find((t) => String(t.id || "").toLowerCase() === "ollama");
+      if (!tmpl) { field.style.display = "none"; return; }
+      const local = Array.isArray(tmpl.ollama_local_models) ? tmpl.ollama_local_models : [];
+      const available = Array.isArray(tmpl.ollama_available_models) ? tmpl.ollama_available_models : [];
+      const models = local.length ? local : available;
+      const recommended = String(tmpl.ollama_recommended_model || ((tmpl.defaults || {}).ollama_model) || "");
+      field.style.display = "block";
+      clearChildren(select);
+      if (!models.length && !recommended) {
+        select.appendChild(makeEl("option", { value: "" }, ["No local Ollama models found"]));
+        hint.textContent = "Install Ollama and pull a model first: ollama pull qwen3:8b";
+        return;
+      }
+      const seen = new Set();
+      const choices = [];
+      for (const m of [recommended, ...models]) {
+        if (!m || seen.has(m)) continue;
+        seen.add(m);
+        choices.push(m);
+      }
+      for (const m of choices) {
+        const opt = makeEl("option", { value: m }, [m]);
+        if (m === recommended) opt.selected = true;
+        select.appendChild(opt);
+      }
+      hint.textContent = tmpl.ollama_server_reachable ? "Local Ollama server reachable." : "Ollama server not reachable. Make sure `ollama serve` is running.";
+    }
+
+    /* --- Agent list (in-place updates) ------------------------------- */
+
+    function filteredAgents() {
+      return state.agents.filter((a) => {
+        if (!state.showSystemAgents && isSystemAgent(a)) return false;
+        if (!state.activeSpaceId) return true;
+        const aid = String(a.space_id || "").trim();
+        if (!aid) return true;
+        return aid === state.activeSpaceId;
+      });
+    }
+
+    function refreshSystemToggleUI() {
+      const btn = document.getElementById("system-toggle");
+      if (!btn) return;
+      const systemCount = state.agents.filter(isSystemAgent).length;
+      btn.classList.toggle("on", state.showSystemAgents);
+      btn.textContent = state.showSystemAgents
+        ? "Hide system agents" + (systemCount ? " (" + systemCount + ")" : "")
+        : "Show system agents" + (systemCount ? " (" + systemCount + ")" : "");
+      btn.style.display = systemCount === 0 && !state.showSystemAgents ? "none" : "";
+    }
+
+    function setAgentCount(n) {
+      const el = $("agent-count");
+      if (n <= 0) {
+        el.hidden = true;
+        el.textContent = "";
+      } else {
+        el.hidden = false;
+        el.textContent = n === 1 ? "1 connected" : n + " connected";
+      }
+    }
+
+    function renderAgentList() {
+      const region = $("agent-region");
+      refreshSystemToggleUI();
+      const filtered = filteredAgents();
+      setAgentCount(filtered.length);
+
+      if (!filtered.length) {
+        renderEmptyAgents(region);
+        return;
+      }
+
+      let list = region.querySelector(".agent-list");
+      if (!list) {
+        clearChildren(region);
+        state.rowsByName.clear();
+        list = makeEl("div", { class: "agent-list" });
+        // Header row (column labels)
+        const head = makeEl("div", { class: "agent-list-head agent-grid-cols" }, [
+          makeEl("span"),
+          makeEl("span", null, ["Agent"]),
+          makeEl("span", null, ["Space"]),
+          makeEl("span", null, ["Last activity"]),
+          makeEl("span"),
+        ]);
+        list.appendChild(head);
+        region.appendChild(list);
+      }
+
+      const seen = new Set();
+      const desiredOrder = [];
+      for (const agent of filtered) {
+        const name = String(agent.name || "");
+        if (!name) continue;
+        seen.add(name);
+        desiredOrder.push(name);
+        let row = state.rowsByName.get(name);
+        if (!row) {
+          row = createRow(agent);
+          state.rowsByName.set(name, row);
+          list.appendChild(row);
+        } else {
+          updateRow(row, agent);
+        }
+      }
+      // Remove rows for agents no longer present.
+      for (const [name, row] of Array.from(state.rowsByName.entries())) {
+        if (!seen.has(name)) {
+          row.remove();
+          state.rowsByName.delete(name);
+        }
+      }
+      // Reorder DOM only if necessary.
+      const childNames = Array.from(list.children).map((c) => c.dataset.name);
+      const sameOrder = childNames.length === desiredOrder.length && childNames.every((n, i) => n === desiredOrder[i]);
+      if (!sameOrder) {
+        for (const name of desiredOrder) {
+          const row = state.rowsByName.get(name);
+          if (row) list.appendChild(row);
+        }
+      }
+    }
+
+    function renderEmptyAgents(region) {
+      if (region.querySelector(".empty")) return;
+      state.rowsByName.clear();
+      clearChildren(region);
+      const message = state.activeSpaceId
+        ? "No agents in this space."
+        : "No agents connected yet.";
+      const empty = makeEl("div", { class: "empty empty-quiet" }, [
+        makeEl("p", null, [message]),
+      ]);
+      region.appendChild(empty);
+    }
+
+    function lastActivityLabel(agent) {
+      // "Last activity" = the most recent meaningful action on this agent,
+      // labeled with WHAT it was so operators can see at a glance ("Replied
+      // 1m ago", "Stopped 5m ago", "Awaiting approval"). Connection/heartbeat
+      // timestamps are intentionally excluded — those are implied by the
+      // connected status pill on the row.
+      const approval = String(agent.approval_state || "").toLowerCase();
+      const confidence = String(agent.confidence || "").toUpperCase();
+      const desiredStopped = String(agent.desired_state || "").toLowerCase() === "stopped";
+      const counts = mailboxCounts(agent);
+      const unread = counts.messages;
+      const tasks = counts.tasks;
+      if (isMailboxRuntime(agent)) {
+        const checkedTs = agent.last_inbox_polled_at || agent.last_checked_at;
+        const repliedTs = agent.last_reply_at || agent.last_work_completed_at;
+        const receivedTs = agent.last_work_received_at || agent.last_received_at;
+        if (unread > 0 || tasks > 0) {
+          const parts = [];
+          if (unread > 0) parts.push(unread === 1 ? "New message" : `${unread} new messages`);
+          if (tasks > 0) parts.push(tasks === 1 ? "1 task" : `${tasks} tasks`);
+          const ts = receivedTs || agent.added_at;
+          return relativeActivity(parts.join(" · "), ts);
+        }
+        // Surface the most-recent action so operators can see "Replied 1m ago"
+        // for pass-through agents that just sent a message via /api/agents/<name>/ack.
+        // Replies and inbound receipts both count as actions; pick whichever is newer.
+        const repliedDt = repliedTs ? new Date(repliedTs).getTime() : 0;
+        const receivedDt = receivedTs ? new Date(receivedTs).getTime() : 0;
+        if (repliedDt && repliedDt >= receivedDt) return relativeActivity("Sent message", repliedTs);
+        if (receivedDt) return relativeActivity("Received message", receivedTs);
+        if (checkedTs) return relativeActivity("Checked", checkedTs);
+        if (approval === "pending") return relativeActivity("Awaiting approval", agent.last_local_connect_at || agent.added_at);
+        return { text: "Inbox ready", fresh: false };
+      }
+      const currentTool = String(agent.current_tool || "").trim();
+      if (currentTool) return relativeActivity(`Tool: ${currentTool}`, agent.last_seen_at || agent.last_work_received_at || agent.added_at);
+      const currentActivity = String(agent.current_activity || "").trim();
+      if (currentActivity) return relativeActivity(currentActivity, agent.last_seen_at || agent.last_work_received_at || agent.added_at);
+      // (label, timestamp) candidates ordered so operationally meaningful
+      // actions (replied, received) win ties over generic ones.
+      const candidates = [
+        ["Replied",       agent.last_work_completed_at || agent.last_reply_at],
+        ["Picked up",     agent.last_work_received_at  || agent.last_received_at],
+      ];
+      if (desiredStopped) candidates.push(["Stopped", agent.stopped_at || agent.last_state_change_at]);
+      if (approval === "pending") candidates.push(["Awaiting approval", agent.last_local_connect_at || agent.added_at]);
+      if (approval === "rejected") candidates.push(["Rejected", agent.last_state_change_at || agent.added_at]);
+      if (confidence === "BLOCKED") candidates.push(["Blocked", agent.last_blocked_at || agent.added_at]);
+
+      let pickedLabel = null;
+      let mostRecentTs = null;
+      for (const [label, ts] of candidates) {
+        if (!ts) continue;
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) continue;
+        if (!mostRecentTs || d > mostRecentTs) {
+          mostRecentTs = d;
+          pickedLabel = label;
+        }
+      }
+      if (!mostRecentTs) return { text: "—", fresh: false };
+      return relativeActivity(pickedLabel, mostRecentTs);
+    }
+
+    function relativeActivity(label, ts) {
+      if (!ts) return { text: label || "—", fresh: false };
+      const d = ts instanceof Date ? ts : new Date(ts);
+      if (isNaN(d.getTime())) return { text: label || "—", fresh: false };
+      const seconds = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+      let rel;
+      if (seconds < 5)         rel = "just now";
+      else if (seconds < 60)   rel = seconds + "s ago";
+      else if (seconds < 3600) rel = Math.floor(seconds / 60) + "m ago";
+      else if (seconds < 86400) rel = Math.floor(seconds / 3600) + "h ago";
+      else                     rel = Math.floor(seconds / 86400) + "d ago";
+      const text = label ? `${label} · ${rel}` : rel;
+      const fresh = seconds < 120;
+      return { text, fresh };
+    }
+
+    function createRow(agent) {
+      const name = String(agent.name || "");
+      const row = makeEl("div", {
+        role: "button",
+        tabindex: "0",
+        class: "agent-row agent-grid-cols",
+        dataset: { name },
+        onclick: () => openDrawer(name),
+        onkeydown: (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openDrawer(name);
+          }
+        },
+      });
+      row.appendChild(makeEl("span", { class: "dot tone-muted" }));
+      row.appendChild(makeEl("span", { class: "row-agent" }, [
+        makeEl("span", { class: "type-mark type-custom", title: "Custom", "aria-label": "Custom" }, [typeIcon("custom", "Custom")]),
+        makeEl("span", { class: "row-agent-text" }, [
+          makeEl("span", { class: "row-name" }, [name]),
+          makeEl("span", { class: "row-type-label" }, ["Ready"]),
+        ]),
+      ]));
+      row.appendChild(makeEl("span", { class: "row-space" }));
+      row.appendChild(makeEl("span", { class: "row-last-seen" }));
+      row.appendChild(makeEl("span", { class: "row-action" }, [makeEl("span", { class: "row-chev" }, ["›"])]));
+      updateRow(row, agent);
+      return row;
+    }
+
+    async function approveAgent(agent, button) {
+      if (!agent || !agent.name) return;
+      const original = button ? button.textContent : "";
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Approving";
+      }
+      try {
+        await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/approve", { scope: "asset" });
+        showToast("Approved @" + agent.name, "ok");
+        await loadStatus();
+        if (state.drawerAgentName === agent.name) refreshDrawer();
+      } catch (err) {
+        showToast(err.message || "Approval failed", "err");
+        if (button) {
+          button.disabled = false;
+          button.textContent = original || "Approve";
+        }
+      }
+    }
+
+    function renderMailboxIndicator(container, agent, status) {
+      const counts = mailboxCounts(agent);
+      clearChildren(container);
+      container.className = "mailbox-indicator";
+      container.title = status.label;
+      const icon = makeEl("span", { class: "mailbox-icon", title: "Mailbox", "aria-label": "Mailbox" });
+      if (counts.messages > 0) {
+        icon.appendChild(makeEl("span", { class: "mailbox-count", title: "Unread messages" }, [String(counts.messages)]));
+      }
+      container.appendChild(icon);
+      if (counts.tasks > 0) {
+        container.appendChild(makeEl("span", { class: "mailbox-badge task", title: "Open tasks" }, ["T" + String(counts.tasks)]));
+      }
+    }
+
+    function updateRow(row, agent) {
+      const status = friendlyStatus(agent);
+      const dot = row.children[0];
+      const agentEl = row.children[1];
+      const typeMarkEl = agentEl.children[0];
+      const nameEl = agentEl.querySelector(".row-name");
+      const typeLabelEl = agentEl.querySelector(".row-type-label");
+      const spaceEl = row.children[2];
+      const lastSeenEl = row.children[3];
+      const actionEl = row.children[4];
+
+      if (isMailboxRuntime(agent)) {
+        renderMailboxIndicator(dot, agent, status);
+      } else {
+        clearChildren(dot);
+        dot.className = "dot tone-" + status.tone;
+        dot.title = status.label;
+        dot.textContent = "";
+      }
+      const newName = String(agent.name || "");
+      if (nameEl.textContent !== newName) nameEl.textContent = newName;
+      const sys = isSystemAgent(agent);
+      const type = agentTypeMeta(agent, sys);
+      typeMarkEl.className = "type-mark " + type.className;
+      typeMarkEl.title = type.label;
+      typeMarkEl.setAttribute("aria-label", type.label);
+      if (typeMarkEl.dataset.icon !== type.icon) {
+        clearChildren(typeMarkEl);
+        typeMarkEl.appendChild(typeIcon(type.icon, type.label));
+        typeMarkEl.dataset.icon = type.icon;
+      }
+      if (typeLabelEl.textContent !== type.label) typeLabelEl.textContent = type.label;
+      const activity = lastActivityLabel(agent);
+      lastSeenEl.className = "row-last-seen" + (activity.fresh ? " fresh" : "");
+      if (lastSeenEl.textContent !== activity.text) lastSeenEl.textContent = activity.text;
+      const newSpace = spaceLabel(agent);
+      const spaceIsMuted = newSpace === "—";
+      spaceEl.className = "row-space" + (spaceIsMuted ? " muted" : "");
+      if (spaceEl.textContent !== newSpace) spaceEl.textContent = newSpace;
+      spaceEl.title = spaceIsMuted ? "" : newSpace;
+      const needsApproval = String(agent.approval_state || "").toLowerCase() === "pending" && agent.approval_id;
+      clearChildren(actionEl);
+      if (needsApproval) {
+        actionEl.appendChild(makeEl("button", {
+          type: "button",
+          class: "row-approve",
+          title: "Review approval details",
+          onclick: (event) => {
+            event.stopPropagation();
+            openDrawer(newName);
+          },
+        }, ["Review"]));
+      } else {
+        actionEl.appendChild(makeEl("span", { class: "row-chev" }, ["›"]));
+      }
+      row.classList.toggle("active-row", state.drawerAgentName === agent.name);
+    }
+
+    /* --- Drawer ------------------------------------------------------ */
+
+    const drawerWrap = $("drawer-wrap");
+    const drawerName = $("drawer-name");
+    const drawerDot = $("drawer-dot");
+    const drawerBody = $("drawer-body");
+    const drawerClose = $("drawer-close");
+    const drawerOverlay = $("drawer-overlay");
+    const drawerRemove = $("drawer-remove");
+
+    function findAgent(name) {
+      return state.agents.find((a) => String(a.name || "") === name) || null;
+    }
+
+    function defaultTestPrompt(agent) {
+      const template = String(agent?.template_id || agent?.runtime_type || "").toLowerCase();
+      if (template === "inbox" || template === "pass_through") {
+        return "Queue this test job, mark it received, and do not reply inline.";
+      }
+      if (template === "ollama" || String(agent?.runtime_type || "").toLowerCase() === "echo") {
+        return "Reply with exactly: Gateway test OK. Then mention which local model answered.";
+      }
+      return "Reply with exactly: Gateway test OK.";
+    }
+
+    /* --- Activity events ----------------------------------------- */
+
+    const ACTIVITY_HIDE = new Set([
+      "runtime_session_saved",
+      "runtime_status",   // we still consume these but only as the "thinking" cue, not as a row
+    ]);
+    const ACTIVITY_LIVE_EVENTS = new Set([
+      "message_received",
+      "message_queued",
+      "message_claimed",
+      "runtime_status",
+      "runtime_activity",
+      "thinking",
+    ]);
+    const TOOL_ACTIVITY_EVENTS = new Set([
+      "tool_started",
+      "tool_finished",
+      "tool_call_recorded",
+      "tool_call_record_failed",
+      "runtime_activity",
+    ]);
+
+    function isToolActivity(activity) {
+      const event = String(activity.event || "");
+      if (!TOOL_ACTIVITY_EVENTS.has(event)) return false;
+      return !!String(activity.tool_name || "").trim();
+    }
+
+    function eventTone(activity) {
+      const event = String(activity.event || "");
+      if (event === "reply_sent") return "reply";
+      if (event === "gateway_test_sent" || event === "message_received" || event === "message_queued") return "send";
+      if (event === "runtime_error" || event === "runtime_timeout" || event === "blocked" || event === "invocation_blocked" || event === "crashed") return "error";
+      if (event === "message_claimed" || event === "thinking" || event === "runtime_activity" || event === "tool_started" || event === "tool_finished") return "work";
+      return "";
+    }
+
+    function eventLabel(activity) {
+      const event = String(activity.event || "");
+      switch (event) {
+        case "gateway_test_sent": return "Test message sent";
+        case "message_received": return "Message sent";
+        case "message_queued": return "Queued";
+        case "message_claimed": return "Picked up";
+        case "thinking": return "Thinking";
+        case "runtime_started": return "Runtime started";
+        case "runtime_stopped": return "Runtime stopped";
+        case "runtime_error": return "Runtime error";
+        case "runtime_timeout": return "Timed out";
+        case "reply_sent": return "Replied";
+        case "tool_started": return "Tool started";
+        case "tool_finished": return "Tool finished";
+        case "tool_call_recorded": return "Tool recorded";
+        case "tool_call_record_failed": return "Tool record failed";
+        case "runtime_activity": {
+          const msg = String(activity.activity_message || "").trim();
+          return msg || "Working";
+        }
+        default:
+          return event.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+
+    function eventDetail(activity) {
+      const event = String(activity.event || "");
+      if (event === "reply_sent") return String(activity.reply_preview || activity.preview || "").trim();
+      if (event === "gateway_test_sent") {
+        const preview = String(activity.reply_preview || "").trim();
+        const sender = String(activity.sender_agent_name || "").trim();
+        return sender ? `From @${sender}: ${preview}` : preview;
+      }
+      if (event === "message_received") return String(activity.preview || activity.content_preview || "").trim();
+      if (event === "runtime_error" || event === "runtime_timeout") return String(activity.error || activity.detail || "").trim();
+      if (event === "tool_started") return String(activity.tool_action || activity.activity_message || "").trim();
+      if (event === "tool_finished") return String(activity.status || activity.activity_message || "").trim();
+      if (event === "tool_call_record_failed") return String(activity.error || "").trim();
+      if (event === "runtime_status" || event === "runtime_activity") {
+        return String(activity.activity_message || activity.status || "").trim();
+      }
+      return "";
+    }
+
+    function activityTimeValue(activity) {
+      const d = new Date(activity.ts || "");
+      return isNaN(d.getTime()) ? 0 : d.getTime();
+    }
+
+    function toolGroupKey(activity) {
+      const message = String(activity.message_id || "message").trim();
+      const tool = String(activity.tool_name || "tool").trim();
+      const call = String(activity.tool_call_id || "").trim();
+      return message + "::" + tool + "::" + (call || "latest");
+    }
+
+    function groupActivityEvents(visible) {
+      const groups = new Map();
+      const output = [];
+      for (const ev of visible) {
+        if (!isToolActivity(ev)) {
+          output.push({ kind: "event", ts: activityTimeValue(ev), event: ev });
+          continue;
+        }
+        const key = toolGroupKey(ev);
+        let group = groups.get(key);
+        if (!group) {
+          group = { kind: "tool_group", key, ts: 0, tool_name: String(ev.tool_name || "tool"), events: [] };
+          groups.set(key, group);
+          output.push(group);
+        }
+        group.events.push(ev);
+        group.ts = Math.max(group.ts, activityTimeValue(ev));
+      }
+      for (const group of groups.values()) {
+        group.events.sort((a, b) => activityTimeValue(a) - activityTimeValue(b));
+      }
+      output.sort((a, b) => b.ts - a.ts);
+      return output;
+    }
+
+    function renderToolGroup(group) {
+      const events = group.events || [];
+      const latest = events[events.length - 1] || {};
+      const title = "Tool: " + String(group.tool_name || latest.tool_name || "tool");
+      const detail = eventDetail(latest) || String(latest.activity_message || latest.status || "").trim();
+      const time = relTime(latest.ts);
+      const node = makeEl("div", { class: "activity-event work" }, [
+        makeEl("span", { class: "activity-event-icon dot" }),
+        makeEl("div", { class: "activity-event-body" }, [
+          makeEl("div", { class: "activity-event-title" }, [
+            title,
+            makeEl("span", { class: "activity-count" }, [events.length === 1 ? "1 event" : events.length + " events"]),
+          ]),
+          detail ? makeEl("div", { class: "activity-event-detail" }, [detail]) : null,
+          time ? makeEl("div", { class: "activity-event-time" }, [time]) : null,
+        ]),
+      ]);
+      if (events.length > 1) {
+        const body = node.querySelector(".activity-event-body");
+        const subevents = makeEl("div", { class: "activity-subevents" });
+        for (const ev of events) {
+          subevents.appendChild(makeEl("div", { class: "activity-subevent" }, [
+            makeEl("strong", null, [eventLabel(ev)]),
+            makeEl("span", null, [eventDetail(ev) || String(ev.status || ev.activity_message || "").trim() || "—"]),
+            makeEl("span", { class: "activity-subevent-time" }, [relTime(ev.ts)]),
+          ]));
+        }
+        body.appendChild(subevents);
+      }
+      return node;
+    }
+
+    function relTime(ts) {
+      if (!ts) return "";
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return "";
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 5) return "just now";
+      if (diff < 60) return Math.floor(diff) + "s ago";
+      if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+      return d.toLocaleTimeString();
+    }
+
+    function isMailboxRuntime(agent) {
+      // Pass-through / inbox runtimes hold queued messages until polled — they
+      // don't "process" in the way listener-loop agents do. Distinct UX:
+      // mailbox state ("N unread", "All caught up") instead of "Working".
+      if (!agent) return false;
+      const intakeModel = String(agent.intake_model || "").toLowerCase();
+      const runtimeType = String(agent.runtime_type || "").toLowerCase();
+      const template = String(agent.template_id || "").toLowerCase();
+      return intakeModel === "polling_mailbox" || runtimeType === "inbox" || template === "pass_through";
+    }
+
+    function mailboxStateLabel(agent) {
+      // Returns { title, detail, tone } for the drawer's mailbox status card,
+      // or null if the agent isn't a mailbox runtime.
+      if (!isMailboxRuntime(agent)) return null;
+      const unread = Number(agent.backlog_depth || 0);
+      const lastChecked = agent.last_inbox_polled_at || null;
+      const checkedRel = lastChecked ? relTime(lastChecked) : null;
+      if (unread > 0) {
+        return {
+          title: unread === 1 ? "1 message awaiting check" : `${unread} messages awaiting check`,
+          detail: checkedRel
+            ? `Agent hasn't polled since ${checkedRel}. Mailbox holds the messages until the agent checks in.`
+            : "Mailbox holds the messages until the agent polls Gateway.",
+          tone: "warning",
+        };
+      }
+      return {
+        title: "All caught up",
+        detail: checkedRel
+          ? `No unread messages. Last poll ${checkedRel}.`
+          : "No unread messages in this agent's mailbox.",
+        tone: "ok",
+      };
+    }
+
+    function isProcessingNow(activity, agent) {
+      // Returns true when the most recent runtime_status / message_claimed has not been
+      // followed by reply_sent within the same message_id. Mailbox runtimes never
+      // "process" in this sense — for them, queued IS the resting state.
+      if (!Array.isArray(activity) || !activity.length) return false;
+      if (isMailboxRuntime(agent)) return false;
+      // recent_activity is newest-first per backend convention; sort defensively.
+      const sorted = activity.slice().sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+      const latest = sorted[0];
+      const event = String(latest.event || "");
+      if (event === "reply_sent") return false;
+      if (event === "runtime_error" || event === "runtime_timeout" || event === "crashed") return false;
+      return ACTIVITY_LIVE_EVENTS.has(event);
+    }
+
+    async function loadAgentDetail(name) {
+      try {
+        const payload = await api("GET", "/api/agents/" + encodeURIComponent(name));
+        if (state.drawerAgentName !== name) return;
+        // Update agent in main list so rows stay fresh.
+        if (payload.agent && payload.agent.name) {
+          const idx = state.agents.findIndex((a) => String(a.name || "") === payload.agent.name);
+          if (idx >= 0) state.agents[idx] = payload.agent;
+          const row = state.rowsByName.get(payload.agent.name);
+          if (row) updateRow(row, payload.agent);
+        }
+        const activity = Array.isArray(payload.recent_activity) ? payload.recent_activity : [];
+        renderDrawerActivity(activity);
+      } catch (err) {
+        // Silent fail — drawer keeps showing previous activity.
+      }
+    }
+
+    function startDrawerPolling() {
+      stopDrawerPolling();
+      state.drawerPollHandle = window.setInterval(() => {
+        if (!state.drawerAgentName) return;
+        loadAgentDetail(state.drawerAgentName);
+      }, 1500);
+    }
+
+    function stopDrawerPolling() {
+      if (state.drawerPollHandle) {
+        window.clearInterval(state.drawerPollHandle);
+        state.drawerPollHandle = null;
+      }
+    }
+
+    function openDrawer(name) {
+      state.drawerAgentName = name;
+      state.drawerActivity = [];
+      state.drawerActivityKey = "";
+      const row = state.rowsByName.get(name);
+      if (row) {
+        for (const r of state.rowsByName.values()) r.classList.remove("active-row");
+        row.classList.add("active-row");
+      }
+      drawerWrap.classList.add("open");
+      refreshDrawer();
+      loadAgentDetail(name);
+      startDrawerPolling();
+    }
+
+    function closeDrawer() {
+      stopDrawerPolling();
+      state.drawerAgentName = null;
+      state.drawerActivity = [];
+      state.drawerActivityKey = "";
+      drawerWrap.classList.remove("open");
+      for (const r of state.rowsByName.values()) r.classList.remove("active-row");
+    }
+
+    function refreshDrawer() {
+      const agent = findAgent(state.drawerAgentName);
+      if (!agent) {
+        drawerName.textContent = state.drawerAgentName || "—";
+        drawerDot.className = "dot tone-muted";
+        clearChildren(drawerBody);
+        drawerBody.appendChild(makeEl("div", { class: "drawer-section" }, [
+          makeEl("div", { class: "drawer-value muted" }, ["This agent is no longer in the gateway registry."]),
+        ]));
+        drawerRemove.disabled = true;
+        return;
+      }
+      drawerRemove.disabled = false;
+      const status = friendlyStatus(agent);
+      drawerName.textContent = String(agent.name || "");
+      drawerDot.className = "dot tone-" + status.tone;
+      clearChildren(drawerBody);
+
+      // Status section
+      const statusBox = makeEl("div", { class: "status-detail " + (status.tone === "error" ? "error" : status.tone === "warning" ? "warning" : "") }, [status.detail || ""]);
+      drawerBody.appendChild(makeEl("section", { class: "drawer-section" }, [
+        makeEl("div", { class: "drawer-label" }, ["Status"]),
+        makeEl("div", { class: "drawer-value", style: { color: "var(--text)", fontWeight: "500" } }, [status.label]),
+        statusBox,
+      ]));
+
+      // Meta section
+      const meta = makeEl("div", { class: "drawer-meta" }, [
+        makeEl("span", { class: "chip template" }, [templateLabel(agent)]),
+        makeEl("span", { class: "chip" }, [String(agent.mode || agent.runtime_type || "Custom")]),
+        agent.registry_ref ? makeEl("span", { class: "chip" }, ["Registry " + String(agent.registry_ref)]) : null,
+      ]);
+      drawerBody.appendChild(makeEl("section", { class: "drawer-section" }, [
+        makeEl("div", { class: "drawer-label" }, ["Runtime"]),
+        meta,
+      ]));
+
+      const fingerprint = agent.candidate_binding || agent.binding || {};
+      const runtimeFingerprint = fingerprint.runtime_fingerprint || agent.runtime_fingerprint || {};
+      const localFingerprint = agent.local_fingerprint || {};
+      const signature = String(fingerprint.candidate_signature || "").replace(/^sha256:/, "");
+      const launchHash = String(fingerprint.launch_spec_hash || "").replace(/^sha256:/, "");
+      const runtimeHash = String(fingerprint.runtime_fingerprint_hash || runtimeFingerprint.runtime_fingerprint_hash || "").replace(/^sha256:/, "");
+      const exeHash = String(localFingerprint.exe_sha256 || runtimeFingerprint.executable_sha256 || "").replace(/^sha256:/, "");
+      const actorUser = String(localFingerprint.user || runtimeFingerprint.user || "").trim();
+      const hostHash = String(runtimeFingerprint.host_fingerprint || "").replace(/^host:/, "");
+      const originPath = String(localFingerprint.cwd || runtimeFingerprint.workdir || fingerprint.path || agent.workdir || "").trim();
+      if (signature || launchHash || runtimeHash || originPath || agent.install_id || agent.approval_id) {
+        drawerBody.appendChild(makeEl("section", { class: "drawer-section" }, [
+          makeEl("div", { class: "drawer-label" }, ["Fingerprint"]),
+          makeEl("div", { class: "drawer-meta" }, [
+            makeEl("span", { class: "chip" }, ["Install " + String(agent.install_id || fingerprint.install_id || "—").slice(0, 8)]),
+            agent.registry_ref ? makeEl("span", { class: "chip" }, ["Ref " + String(agent.registry_ref)]) : null,
+            signature ? makeEl("span", { class: "chip" }, ["Sig " + signature.slice(0, 12)]) : null,
+            launchHash ? makeEl("span", { class: "chip" }, ["Launch " + launchHash.slice(0, 12)]) : null,
+            runtimeHash ? makeEl("span", { class: "chip" }, ["Runtime " + runtimeHash.slice(0, 12)]) : null,
+            exeHash ? makeEl("span", { class: "chip" }, ["Exe " + exeHash.slice(0, 12)]) : null,
+            hostHash ? makeEl("span", { class: "chip" }, ["Host " + hostHash.slice(0, 12)]) : null,
+            actorUser ? makeEl("span", { class: "chip" }, ["User " + actorUser]) : null,
+            agent.approval_id ? makeEl("span", { class: "chip" }, ["Approval " + String(agent.approval_id).slice(0, 8)]) : null,
+          ]),
+          makeEl("div", { class: "drawer-value muted" }, [
+            originPath || "No local folder path recorded.",
+          ]),
+        ]));
+      }
+
+      // Space section (with picker + pin toggle)
+      const currentSpaceId = String(agent.space_id || "").trim();
+      const isPinned = !!agent.pinned;
+      const spaceSelect = makeEl("select", { class: "drawer-select", id: "drawer-space-select" });
+      spaceSelect.disabled = isPinned;
+      const spacesForPicker = state.spaces.length ? state.spaces : (currentSpaceId ? [{ id: currentSpaceId, name: spaceLabel(agent) }] : []);
+      for (const s of spacesForPicker) {
+        const opt = makeEl("option", { value: s.id }, [s.name]);
+        if (s.id === currentSpaceId) opt.selected = true;
+        spaceSelect.appendChild(opt);
+      }
+      spaceSelect.addEventListener("change", async (event) => {
+        const newSpaceId = event.target.value;
+        if (!newSpaceId || newSpaceId === currentSpaceId) return;
+        try {
+          await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/move", { space_id: newSpaceId });
+          showToast("Moved @" + agent.name, "ok");
+          await loadStatus();
+        } catch (err) {
+          showToast(err.message || "Move failed", "err");
+        }
+      });
+      const pinToggle = makeEl("button", {
+        type: "button",
+        class: "pin-toggle" + (isPinned ? " on" : ""),
+        onclick: async () => {
+          try {
+            await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/pin", { pinned: !isPinned });
+            showToast(isPinned ? "Unpinned @" + agent.name : "Pinned @" + agent.name, "ok");
+            await loadStatus();
+            refreshDrawer();
+          } catch (err) {
+            showToast(err.message || "Pin failed", "err");
+          }
+        },
+      }, [
+        makeEl("div", { class: "pin-toggle-label" }, [
+          makeEl("div", { class: "pin-toggle-title" }, [isPinned ? "Pinned to this space" : "Lock to this space"]),
+          makeEl("div", { class: "pin-toggle-hint" }, [
+            isPinned ? "Move action is disabled until unlocked." : "Prevents accidental moves between spaces.",
+          ]),
+        ]),
+        makeEl("div", { class: "switch" }),
+      ]);
+      drawerBody.appendChild(makeEl("section", { class: "drawer-section" }, [
+        makeEl("div", { class: "drawer-label" }, ["Space"]),
+        spaceSelect,
+        pinToggle,
+      ]));
+
+      // Actions
+      const desiredRunning = String(agent.desired_state || "").toLowerCase() !== "stopped";
+      const needsApproval = String(agent.approval_state || "").toLowerCase() === "pending" && agent.approval_id;
+      const actions = makeEl("div", { class: "drawer-actions" });
+      if (needsApproval) {
+        actions.appendChild(makeEl("button", {
+          class: "btn btn-primary",
+          onclick: (event) => approveAgent(agent, event.currentTarget),
+        }, ["Approve connection"]));
+      }
+      const defaultPrompt = defaultTestPrompt(agent);
+      const senderName = "switchboard-" + String(agent.space_id || agent.active_space_id || "default").replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase();
+      const composerTextarea = makeEl("textarea", {
+        placeholder: "Message to @" + agent.name,
+        disabled: needsApproval,
+      }, [defaultPrompt]);
+      const sendButton = makeEl("button", {
+        class: needsApproval ? "btn btn-ghost" : "btn btn-primary",
+        disabled: needsApproval,
+        onclick: async (event) => {
+          const btn = event.currentTarget;
+          const content = String(composerTextarea.value || "").trim();
+          if (!content) {
+            showToast("Message is required", "err");
+            composerTextarea.focus();
+            return;
+          }
+          btn.disabled = true;
+          try {
+            const result = await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/test", { content, author: "agent" });
+            const sender = result.sender_agent ? " from @" + result.sender_agent : "";
+            showToast("Message sent" + sender + " to @" + agent.name, "ok");
+            loadAgentDetail(agent.name);
+          } catch (err) {
+            showToast(err.message || "Send failed", "err");
+          } finally {
+            btn.disabled = needsApproval;
+          }
+        },
+      }, ["Send message"]);
+      const resetButton = makeEl("button", {
+        class: "btn btn-ghost",
+        disabled: needsApproval,
+        onclick: () => {
+          composerTextarea.value = defaultPrompt;
+          composerTextarea.focus();
+        },
+      }, ["Reset test"]);
+      actions.appendChild(makeEl("div", { class: "message-composer" }, [
+        makeEl("div", { class: "message-composer-meta" }, [
+          makeEl("span", {}, ["From ", makeEl("strong", {}, ["@" + senderName])]),
+          makeEl("span", {}, ["To ", makeEl("strong", {}, ["@" + agent.name])]),
+        ]),
+        composerTextarea,
+        makeEl("div", { class: "message-composer-actions" }, [sendButton, resetButton]),
+      ]));
+      if (desiredRunning) {
+        actions.appendChild(makeEl("button", {
+          class: "btn btn-ghost",
+          onclick: async () => {
+            try {
+              await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/stop", {});
+              showToast("Stopped @" + agent.name, "ok");
+              await loadStatus();
+            } catch (err) {
+              showToast(err.message || "Stop failed", "err");
+            }
+          },
+        }, ["Stop"]));
+      } else {
+        actions.appendChild(makeEl("button", {
+          class: "btn btn-ghost",
+          onclick: async () => {
+            try {
+              await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/start", {});
+              showToast("Starting @" + agent.name + "…", "ok");
+              await loadStatus();
+            } catch (err) {
+              showToast(err.message || "Start failed", "err");
+            }
+          },
+        }, ["Start"]));
+      }
+      drawerBody.appendChild(makeEl("section", { class: "drawer-section" }, [
+        makeEl("div", { class: "drawer-label" }, ["Actions"]),
+        actions,
+      ]));
+
+      // Activity section (placeholder — content gets replaced by renderDrawerActivity)
+      const activityRegion = makeEl("div", { class: "activity", id: "drawer-activity" });
+      drawerBody.appendChild(makeEl("section", { class: "drawer-section" }, [
+        makeEl("div", { class: "drawer-label" }, ["Activity"]),
+        activityRegion,
+      ]));
+      // If we already have cached activity (e.g. from previous polls), render it.
+      renderDrawerActivity(state.drawerActivity);
+    }
+
+    function renderDrawerActivity(activity) {
+      state.drawerActivity = activity || [];
+      const region = document.getElementById("drawer-activity");
+      if (!region) return;
+      const agent = findAgent(state.drawerAgentName);
+      const visible = (activity || []).filter((a) => !ACTIVITY_HIDE.has(String(a.event || "")));
+      // Sort newest-first.
+      visible.sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+
+      // Cheap signature to skip re-render when nothing changed.
+      const sig = visible.map((e) => [
+        e.event || "",
+        e.ts || "",
+        e.message_id || "",
+        e.tool_call_id || "",
+        e.tool_name || "",
+        e.status || "",
+        e.activity_message || "",
+      ].join(":")).join("|");
+      const processing = isProcessingNow(activity || [], agent);
+      const mailbox = mailboxStateLabel(agent);
+      const mailboxKey = mailbox ? `${mailbox.title}|${mailbox.tone}` : "";
+      const sigKey = sig + "|p=" + (processing ? 1 : 0) + "|m=" + mailboxKey;
+      if (sigKey === state.drawerActivityKey) return;
+      state.drawerActivityKey = sigKey;
+
+      clearChildren(region);
+
+      if (mailbox) {
+        // Pass-through / mailbox-style runtimes get a dedicated state card
+        // showing whether the agent has unread messages waiting to be polled,
+        // not a generic "Working" spinner.
+        region.appendChild(makeEl("div", { class: "activity-event " + (mailbox.tone === "warning" ? "warning" : mailbox.tone === "ok" ? "ok" : "") }, [
+          makeEl("span", { class: "activity-event-icon dot" }),
+          makeEl("div", { class: "activity-event-body" }, [
+            makeEl("div", { class: "activity-event-title" }, [mailbox.title]),
+            makeEl("div", { class: "activity-event-detail" }, [mailbox.detail]),
+          ]),
+        ]));
+      } else if (processing) {
+        region.appendChild(makeEl("div", { class: "activity-event work" }, [
+          makeEl("span", { class: "activity-event-icon dot" }),
+          makeEl("div", { class: "activity-event-body" }, [
+            makeEl("div", { class: "activity-event-title" }, [
+              "Working",
+              makeEl("span", { class: "thinking-dots" }, [
+                makeEl("span"), makeEl("span"), makeEl("span"),
+              ]),
+            ]),
+            makeEl("div", { class: "activity-event-detail" }, ["Agent picked up your message and is processing it."]),
+          ]),
+        ]));
+      }
+
+      if (!visible.length && !processing && !mailbox) {
+        region.appendChild(makeEl("div", { class: "activity-empty" }, [
+          "No recent activity. Hit Send test message to start the round-trip.",
+        ]));
+        return;
+      }
+
+      const grouped = groupActivityEvents(visible);
+      for (const item of grouped) {
+        if (item.kind === "tool_group") {
+          region.appendChild(renderToolGroup(item));
+          continue;
+        }
+        const ev = item.event;
+        const tone = eventTone(ev);
+        const title = eventLabel(ev);
+        const detail = eventDetail(ev);
+        const time = relTime(ev.ts);
+        const node = makeEl("div", { class: "activity-event" + (tone ? " " + tone : "") }, [
+          makeEl("span", { class: "activity-event-icon dot" }),
+          makeEl("div", { class: "activity-event-body" }, [
+            makeEl("div", { class: "activity-event-title" }, [title]),
+            detail ? makeEl("div", { class: "activity-event-detail" }, [detail]) : null,
+            time ? makeEl("div", { class: "activity-event-time" }, [time]) : null,
+          ]),
+        ]);
+        region.appendChild(node);
+      }
+    }
+
+    drawerClose.addEventListener("click", closeDrawer);
+    drawerOverlay.addEventListener("click", closeDrawer);
+    drawerRemove.addEventListener("click", async () => {
+      const name = state.drawerAgentName;
+      if (!name) return;
+      if (!window.confirm("Remove managed agent @" + name + "? The aX agent record stays.")) return;
+      try {
+        await api("DELETE", "/api/agents/" + encodeURIComponent(name));
+        showToast("Removed @" + name, "ok");
+        closeDrawer();
+        await loadStatus();
+      } catch (err) {
+        showToast(err.message || "Remove failed", "err");
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        if (drawerWrap.classList.contains("open")) closeDrawer();
+        else if ($("wizard").classList.contains("open")) closeWizard();
+      }
+    });
+
+    /* --- Wizard ------------------------------------------------------ */
+
+    const wizard = $("wizard");
+    const wizardSubmit = $("wizard-submit");
+    const formError = $("form-error");
+    const formStatus = $("form-status");
+    const formStatusText = $("form-status-text");
+    const nameInput = $("agent-name-input");
+
+    function openWizard() {
+      formError.style.display = "none";
+      formStatus.style.display = "none";
+      nameInput.value = "";
+      wizard.classList.add("open");
+      renderAgentSpaceOptions();
+      renderHermesPreflight();
+      // Wire copy button if not yet wired.
+      const copyBtn = $("hermes-preflight-copy");
+      if (copyBtn && !copyBtn.dataset.wired) {
+        copyBtn.dataset.wired = "1";
+        copyBtn.addEventListener("click", (event) => {
+          const cmd = $("hermes-preflight-cmd").textContent;
+          copyHandler(cmd)(event);
+        });
+      }
+      window.setTimeout(() => nameInput.focus(), 60);
+    }
+
+    function closeWizard() {
+      if (state.submitting) return;
+      wizard.classList.remove("open");
+    }
+
+    $("open-wizard").addEventListener("click", openWizard);
+    $("wizard-close").addEventListener("click", closeWizard);
+    $("wizard-cancel").addEventListener("click", closeWizard);
+    wizard.addEventListener("click", (event) => { if (event.target === wizard) closeWizard(); });
+
+    $("space-select").addEventListener("change", (event) => {
+      state.activeSpaceId = event.target.value;
+      // Force re-render of the visible list since filter changed.
+      state.rowsByName.clear();
+      clearChildren($("agent-region"));
+      state.lastRenderMode = null;
+      ensureListMode();
+      renderAgentList();
+    });
+
+    $("system-toggle").addEventListener("click", () => {
+      state.showSystemAgents = !state.showSystemAgents;
+      try { window.localStorage.setItem("ax-demo-show-system", state.showSystemAgents ? "1" : "0"); } catch (_) {}
+      // Re-render fully so rows for system agents add/remove cleanly.
+      state.rowsByName.clear();
+      clearChildren($("agent-region"));
+      state.lastRenderMode = null;
+      ensureListMode();
+      renderAgentList();
+    });
+
+    wizardSubmit.addEventListener("click", async () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        formError.textContent = "Give the agent a name.";
+        formError.style.display = "block";
+        nameInput.focus();
+        return;
+      }
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,63}$/.test(name)) {
+        formError.textContent = "Names must be letters, numbers, dashes, or underscores (2-64 chars).";
+        formError.style.display = "block";
+        return;
+      }
+      const spaceId = $("agent-space-input").value;
+      const body = { name, template_id: state.selectedTemplateId };
+      if (spaceId) body.space_id = spaceId;
+      if (state.selectedTemplateId === "ollama") {
+        const model = $("ollama-model-input").value;
+        if (model) body.ollama_model = model;
+      }
+      formError.style.display = "none";
+      formStatus.style.display = "flex";
+      formStatusText.textContent = "Connecting…";
+      state.submitting = true;
+      wizardSubmit.disabled = true;
+      try {
+        await api("POST", "/api/agents", body);
+        formStatusText.textContent = "Connected";
+        showToast("@" + name + " connected", "ok");
+        await loadStatus();
+        window.setTimeout(() => {
+          state.submitting = false;
+          wizardSubmit.disabled = false;
+          wizard.classList.remove("open");
+        }, 400);
+      } catch (err) {
+        state.submitting = false;
+        wizardSubmit.disabled = false;
+        formStatus.style.display = "none";
+        formError.textContent = err.message || "Connection failed.";
+        formError.style.display = "block";
+      }
+    });
+
+    /* --- Boot + polling ---------------------------------------------- */
+
+    function pollPaused() {
+      return drawerWrap.classList.contains("open") || wizard.classList.contains("open") || state.submitting;
+    }
+
+    async function tick() {
+      if (pollPaused()) return;
+      await loadStatus().catch(() => {});
+    }
+
+    async function boot() {
+      await loadStatus();
+      if (state.connected) {
+        await loadSpaces();
+        await loadTemplates();
+        // Reload status now that spaces are known so the space label resolves correctly.
+        await loadStatus();
+      }
+      window.setInterval(tick, refreshMs);
+    }
+
+    boot();
+  </script>
+</body>
+</html>

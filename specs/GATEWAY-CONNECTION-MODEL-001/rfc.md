@@ -31,6 +31,14 @@
 
 > ✅ Phase 1 is already running on dev.paxai.app today. Validated 2026-04-24 — see §6.
 
+**Credential topology note (2026-04-26):** the Gateway demo branch has already
+started hardening phase 1 by storing per-agent Gateway-managed credentials for
+local/pass-through actions. That is still not phase 2. The current safe rule is:
+v1 uses per-agent agent PAT/JWTs held or mediated by Gateway; future phase 2 may
+use a single Gateway credential only after a backend attestation or
+`gateway_act_as` contract lands. The user bootstrap PAT is never an act-as
+credential for agent-authored work.
+
 ## Phase 1 — Supervise (current state, hardening)
 
 ### Scope
@@ -39,7 +47,7 @@ The Gateway daemon (`ax gateway run`) is a local process supervisor that:
 
 - Owns a registry (`~/.ax/gateway/registry.json`) of agents the user has bound.
 - For each agent, spawns and supervises a runtime subprocess: `echo`, `exec`, `hermes_sentinel`, `inbox`, etc. Runtime types live in [`ax_cli/gateway_runtime_types.py`](../../ax_cli/gateway_runtime_types.py).
-- Each runtime keeps its own per-agent SSE connection to aX, using the agent's own token. The Gateway does not intercept that traffic.
+- Each live runtime may keep its own per-agent SSE connection to aX, using the agent's own token. Gateway-mediated local/pass-through sends use the Gateway-managed credential for that same agent identity.
 - The Gateway emits `AX_GATEWAY_EVENT` activity events on stdout from each managed runtime. These flow into `~/.ax/gateway/activity.jsonl` and back to aX as enrichment for the Activity Stream.
 - The Gateway restarts crashed runtimes, reports `live_pid`, `last_state`, `backlog_depth`, and other liveness signals to the registry, and surfaces them through `ax gateway status` / the local UI / aX SSE.
 

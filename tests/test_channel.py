@@ -4,9 +4,13 @@ import asyncio
 import json
 import os
 
+from typer.testing import CliRunner
+
 from ax_cli.commands import channel as channel_mod
 from ax_cli.commands.channel import ChannelBridge, MentionEvent, _load_channel_env
 from ax_cli.commands.listen import _is_self_authored, _remember_reply_anchor, _should_respond
+
+runner = CliRunner()
 
 
 class FakeClient:
@@ -715,3 +719,75 @@ def test_listener_tracks_self_authored_messages_without_responding():
     _remember_reply_anchor(anchors, data["id"])
     assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is False
     assert anchors == {"agent-message-1"}
+
+
+def test_channel_setup_writes_per_agent_mcp_and_env(tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("axp_a_agent.secret\n")
+    workdir = tmp_path / "work"
+    env_path = tmp_path / "channel.env"
+
+    result = runner.invoke(
+        channel_mod.app,
+        [
+            "setup",
+            "orion",
+            "--workdir",
+            str(workdir),
+            "--space-id",
+            "space-123",
+            "--token-file",
+            str(token_file),
+            "--base-url",
+            "https://paxai.app",
+            "--env-path",
+            str(env_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["mcp_path"] == str(workdir / ".mcp.json")
+    mcp = json.loads((workdir / ".mcp.json").read_text())
+    server = mcp["mcpServers"]["ax-channel"]
+    assert server["command"] == "axctl"
+    assert server["args"] == ["channel", "--agent", "orion", "--space-id", "space-123"]
+    assert server["env"]["AX_CHANNEL_ENV_FILE"] == str(env_path)
+    env_text = env_path.read_text()
+    assert 'AX_TOKEN_FILE="' in env_text
+    assert 'AX_BASE_URL="https://paxai.app"' in env_text
+    assert 'AX_AGENT_NAME="orion"' in env_text
+    assert 'AX_SPACE_ID="space-123"' in env_text
+
+
+def test_channel_setup_can_generate_docker_mcp_command(tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("axp_a_agent.secret\n")
+
+    result = runner.invoke(
+        channel_mod.app,
+        [
+            "setup",
+            "orion",
+            "--workdir",
+            str(tmp_path),
+            "--space-id",
+            "space-123",
+            "--token-file",
+            str(token_file),
+            "--mode",
+            "docker",
+            "--container-image",
+            "ax-channel:demo",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    mcp = json.loads((tmp_path / ".mcp.json").read_text())
+    server = mcp["mcpServers"]["ax-channel"]
+    assert server["command"] == "docker"
+    assert "ax-channel:demo" in server["args"]
+    assert "-i" in server["args"]
+    assert "axctl" in server["args"]

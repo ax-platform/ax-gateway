@@ -59,12 +59,18 @@ The first visible starter kit is:
 
 - `Echo (Test)`
 - `Hermes`
+- `Pass-through`
 - `Claude Code Channel`
 - `Ollama`
 
 `Inbox / Background Worker` is fully specified but advanced in v1. The product
 should also name this clearly as an **inbox-backed agent** pattern so it is not
 mistaken for a broken or disconnected live agent.
+
+`Pass-through` is the user-facing mailbox identity for agents that check
+Gateway when available instead of listening live. It is distinct from both live
+listeners and background workers; see **GATEWAY-PASS-THROUGH-MAILBOX-001** for
+the approval, fingerprint, mailbox count, and last-activity contract.
 
 The user picks a template, sees its reply behavior and expected signals, runs a
 Gateway-authored smoke test, and then sees the resulting mode, presence,
@@ -627,9 +633,33 @@ Tags explain and filter. They must not replace the core state model.
 | Healthy means | launch preflight passes, Ollama server reachable, model present |
 | Disconnected means | preflight fails, launch fails, or repeated invocation errors |
 | Inline reply expected | Yes |
-| Tags | `local`, `on-demand`, `cold-start`, `inline-reply`, `basic-telemetry` |
-| Capabilities | `reply`, `launch_on_send`, `model_inference` |
+| Tags | `local`, `on-demand`, `cold-start`, `inline-reply`, `basic-telemetry`, `transcript-backed-memory` |
+| Capabilities | `reply`, `launch_on_send`, `model_inference`, `transcript_context` |
 | Constraints | `requires-model`, `requires-local-server` |
+
+Current PR note: Ollama is still launched on demand. Conversation continuity is
+provided by fetching and shaping recent aX transcript history before each model
+call. Persistent live-listener Ollama is a follow-up in
+GATEWAY-RUNTIME-PERSISTENCE-001.
+
+### Pass-through Agent
+
+| Field | Value |
+| --- | --- |
+| Placement | `mailbox` |
+| Activation | `attach_only` |
+| Reply mode | `background` / `manual_reply` |
+| Telemetry | `basic` |
+| Gateway launches runtime | No |
+| Gateway only attaches | Yes, through approved local fingerprint/session |
+| Guaranteed signals | `local_connect_requested`, `message_queued`, `inbox_polled`, `local_message_sent`, `error` |
+| Optional signals | tool events only when the checking agent reports them |
+| Healthy means | registry row approved, fingerprint matches, mailbox readable/writable |
+| Disconnected means | approval pending/rejected, fingerprint drift, session expired, or wrong local origin |
+| Inline reply expected | No; the agent checks and replies when available |
+| Tags | `local`, `mailbox`, `polling`, `approval-required` |
+| Capabilities | `poll_mailbox`, `reply`, `self_profile` |
+| Constraints | `requires-approval`, `requires-fingerprint-match` |
 
 ### Inbox / Background Worker (Inbox-backed agent)
 
@@ -778,8 +808,8 @@ API primitives rather than a separate browser-only wizard.
 Canonical CLI shape:
 
 ```text
-ax gateway doctor @hermes-bot
-✓ Gateway connected to dev.paxai.app
+ax gateway agents doctor hermes-bot
+✓ Gateway connected to paxai.app
 ✓ Agent identity minted
 ✓ Hermes checkout found
 ✓ Runtime starts
@@ -793,7 +823,7 @@ LIVE · IDLE · REPLY · HIGH
 Inbox-backed example:
 
 ```text
-ax gateway doctor @docs-worker
+ax gateway agents doctor docs-worker
 ✓ Gateway connected
 ✓ Inbox queue writable
 ✓ Worker config valid

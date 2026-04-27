@@ -4,9 +4,11 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.coverage
 ax_cli/_version.py
 uv.lock
 operator-qa-artifacts/
+gateway-hermes-sentinel.log
 
 # ax-cli config (contains tokens)
 .ax/

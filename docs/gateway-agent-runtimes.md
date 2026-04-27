@@ -28,27 +28,26 @@ stores a separate registry, session, PID file, UI state, queues, and agent token
 files. `AX_GATEWAY_DIR=/path/to/gateway-state` is available when a deployment
 needs an explicit state root.
 
-## Current PR88 State
+## Current Gateway State
 
-PR88 has enough Gateway plumbing to register agents, mint tokens, show status,
-queue passive inbox work, run simple built-in runtimes, and run command bridges
-that emit `AX_GATEWAY_EVENT` progress lines. It also has the first
-Gateway-supervised Hermes sentinel runtime, which preserves the old long-running
-listener behavior instead of launching a new model process per message.
+Gateway has enough plumbing to register agents, mint managed agent tokens, show
+status, queue passive inbox work, run simple built-in runtimes, run command
+bridges that emit `AX_GATEWAY_EVENT` progress lines, and supervise Hermes
+sentinels. It preserves the old long-running listener behavior for Hermes
+instead of launching a new model process per message.
 
 Current useful modes:
 
-- `echo`: prove Gateway delivery and UI status.
-- `inbox`: prove queueing and manual acknowledgement paths.
-- `exec`: run probes or one-shot bridges that explicitly persist any state they
-  need.
+- `echo_test` / `echo`: prove Gateway delivery and UI status.
+- `pass_through`: approved polling mailbox identity for agents that check in
+  from a local workspace.
+- `inbox`: queueing and manual acknowledgement paths for background workers.
+- `exec`: run probes or one-shot bridges that explicitly persist or reconstruct
+  any state they need.
 - `hermes_sentinel`: Gateway-supervised long-running Hermes listener using the
   old `claude_agent_v2.py --runtime hermes_sdk` behavior.
-
-Target modes still to implement:
-
-- `claude_code_channel`: Gateway-registered attached Claude Code channel with
-  health/liveness tracking around `axctl channel`.
+- `claude_code_channel`: planned attached Claude Code channel. It should be one
+  registry identity with a live attached-session binding, not a separate agent.
 
 Use `hermes_sentinel` for coding sentinel QA. Avoid using a one-shot `exec`
 bridge as proof that `dev_sentinel` is fixed. It can prove Gateway dispatch,
@@ -136,7 +135,7 @@ emitting `working` and `completed` processing signals.
 Use command bridges for simple adapters, demos, and smoke tests.
 
 ```bash
-ax gateway agents add echo-bot --type echo
+ax gateway agents add echo-bot --template echo
 ax gateway agents add probe \
   --type exec \
   --exec "python3 examples/gateway_probe/probe_bridge.py" \

@@ -3,7 +3,7 @@
 **Status:** Draft  
 **Owner:** @madtank  
 **Date:** 2026-04-22  
-**Related:** GATEWAY-CONNECTIVITY-001, GATEWAY-ASSET-TAXONOMY-001, AGENT-PAT-001, DEVICE-TRUST-001, RUNTIME-CONFIG-001, AX-SCHEDULE-001
+**Related:** GATEWAY-CONNECTIVITY-001, GATEWAY-AGENT-REGISTRY-001, GATEWAY-ASSET-TAXONOMY-001, AGENT-PAT-001, DEVICE-TRUST-001, RUNTIME-CONFIG-001, AX-SCHEDULE-001
 
 ## Purpose
 
@@ -56,6 +56,9 @@ side path with different semantics.
 - [GATEWAY-CONNECTIVITY-001](../GATEWAY-CONNECTIVITY-001/spec.md)
   defines whether the path is safe, healthy, live, stale, queued, blocked, or
   expected to reply right now.
+- [GATEWAY-AGENT-REGISTRY-001](../GATEWAY-AGENT-REGISTRY-001/spec.md)
+  defines the concrete registry row, local config pointer, local fingerprint,
+  connection bindings, and self-profile update model for agents.
 - This governance spec defines who controls the asset, how it is approved,
   what it can access, and how drift, grants, secrets, and approvals are
   enforced and audited.

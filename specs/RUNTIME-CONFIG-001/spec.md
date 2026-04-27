@@ -24,6 +24,22 @@ space_id = "optional-default-space-uuid"
 
 This config represents an agent runtime. It is not a user login.
 
+Gateway-managed local workspaces may also contain a lighter
+`.ax/config.toml` pointer defined by
+[GATEWAY-AGENT-REGISTRY-001](../GATEWAY-AGENT-REGISTRY-001/spec.md). That
+pointer contains registry identity hints such as `agent_id`, `install_id`,
+`gateway_id`, `base_url`, and an expected `space_id`. It must not contain a
+user PAT or raw platform JWT, and it is not sufficient to act as the agent until
+Gateway verifies the local fingerprint and issues an approved local session.
+
+In short:
+
+- direct runtime config may contain `token_file` for an agent-scoped PAT;
+- Gateway pointer config must not contain credentials and is only a registry
+  hint;
+- if both shapes are present, commands that intend Gateway-managed authorship
+  must verify the Gateway binding instead of silently using user login fallback.
+
 ## Core Rules
 
 - User PATs are bootstrap credentials.

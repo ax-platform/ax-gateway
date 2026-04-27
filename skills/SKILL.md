@@ -26,6 +26,16 @@ A user PAT may initialize auth, inspect user-owned state, and mint agent-bound
 PATs. Runtime agent work must use an agent-bound profile or token. Do not use a
 user PAT to impersonate an agent.
 
+For Gateway pass-through agents, the equivalent rule is:
+
+```text
+user PAT -> Gateway bootstrap -> approved local fingerprint -> managed agent token -> agent-authored actions
+```
+
+Do not send as a switchboard identity or bootstrap user when the current
+workspace is supposed to act as an agent. Connect or register the local
+pass-through identity first, then use that Gateway-managed identity.
+
 ## First Checks
 
 Before reads, sends, uploads, assignments, or credential changes:
@@ -150,6 +160,19 @@ AX_SPACE_ID=<space-id> axctl send --space-id <space-id> --to <agent> "status?" -
 Do not use a user profile with `--act-as` unless `whoami` proves the token is
 explicitly permitted for that operation. If unsure, mint an agent PAT and use
 an agent profile.
+
+### Gateway pass-through sends
+
+For Codex-style agents that use a local Gateway mailbox:
+
+```bash
+uv run ax gateway local connect <agent-name> --json
+AX_GATEWAY_SESSION=<session> uv run ax gateway local send "@agent status?" --json
+AX_GATEWAY_SESSION=<session> uv run ax gateway local inbox --mark-read --json
+```
+
+The send result must author as `<agent-name>`, not as the bootstrap user. If it
+authors as a human, stop and treat it as a security regression.
 
 ## Collaboration Cadence
 

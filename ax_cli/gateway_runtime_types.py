@@ -376,6 +376,45 @@ def agent_template_catalog() -> dict[str, dict[str, Any]]:
                 "supports_command_override": False,
             },
         },
+        "pass_through": {
+            "id": "pass_through",
+            "label": "Pass-through",
+            "description": "Polling mailbox identity for agents that check in through Gateway instead of listening live.",
+            "availability": "ready",
+            "launchable": True,
+            "runtime_type": "inbox",
+            "asset_class": "interactive_agent",
+            "intake_model": "polling_mailbox",
+            "worker_model": "agent_check_in",
+            "trigger_sources": ["mailbox_poll", "manual_check"],
+            "return_paths": ["manual_reply", "summary_post"],
+            "telemetry_shape": "basic",
+            "suggested_name": "pass-through",
+            "operator_summary": "Best fit for attached agents that need an inbox without pretending to be always online.",
+            "recommended_test_message": "Mailbox check: acknowledge this when you next poll Gateway.",
+            "what_you_need": [
+                "A local agent workspace. Gateway fingerprints the folder, launch spec, agent identity, and Gateway id.",
+                "Operator approval before this mailbox identity can pass work through.",
+            ],
+            "setup_skill": "gateway-agent-setup",
+            "setup_skill_path": str(skill_path),
+            "defaults": {
+                "runtime_type": "inbox",
+                "workdir": str(repo_root),
+            },
+            "requires_approval": True,
+            "signals": {
+                **runtime_signals["inbox"],
+                "delivery": "Gateway stores inbound work in the mailbox until the agent checks it.",
+                "liveness": "Gateway shows approval and mailbox state. The agent is not treated as a live listener.",
+                "activity": "Mailbox depth and manual check-ins are the primary activity signal.",
+                "tools": "No automatic tool telemetry. Tool activity belongs to the checking agent session.",
+            },
+            "advanced": {
+                "adapter_label": "Gateway pass-through mailbox",
+                "supports_command_override": False,
+            },
+        },
         "inbox": {
             "id": "inbox",
             "label": "Passive Inbox",
@@ -409,6 +448,8 @@ def agent_template_catalog() -> dict[str, dict[str, Any]]:
 
 def agent_template_definition(template_id: str) -> dict[str, Any]:
     normalized = template_id.lower().strip()
+    if normalized == "echo":
+        normalized = "echo_test"
     catalog = agent_template_catalog()
     if normalized not in catalog:
         raise KeyError(template_id)
@@ -417,7 +458,7 @@ def agent_template_definition(template_id: str) -> dict[str, Any]:
 
 def agent_template_list(*, include_advanced: bool = False) -> list[dict[str, Any]]:
     catalog = agent_template_catalog()
-    ordered_ids = ["echo_test", "ollama", "hermes", "sentinel_cli", "claude_code_channel", "inbox"]
+    ordered_ids = ["echo_test", "ollama", "hermes", "pass_through", "sentinel_cli", "claude_code_channel", "inbox"]
     templates = [catalog[template_id] for template_id in ordered_ids if template_id in catalog]
     if include_advanced:
         return templates
