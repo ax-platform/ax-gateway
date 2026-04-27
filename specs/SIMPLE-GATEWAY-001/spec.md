@@ -109,8 +109,14 @@ Rules:
 - If the per-space service sender cannot be created or used, Gateway may fall
   back to a clearly marked self-authored diagnostic send rather than crashing.
   The response metadata must say that fallback happened.
+- The drawer's custom message composer must not silently fall back to the
+  target agent as sender. If the service sender is unavailable, disable or fail
+  the send with a clear message.
 - The message is sent to the target agent's current active space after
   placement reconciliation.
+- If the target runtime is stopped, disconnected, starting, rebinding, or
+  reconnecting, the drawer must not offer the send action until the current
+  registry/activity state says it is routable again.
 - The drawer should use a compact composer: visible sender, message text,
   immediate send, and later schedule/cron controls.
 

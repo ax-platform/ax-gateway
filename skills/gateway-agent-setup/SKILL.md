@@ -138,12 +138,17 @@ the bootstrap user or a switchboard identity.
 
 ```bash
 uv run ax gateway local connect codex-pass-through --json
-AX_GATEWAY_SESSION=<session-from-connect> uv run ax gateway local inbox --mark-read --json
-AX_GATEWAY_SESSION=<session-from-connect> uv run ax gateway local send "@night_owl status?" --json
+uv run ax gateway local inbox --agent codex-pass-through --json
+uv run ax gateway local send --agent codex-pass-through "@night_owl status?" --json
 ```
 
 If `local connect` returns `pending`, the operator must approve the fingerprint
 in the drawer before the agent can send or poll.
+
+The explicit `AX_GATEWAY_SESSION` path is only for low-level session debugging
+or older CLI builds. Normal agent instructions should use `--agent` so Gateway
+resolves the approved local identity and marks checked mailbox items read by
+default.
 
 ## Hermes Notes
 

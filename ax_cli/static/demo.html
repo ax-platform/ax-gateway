@@ -205,6 +205,7 @@
     .message-composer textarea { width: 100%; min-height: 88px; resize: vertical; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,0.035); color: var(--text); padding: 12px 14px; font: 13px/1.45 var(--font); outline: none; }
     .message-composer textarea:focus { border-color: rgba(132,245,231,0.8); box-shadow: 0 0 0 3px rgba(94,234,212,0.12); }
     .message-composer textarea::placeholder { color: var(--muted-2); }
+    .message-composer .hint { color: var(--muted); font-size: 12px; line-height: 1.4; }
     .message-composer-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
     .message-composer-meta strong { color: var(--text); font-weight: 600; }
     .message-composer-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
@@ -717,6 +718,38 @@
       if (confidence === "HIGH") return { label: "Ready", tone: "ok", detail: detail || "Gateway can route traffic now." };
       if (presence === "IDLE") return { label: "Idle", tone: "muted", detail: detail || "Waiting for traffic." };
       return { label: "Idle", tone: "muted", detail: detail || "" };
+    }
+
+    function sendAvailability(agent) {
+      if (!agent) return { disabled: true, reason: "No agent selected." };
+      const approval = String(agent.approval_state || "").toLowerCase();
+      if (approval === "pending" && agent.approval_id) {
+        return { disabled: true, reason: "Approve the connection before sending." };
+      }
+      const desired = String(agent.desired_state || "").toLowerCase();
+      if (desired === "stopped") {
+        return { disabled: true, reason: "Start this agent before sending." };
+      }
+      const status = String(agent.current_status || "").toLowerCase();
+      const activity = String(agent.current_activity || "").toLowerCase();
+      const effective = String(agent.effective_state || "").toLowerCase();
+      const reconnecting =
+        status.includes("reconnect") ||
+        status.includes("rebind") ||
+        status.includes("start") ||
+        effective.includes("reconnect") ||
+        effective.includes("rebind") ||
+        effective.includes("start") ||
+        activity.includes("reconnect") ||
+        activity.includes("rebind");
+      if (reconnecting) {
+        return { disabled: true, reason: "Gateway is reconnecting this agent. Try again in a few seconds." };
+      }
+      const presence = String(agent.presence || "").toUpperCase();
+      if (!isMailboxRuntime(agent) && (presence === "OFFLINE" || presence === "ERROR")) {
+        return { disabled: true, reason: "Agent is not connected right now." };
+      }
+      return { disabled: false, reason: "" };
     }
 
     function showToast(message, kind) {
@@ -1765,6 +1798,7 @@
       // Actions
       const desiredRunning = String(agent.desired_state || "").toLowerCase() !== "stopped";
       const needsApproval = String(agent.approval_state || "").toLowerCase() === "pending" && agent.approval_id;
+      const sendLock = sendAvailability(agent);
       const actions = makeEl("div", { class: "drawer-actions" });
       if (needsApproval) {
         actions.appendChild(makeEl("button", {
@@ -1776,11 +1810,11 @@
       const senderName = "switchboard-" + String(agent.space_id || agent.active_space_id || "default").replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase();
       const composerTextarea = makeEl("textarea", {
         placeholder: "Message to @" + agent.name,
-        disabled: needsApproval,
+        disabled: sendLock.disabled,
       }, [defaultPrompt]);
       const sendButton = makeEl("button", {
-        class: needsApproval ? "btn btn-ghost" : "btn btn-primary",
-        disabled: needsApproval,
+        class: sendLock.disabled ? "btn btn-ghost" : "btn btn-primary",
+        disabled: sendLock.disabled,
         onclick: async (event) => {
           const btn = event.currentTarget;
           const content = String(composerTextarea.value || "").trim();
@@ -1791,20 +1825,24 @@
           }
           btn.disabled = true;
           try {
-            const result = await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/test", { content, author: "agent" });
+            const result = await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/test", {
+              content,
+              author: "agent",
+              allow_self_fallback: false,
+            });
             const sender = result.sender_agent ? " from @" + result.sender_agent : "";
             showToast("Message sent" + sender + " to @" + agent.name, "ok");
             loadAgentDetail(agent.name);
           } catch (err) {
             showToast(err.message || "Send failed", "err");
           } finally {
-            btn.disabled = needsApproval;
+            btn.disabled = sendLock.disabled;
           }
         },
-      }, ["Send message"]);
+      }, [sendLock.disabled && sendLock.reason.includes("reconnect") ? "Reconnecting" : "Send message"]);
       const resetButton = makeEl("button", {
         class: "btn btn-ghost",
-        disabled: needsApproval,
+        disabled: sendLock.disabled,
         onclick: () => {
           composerTextarea.value = defaultPrompt;
           composerTextarea.focus();
@@ -1816,6 +1854,7 @@
           makeEl("span", {}, ["To ", makeEl("strong", {}, ["@" + agent.name])]),
         ]),
         composerTextarea,
+        sendLock.disabled ? makeEl("div", { class: "hint" }, [sendLock.reason]) : null,
         makeEl("div", { class: "message-composer-actions" }, [sendButton, resetButton]),
       ]));
       if (desiredRunning) {

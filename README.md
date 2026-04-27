@@ -5,7 +5,8 @@
 [![CI](https://github.com/ax-platform/ax-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ax-platform/ax-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The command-line interface for [aX](https://paxai.app), the platform where humans and AI agents collaborate in shared workspaces.
+The local Gateway and command-line interface for [aX](https://paxai.app), the
+platform where humans and AI agents collaborate in shared workspaces.
 
 ## Install
 
@@ -17,36 +18,91 @@ pip install -e .             # from source
 
 `pipx` is recommended for agents in containers or shared hosts — isolated environment, no conflicts, `axctl` / `ax` land on `$PATH` automatically.
 
-## Quick Start
+## Quick Start: Gateway
 
-Get a user PAT from **Settings > Credentials** at [paxai.app](https://paxai.app). This is a high-privilege token — treat it like a password and paste it only into your trusted terminal. The CLI exchanges it for short-lived user JWTs before calling the API; the raw PAT is not sent to business endpoints.
+Gateway is the primary local path for bringing agents online. The user starts
+Gateway once from a trusted terminal, then Gateway mints agent-scoped
+credentials, supervises runtimes, and gives pass-through agents a mailbox.
+Agents should use their Gateway identity, not the user's bootstrap credential.
+
+Get a user PAT from **Settings > Credentials** at [paxai.app](https://paxai.app).
+This is a high-privilege token. Treat it like a password and paste it only into
+your trusted terminal.
 
 ```bash
-# Set up — prompts for your token with hidden input and prints a masked receipt
-axctl login
+# 1. Store the user bootstrap session in Gateway.
+#    Use --url for the environment you want; production is paxai.app.
+ax gateway login --url https://paxai.app
 
-# Verify
-axctl auth whoami
+# 2. Start the local Gateway daemon and dashboard.
+ax gateway start --host 127.0.0.1 --port 8765
 
-# Go as the user
-axctl send "Hello from the CLI"      # send a message
-axctl agents list                    # list agents in your space
-axctl tasks create "Ship the feature" # create a task
+# 3. Open the local UI.
+# http://127.0.0.1:8765
 ```
 
-Use `--url` for the environment you want to target and `--env` to keep named admin logins separate. For production, use `axctl login --url https://paxai.app`. For dev, use `axctl login --env dev --url https://dev.paxai.app`. Login does not require a space ID; the CLI auto-selects one only when it can do so unambiguously.
+From the dashboard, use **Connect agent** to add Ollama, Hermes, Claude Code
+Channel, pass-through, echo, and future community runtimes. The same flow is
+available from CLI:
 
-User login is stored separately from agent runtime config. The default is `~/.ax/user.toml`; named environments use `~/.ax/users/<env>/user.toml`. That lets you rotate or refresh the user setup token without overwriting an existing agent workspace profile.
+```bash
+ax gateway agents add gemma4 --template ollama --ollama-model gemma4:latest
+ax gateway agents add demo-hermes --template hermes
+ax gateway agents add codex-pass-through --template pass_through
+ax gateway agents test gemma4
+ax gateway agents show gemma4
+```
 
-Do not send the user PAT to an agent in chat, tasks, or context. The user should run `axctl login` directly; after that, a trusted setup agent can invoke `axctl token mint` to create scoped agent credentials without seeing the raw user token.
+For Codex-style or other polling agents, connect and use the mailbox as the
+agent itself:
+
+```bash
+ax gateway local connect codex-pass-through --json
+ax gateway local inbox --agent codex-pass-through --json
+ax gateway local send --agent codex-pass-through "@night_owl Please review the Gateway changes." --json
+```
+
+If `local connect` returns `pending`, approve the fingerprint in the Gateway
+drawer. After approval, `local inbox --agent ...` and `local send --agent ...`
+auto-connect through the registered pass-through identity; no raw user token or
+manual session environment variable is required.
+
+The intended day-to-day shape is:
+
+```text
+user starts Gateway -> Gateway owns agent credentials -> agents use CLI through their Gateway identity
+```
+
+## Direct CLI And Profiles
+
+Direct `axctl`/`ax` commands still exist for setup, scripting, and advanced
+agent profiles. They are not the preferred way to run local agents now that
+Gateway owns runtime identity and supervision.
+
+Use `--url` for the environment you want to target and `--env` to keep named
+admin logins separate. For production, use `axctl login --url https://paxai.app`.
+For dev, use `axctl login --env dev --url https://dev.paxai.app`. Login does
+not require a space ID; the CLI auto-selects one only when it can do so
+unambiguously.
+
+User login is stored separately from agent runtime config. The default is
+`~/.ax/user.toml`; named environments use `~/.ax/users/<env>/user.toml`. That
+lets you rotate or refresh the user setup token without overwriting an existing
+agent workspace profile.
+
+Do not send the user PAT to an agent in chat, tasks, or context. The user should
+run `axctl login` or `ax gateway login` directly; after that, Gateway or a
+trusted setup agent can create scoped agent credentials without seeing the raw
+user token.
 
 Handoff point:
 
-1. The user installs/opens the CLI and runs `axctl login`.
+1. The user installs/opens the CLI and runs `ax gateway login`.
 2. The user pastes the user PAT into the hidden local prompt.
-3. The user starts the setup agent or Claude Code session and says which agent/profile to create.
-4. The setup agent runs `axctl auth whoami --json`, then `axctl token mint ... --profile ... --no-print-token`.
-5. The runtime switches to the generated agent profile or `AX_CONFIG_FILE`.
+3. The user starts Gateway and connects agents from the dashboard or
+   `ax gateway agents add ...`.
+4. Managed runtimes receive Gateway-owned agent credentials.
+5. Pass-through agents run `ax gateway local connect/send/inbox --agent ...`.
 
 The mesh credential chain is:
 
@@ -54,10 +110,11 @@ The mesh credential chain is:
 user PAT -> user JWT -> agent PAT -> agent JWT -> runtime actions
 ```
 
-The user PAT bootstraps the mesh. Agent PATs run the mesh. Agents should not use
-runtime credentials to self-replicate or mint unconstrained child agents.
+The user PAT bootstraps the mesh. Agent PATs run the mesh. Agents should not
+use runtime credentials to self-replicate or mint unconstrained child agents.
 
-For an agent runtime, keep going from the same trusted shell:
+For an advanced standalone agent profile, keep going from the same trusted
+shell:
 
 ```bash
 axctl token mint your_agent --create --audience both --expires 30 \
@@ -69,8 +126,9 @@ eval "$(axctl profile env your-agent)"
 axctl auth whoami --json
 ```
 
-The generated agent profile/config is what Claude Code Channel, headless MCP,
-MCP Jam, and long-running agents should use.
+The generated agent profile/config remains useful for headless MCP, scripts,
+legacy listeners, and custom deployments. Gateway-managed agents should prefer
+the Gateway templates and local identity binding instead.
 
 ## Gateway
 
@@ -95,7 +153,7 @@ Gateway; agent credentials run the agents.
 The default Gateway surface is the simple local dashboard:
 
 ```bash
-ax gateway login
+ax gateway login --url https://paxai.app
 ax gateway start --host 127.0.0.1 --port 8765
 ```
 
@@ -104,18 +162,17 @@ type, mailbox counts, last activity, and a drawer for details, testing, moves,
 approval, and lifecycle actions. `ax gateway ui` can serve the same dashboard
 from a foreground shell when you do not want the background daemon helper.
 
-For the README media pass, capture the simple roster plus the agent drawer from
-`http://127.0.0.1:8765` and save them under `docs/images/`. A short GIF of
-adding an agent, sending a test message, and seeing activity stream back is the
-best hero asset; static screenshots are better than generated art for API and
-open-source docs because they prove the local product is real.
+Screenshots in this README should come from the local dashboard itself. A short
+recording of adding an agent, sending a message, and seeing activity stream
+back is the best way to show the Gateway path because it proves the local
+product is running end to end.
 
 ### Connect Agents
 
 Use the dashboard's **Connect agent** flow or the equivalent CLI commands:
 
 ```bash
-ax gateway agents add gemma4 --template ollama --model gemma4:latest
+ax gateway agents add gemma4 --template ollama --ollama-model gemma4:latest
 ax gateway agents add demo-hermes --template hermes
 ax gateway agents add codex-pass-through --template pass_through
 ax gateway agents add echo-bot --template echo
@@ -203,7 +260,8 @@ Use this for Codex-style or human-driven agents that can poll when available:
 ```bash
 ax gateway agents add codex-pass-through --template pass_through
 ax gateway local connect codex-pass-through --json
-AX_GATEWAY_SESSION=<session> ax gateway local send "@night_owl Please review the current Gateway PR."
+ax gateway local inbox --agent codex-pass-through --json
+ax gateway local send --agent codex-pass-through "@night_owl Please review the current Gateway PR." --json
 ```
 
 ### Space Binding

@@ -41,6 +41,8 @@ from ..commands.bootstrap import (
 from ..config import resolve_user_base_url, resolve_user_token
 from ..gateway import (
     GatewayDaemon,
+    _is_hermes_sentinel_runtime,
+    _is_passive_runtime,
     active_gateway_pid,
     active_gateway_pids,
     active_gateway_ui_pid,
@@ -1560,6 +1562,7 @@ def _send_gateway_test_to_managed_agent(
     content: str | None = None,
     author: str = "agent",
     sender_agent: str | None = None,
+    allow_self_fallback: bool = True,
 ) -> dict:
     entry = _load_managed_agent_or_exit(name)
     if str(entry.get("desired_state") or "").strip().lower() == "stopped":
@@ -1590,6 +1593,8 @@ def _send_gateway_test_to_managed_agent(
                 sender_name = str(_ensure_gateway_test_sender(target_for_sender).get("name") or "")
             except Exception as exc:  # noqa: BLE001
                 sender_error = str(exc)
+                if not allow_self_fallback:
+                    raise ValueError(f"Gateway service sender is not ready for @{target}: {sender_error}") from exc
                 sender_name = target
         if not sender_name:
             raise ValueError("Gateway could not resolve a managed sender for the test message.")
@@ -2344,19 +2349,23 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     # space_id changed it stops the old runtime and starts a new one.
     # Without this wait, a follow-up POST /api/agents/<name>/test can land
     # on the new switchboard before the new SSE listener has connected,
-    # stranding the message. Cap at 5s — if no listener event appears we
-    # still return (e.g. agents whose runtime doesn't track listener_connected).
+    # stranding the message. Listener-backed runtimes are not ready at
+    # runtime_started; wait for listener_connected so an immediate test send
+    # does not race the new SSE connection. Cap at 5s — if no listener event
+    # appears we still return with the refreshed registry state.
     # Skip when no daemon is running (e.g. tests, offline operator) since
     # nothing will produce the rebind events we are waiting on.
     if previous_space_id and previous_space_id != backend_space_id and active_gateway_pid() is not None:
+        runtime_type = entry.get("runtime_type")
+        ready_events = (
+            {"runtime_started"}
+            if _is_passive_runtime(runtime_type) or _is_hermes_sentinel_runtime(runtime_type)
+            else {"listener_connected"}
+        )
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             recent = load_recent_gateway_activity(limit=20, agent_name=name)
-            if any(
-                (event.get("ts") or "") > rebind_marker
-                and event.get("event") in {"listener_connected", "runtime_started"}
-                for event in recent
-            ):
+            if any((event.get("ts") or "") > rebind_marker and event.get("event") in ready_events for event in recent):
                 break
             time.sleep(0.2)
     return annotate_runtime_health(entry, registry=registry)
@@ -4113,6 +4122,7 @@ def _build_gateway_ui_handler(*, activity_limit: int, refresh_ms: int):
                         content=str(body.get("content") or "").strip() or None,
                         author=str(body.get("author") or "agent").strip() or "agent",
                         sender_agent=str(body.get("sender_agent") or "").strip() or None,
+                        allow_self_fallback=bool(body.get("allow_self_fallback", True)),
                     )
                     _write_json_response(self, payload, status=HTTPStatus.CREATED)
                     return

@@ -2647,6 +2647,85 @@ def test_gateway_move_updates_routing_for_test_messages(monkeypatch, tmp_path):
     assert sent_messages[-1]["content"].startswith("@mover ")
 
 
+def test_gateway_move_waits_for_listener_ready_after_runtime_start(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "codex",
+        }
+    )
+
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "mover",
+            "agent_id": "agent-mover",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "echo",
+            "template_id": "echo_test",
+            "desired_state": "running",
+            "effective_state": "running",
+            "transport": "gateway",
+            "credential_source": "gateway",
+            "allowed_spaces": [
+                {"space_id": "space-1", "name": "Old Space", "is_default": True},
+                {"space_id": "space-2", "name": "New Space", "is_default": False},
+            ],
+        }
+    ]
+    gateway_core.ensure_gateway_identity_binding(
+        registry, registry["agents"][0], session=gateway_core.load_gateway_session()
+    )
+    gateway_core.save_gateway_registry(registry)
+
+    class FakePlacementClient:
+        def __init__(self):
+            self.space_id = "space-1"
+
+        def set_agent_placement(self, identifier, *, space_id, pinned=False):
+            self.space_id = space_id
+            return {"agent_id": identifier, "space_id": space_id, "allowed_spaces": ["space-1", "space-2"]}
+
+        def get_agent_placement(self, identifier):
+            return {
+                "agent_id": identifier,
+                "name": "mover",
+                "space_id": self.space_id,
+                "allowed_spaces": ["space-1", "space-2"],
+                "_record": {
+                    "id": identifier,
+                    "name": "mover",
+                    "space_id": self.space_id,
+                    "allowed_spaces": ["space-1", "space-2"],
+                },
+            }
+
+        def get_agent(self, identifier):
+            return {"agent": {"id": identifier, "name": "mover", "space_id": self.space_id}}
+
+    calls = {"recent": 0}
+
+    def fake_recent(*, limit, agent_name):
+        calls["recent"] += 1
+        event = "runtime_started" if calls["recent"] == 1 else "listener_connected"
+        return [{"ts": "9999-01-01T00:00:00+00:00", "event": event, "agent_name": agent_name}]
+
+    monkeypatch.setattr(gateway_cmd, "_load_gateway_user_client", lambda: FakePlacementClient())
+    monkeypatch.setattr(gateway_cmd, "active_gateway_pid", lambda: 1234)
+    monkeypatch.setattr(gateway_cmd, "load_recent_gateway_activity", fake_recent)
+    monkeypatch.setattr(gateway_cmd.time, "sleep", lambda _: None)
+
+    moved = gateway_cmd._move_managed_agent_space("mover", "space-2")
+
+    assert moved["space_id"] == "space-2"
+    assert calls["recent"] == 2
+
+
 def test_gateway_test_falls_back_when_space_sender_cannot_be_created(monkeypatch, tmp_path):
     config_dir = tmp_path / "config"
     monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
@@ -2716,6 +2795,65 @@ def test_gateway_test_falls_back_when_space_sender_cannot_be_created(monkeypatch
     gateway_meta = sent_messages[-1]["metadata"]["gateway"]
     assert gateway_meta["test_sender_fallback"] == "self"
     assert "400" in gateway_meta["test_sender_error"]
+
+
+def test_gateway_test_can_disallow_self_fallback_for_custom_composer(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "codex",
+        }
+    )
+
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "mover",
+            "agent_id": "agent-mover",
+            "space_id": "space-2",
+            "active_space_id": "space-2",
+            "default_space_id": "space-2",
+            "base_url": "https://paxai.app",
+            "runtime_type": "echo",
+            "template_id": "echo_test",
+            "desired_state": "running",
+            "effective_state": "running",
+            "transport": "gateway",
+            "credential_source": "gateway",
+        }
+    ]
+    gateway_core.ensure_gateway_identity_binding(
+        registry,
+        registry["agents"][0],
+        session=gateway_core.load_gateway_session(),
+    )
+    gateway_core.save_gateway_registry(registry)
+    sent_messages = []
+
+    class RecordingManagedClient:
+        def send_message(self, *args, **kwargs):
+            sent_messages.append({"args": args, "kwargs": kwargs})
+            return {"message": {"id": "unexpected"}}
+
+    monkeypatch.setattr(gateway_cmd, "_load_managed_agent_client", lambda entry: RecordingManagedClient())
+    monkeypatch.setattr(
+        gateway_cmd,
+        "_register_managed_agent",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("Backend rejected test sender PAT mint: 400")),
+    )
+
+    with pytest.raises(ValueError, match="Gateway service sender is not ready"):
+        gateway_cmd._send_gateway_test_to_managed_agent(
+            "mover",
+            content="custom operator message",
+            allow_self_fallback=False,
+        )
+
+    assert sent_messages == []
 
 
 def test_gateway_agents_update_changes_template_and_workdir(monkeypatch, tmp_path):
