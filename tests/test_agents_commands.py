@@ -207,8 +207,17 @@ def test_agents_discover_infers_roles_without_ping(monkeypatch):
     assert rows["supervisor_sentinel"]["mesh_role"] == "supervisor_candidate"
     assert rows["supervisor_sentinel"]["contact_mode"] == "unknown"
     assert rows["supervisor_sentinel"]["warning"] == "supervisor_candidate_not_live"
+    assert rows["supervisor_sentinel"]["next_step"] == "ping_before_handoff"
+    assert rows["supervisor_sentinel"]["commands"]["handoff"].startswith("axctl handoff @supervisor_sentinel")
+    assert rows["supervisor_sentinel"]["task_command"] == (
+        "axctl tasks create 'Follow-up for @supervisor_sentinel' "
+        "--assign-to @supervisor_sentinel --priority high"
+    )
+    assert "axctl reminders add <task-id>" in rows["supervisor_sentinel"]["reminder_command"]
     assert rows["aX"]["contact_mode"] == "space_agent"
     assert rows["night_owl"]["contact_mode"] == "on_demand"
+    assert data["summary"]["no_reply_or_stale"] == 1
+    assert any("Pick a live listener" in item for item in data["coordination_checklist"])
 
 
 def test_agents_discover_marks_control_blocked_agents_without_ping(monkeypatch):
@@ -289,4 +298,7 @@ def test_agents_discover_with_ping_classifies_listener(monkeypatch):
     assert row["listener_status"] == "replied"
     assert row["contact_mode"] == "event_listener"
     assert row["recommended_contact"] == "handoff_or_send_wait"
+    assert row["next_step"] == "handoff_now"
+    assert row["commands"]["ping"] == "axctl agents ping @backend_sentinel --timeout 10"
+    assert any("Live-listener fast path" in item for item in data["coordination_checklist"])
     assert calls["messages"][0]["content"].startswith("@backend_sentinel Contact-mode ping")
