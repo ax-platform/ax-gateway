@@ -157,6 +157,64 @@ def _probe_agent_contact(
     }
 
 
+def _shell_quote(value: str) -> str:
+    """Small single-quote shell escaper for command examples."""
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _coordination_commands(agent_name: str) -> dict[str, str]:
+    mention = "@" + agent_name.removeprefix("@")
+    task_title = f"Follow-up for {mention}"
+    return {
+        "ping": f"axctl agents ping {mention} --timeout 10",
+        "handoff": f"axctl handoff {mention} {_shell_quote('Describe the work, expected output, and completion promise.')} --probe-timeout 10",
+        "task": f"axctl tasks create {_shell_quote(task_title)} --assign-to {mention} --priority high",
+        "reminder": f"axctl reminders add <task-id> --target {mention} --first-in-minutes 30 --reason {_shell_quote('Please post status, blocker, or completion note.')}",
+    }
+
+
+def _coordination_next_step(contact_mode: str, listener_status: str, control_status: str) -> str:
+    if control_status != "active":
+        return "clear_control_state_before_contact"
+    if contact_mode == "event_listener":
+        return "handoff_now"
+    if contact_mode == "space_agent":
+        return "ask_product_or_route_request"
+    if contact_mode == "on_demand":
+        return "create_task_then_ping_or_handoff"
+    if listener_status == "no_reply":
+        return "leave_task_and_reminder"
+    return "ping_before_handoff"
+
+
+def _coordination_checklist(rows: list[dict[str, Any]]) -> list[str]:
+    live = [row["name"] for row in rows if row.get("contact_mode") == "event_listener"]
+    no_reply = [row["name"] for row in rows if row.get("listener_status") == "no_reply"]
+    blocked = [row["name"] for row in rows if row.get("contact_mode") == "blocked_by_control"]
+    first_live = live[0] if live else None
+    first_no_reply = no_reply[0] if no_reply else None
+    checklist = [
+        "1. Pick a live listener for urgent synchronous work; otherwise create an assigned task.",
+        "2. Put the desired output, branch/worktree path, validation, and completion promise in the handoff/task.",
+        "3. Add a reminder when the owner is no-reply, on-demand, blocked, or the task should not be forgotten.",
+        "4. Keep durable notes in the repo/agent notes path and close or update tasks when done, blocked, or taking a break.",
+    ]
+    if first_live:
+        checklist.append(
+            f"Live-listener fast path: axctl handoff @{first_live} 'Status/implement ...' --probe-timeout 10"
+        )
+    if first_no_reply:
+        checklist.append(
+            f"No-reply fallback: axctl tasks create 'Follow-up for @{first_no_reply}' --assign-to @{first_no_reply} --priority high"
+        )
+    if blocked:
+        checklist.append(
+            "Blocked agents: clear enable/break/DND control state before expecting delivery: "
+            + ", ".join(f"@{name}" for name in blocked[:5])
+        )
+    return checklist
+
+
 def _discover_agent_row(agent: dict[str, Any], probe: dict[str, Any] | None = None) -> dict[str, Any]:
     mesh_role = _agent_mesh_role(agent)
     control_status = _agent_control_status(agent)
@@ -172,8 +230,13 @@ def _discover_agent_row(agent: dict[str, Any], probe: dict[str, Any] | None = No
         warning = "supervisor_candidate_not_live"
     if control_status != "active":
         warning = "agent_control_blocks_delivery"
+    name = _agent_mention_name(agent, str(agent.get("name") or "agent"))
+    commands = _coordination_commands(name)
+    recommended_contact = (
+        "reenable_before_contact" if control_status != "active" else _recommended_contact(contact_mode, mesh_role)
+    )
     return {
-        "name": _agent_mention_name(agent, str(agent.get("name") or "agent")),
+        "name": name,
         "agent_id": agent.get("id"),
         "origin": agent.get("origin"),
         "agent_type": agent.get("agent_type"),
@@ -183,9 +246,12 @@ def _discover_agent_row(agent: dict[str, Any], probe: dict[str, Any] | None = No
         "mesh_role": mesh_role,
         "listener_status": listener_status,
         "contact_mode": contact_mode,
-        "recommended_contact": "reenable_before_contact"
-        if control_status != "active"
-        else _recommended_contact(contact_mode, mesh_role),
+        "recommended_contact": recommended_contact,
+        "next_step": _coordination_next_step(contact_mode, listener_status, control_status),
+        "commands": commands,
+        "handoff_command": commands["handoff"],
+        "task_command": commands["task"],
+        "reminder_command": commands["reminder"],
         "sent_message_id": probe.get("sent_message_id") if probe else None,
         "ping_token": probe.get("ping_token") if probe else None,
         "warning": warning,
@@ -356,18 +422,28 @@ def discover_agents(
         "event_listeners": sum(1 for row in rows if row["contact_mode"] == "event_listener"),
         "unknown_or_not_listening": sum(1 for row in rows if row["contact_mode"] == "unknown_or_not_listening"),
         "blocked_by_control": sum(1 for row in rows if row["contact_mode"] == "blocked_by_control"),
+        "no_reply_or_stale": sum(
+            1
+            for row in rows
+            if row["listener_status"] == "no_reply" or row["contact_mode"] in {"unknown", "unknown_or_not_listening"}
+        ),
         "supervisor_candidates": sum(1 for row in rows if row["mesh_role"] == "supervisor_candidate"),
         "supervisor_candidates_not_live": sum(1 for row in rows if row["warning"] == "supervisor_candidate_not_live"),
         "pinged": ping,
     }
-    result = {"space_id": sid, "summary": summary, "agents": rows}
+    result = {
+        "space_id": sid,
+        "summary": summary,
+        "coordination_checklist": _coordination_checklist(rows),
+        "agents": rows,
+    }
 
     if as_json:
         print_json(result)
         return
 
     print_table(
-        ["Name", "Role", "Roster", "Control", "Listener", "Contact Mode", "Recommended", "Warning"],
+        ["Name", "Role", "Roster", "Control", "Listener", "Contact Mode", "Next Step", "Recommended", "Warning"],
         rows,
         keys=[
             "name",
@@ -376,10 +452,21 @@ def discover_agents(
             "control_status",
             "listener_status",
             "contact_mode",
+            "next_step",
             "recommended_contact",
             "warning",
         ],
     )
+    console.print()
+    console.print("[bold]Coordination checklist[/bold]")
+    for item in result["coordination_checklist"]:
+        console.print(f"  {item}")
+    console.print()
+    console.print("[bold]Command examples[/bold]")
+    for row in rows[:5]:
+        console.print(f"  @{row['name']}: {row['handoff_command']}")
+        if row.get("listener_status") == "no_reply" or row.get("contact_mode") != "event_listener":
+            console.print(f"    fallback: {row['task_command']}")
 
 
 @app.command("create")
