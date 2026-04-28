@@ -1681,6 +1681,13 @@
       return "cd " + workdir + " && claude --strict-mcp-config --mcp-config .mcp.json --dangerously-load-development-channels server:ax-channel";
     }
 
+    function attachedGatewayCommand(agent) {
+      if (!isAttachedRuntime(agent)) return "";
+      const name = String(agent.name || "").trim();
+      if (!name) return "";
+      return "ax gateway agents attach " + name + " --run";
+    }
+
     function mailboxStateLabel(agent) {
       // Returns { title, detail, tone } for the drawer's mailbox status card,
       // or null if the agent isn't a mailbox runtime.
@@ -1966,11 +1973,18 @@
       if (desiredRunning) {
         if (isAttachedRuntime(agent) && String(agent.presence || "").toUpperCase() === "STALE") {
           const launchCommand = attachedLaunchCommand(agent);
+          const gatewayCommand = attachedGatewayCommand(agent);
           actions.appendChild(makeEl("div", { class: "hint" }, [
-            "Waiting for the attached session. Run Claude Code from ",
+            "Waiting for the attached session. Stop/start only changes desired state. Attach Claude Code from ",
             makeEl("strong", {}, [String(agent.workdir || "this agent's workspace")]),
             " with the generated channel config.",
           ]));
+          if (gatewayCommand) {
+            actions.appendChild(makeEl("div", { class: "message-composer-actions" }, [
+              makeEl("button", { class: "btn btn-primary", onclick: copyHandler(gatewayCommand) }, ["Copy attach command"]),
+            ]));
+            actions.appendChild(makeEl("code", { class: "command-pill" }, [gatewayCommand]));
+          }
           if (launchCommand) {
             actions.appendChild(makeEl("code", { class: "command-pill" }, [launchCommand]));
           }

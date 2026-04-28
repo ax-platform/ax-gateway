@@ -3094,6 +3094,7 @@ def test_gateway_ui_handler_serves_status_and_agent_detail(monkeypatch, tmp_path
             page = client.get("/")
             assert page.status_code == 200
             assert "Bring your agents" in page.text
+            assert "Copy attach command" in page.text
             assert "window.__GATEWAY_DEMO_REFRESH_MS__ = 1500" in page.text
             assert 'href="/operator"' in page.text
 
