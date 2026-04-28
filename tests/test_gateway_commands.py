@@ -1917,7 +1917,7 @@ def test_annotate_runtime_health_blocks_environment_mismatch(monkeypatch, tmp_pa
                 "activation": "queue_worker",
                 "reply_mode": "summary_only",
                 "effective_state": "running",
-                "last_seen_at": datetime.now(timezone.utc).isoformat(),
+                "last_seen_at": "__recent__",
                 "backlog_depth": 0,
             },
             {
@@ -1935,7 +1935,7 @@ def test_annotate_runtime_health_blocks_environment_mismatch(monkeypatch, tmp_pa
                 "activation": "queue_worker",
                 "reply_mode": "summary_only",
                 "effective_state": "running",
-                "last_seen_at": datetime.now(timezone.utc).isoformat(),
+                "last_seen_at": "__recent__",
                 "backlog_depth": 3,
                 "last_doctor_result": {
                     "status": "failed",
@@ -1985,6 +1985,9 @@ def test_annotate_runtime_health_blocks_environment_mismatch(monkeypatch, tmp_pa
     ],
 )
 def test_annotate_runtime_health_derives_gateway_operator_model(input_snapshot, expected):
+    input_snapshot = dict(input_snapshot)
+    if input_snapshot.get("last_seen_at") == "__recent__":
+        input_snapshot["last_seen_at"] = datetime.now(timezone.utc).isoformat()
     snapshot = gateway_core.annotate_runtime_health(input_snapshot)
 
     assert snapshot["mode"] == expected["mode"]
@@ -3457,13 +3460,13 @@ def test_gateway_spaces_use_resolves_slug_and_updates_session(monkeypatch, tmp_p
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["space_id"] == "team-space"
-    assert payload["space_name"] == "ax-cli-dev"
+    assert payload["space_name"] == "aX CLI Dev"
     session = gateway_core.load_gateway_session()
     assert session["space_id"] == "team-space"
-    assert session["space_name"] == "ax-cli-dev"
+    assert session["space_name"] == "aX CLI Dev"
     registry = gateway_core.load_gateway_registry()
     assert registry["gateway"]["space_id"] == "team-space"
-    assert registry["gateway"]["space_name"] == "ax-cli-dev"
+    assert registry["gateway"]["space_name"] == "aX CLI Dev"
 
 
 def test_gateway_spaces_current_shows_session_space(monkeypatch, tmp_path):

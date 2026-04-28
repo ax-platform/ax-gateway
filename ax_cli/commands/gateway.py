@@ -544,7 +544,7 @@ def _space_name_for_id(client: AxClient, space_id: str) -> str | None:
     try:
         for item in _space_list_from_response(client.list_spaces()):
             if auth_cmd._candidate_space_id(item) == space_id:
-                return str(item.get("slug") or item.get("name") or space_id)
+                return str(item.get("name") or item.get("slug") or space_id)
     except Exception:
         return None
     return None
