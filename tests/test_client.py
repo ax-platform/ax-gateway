@@ -217,6 +217,24 @@ def test_mark_all_messages_read_calls_backend_endpoint():
     assert client._http.post.call_args.args[0] == "/api/v1/messages/mark-all-read"
 
 
+def test_parse_json_names_agent_create_html_shell_as_api_contract_failure():
+    client = AxClient("https://example.com", "legacy-token")
+    response = httpx.Response(
+        200,
+        text="<!DOCTYPE html><html></html>",
+        headers={"content-type": "text/html"},
+        request=httpx.Request("POST", "https://example.com/api/v1/agents"),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        client._parse_json(response)
+
+    message = str(exc.value)
+    assert "Agent create returned HTML instead of JSON" in message
+    assert "quota" in message
+    assert "name conflict" in message
+
+
 def test_record_tool_call_posts_audit_payload():
     client = AxClient("https://example.com", "legacy-token", agent_id="agent-123", agent_name="codex")
     response = httpx.Response(
@@ -403,7 +421,7 @@ class TestCredentialManagement:
         client = AxClient("https://example.com", "legacy-token", agent_id="creator-agent")
         response = httpx.Response(
             201,
-            json={"id": "task-123", "assignee_id": "target-agent"},
+            json={"id": "task-123", "space_id": "space-123", "assignee_id": "target-agent"},
             request=httpx.Request("POST", "https://example.com/api/v1/tasks"),
         )
         client._http.post = MagicMock(return_value=response)
@@ -418,6 +436,90 @@ class TestCredentialManagement:
         body = client._http.post.call_args.kwargs["json"]
         assert body["space_id"] == "space-123"
         assert body["assignee_id"] == "target-agent"
+
+    def test_create_task_falls_back_from_hosted_html_and_verifies_space(self):
+        client = AxClient("https://example.com", "legacy-token", agent_id="creator-agent")
+        html_response = httpx.Response(
+            200,
+            text="<!doctype html><html></html>",
+            headers={"content-type": "text/html; charset=utf-8"},
+            request=httpx.Request("POST", "https://example.com/api/v1/tasks"),
+        )
+        create_response = httpx.Response(
+            201,
+            json={"id": "task-123", "title": "Review the spec"},
+            request=httpx.Request("POST", "https://example.com/api/tasks"),
+        )
+        whoami_response = httpx.Response(
+            200,
+            json={"resolved_space_id": "space-123"},
+            request=httpx.Request("GET", "https://example.com/auth/me"),
+        )
+        list_response = httpx.Response(
+            200,
+            json={"tasks": [{"id": "task-123", "space_id": "space-123"}]},
+            request=httpx.Request("GET", "https://example.com/api/v1/tasks?limit=100&space_id=space-123"),
+        )
+        client._http.post = MagicMock(side_effect=[html_response, create_response])
+        client._http.get = MagicMock(side_effect=[whoami_response, list_response])
+
+        data = client.create_task("space-123", "Review the spec", priority="high")
+
+        assert data["id"] == "task-123"
+        assert client._http.post.call_args_list[0].args[0] == "/api/v1/tasks"
+        assert client._http.post.call_args_list[1].args[0] == "/api/tasks"
+        assert client._http.get.call_args_list[0].args[0] == "/auth/me"
+        assert client._http.get.call_args_list[1].kwargs["params"] == {"limit": 100, "space_id": "space-123"}
+
+    def test_create_task_fallback_refuses_when_session_space_differs(self):
+        client = AxClient("https://example.com", "legacy-token", agent_id="creator-agent")
+        html_response = httpx.Response(
+            200,
+            text="<!doctype html><html></html>",
+            headers={"content-type": "text/html; charset=utf-8"},
+            request=httpx.Request("POST", "https://example.com/api/v1/tasks"),
+        )
+        whoami_response = httpx.Response(
+            200,
+            json={"resolved_space_id": "madtank-space"},
+            request=httpx.Request("GET", "https://example.com/auth/me"),
+        )
+        client._http.post = MagicMock(return_value=html_response)
+        client._http.get = MagicMock(return_value=whoami_response)
+
+        with pytest.raises(RuntimeError, match="Refusing to create the task"):
+            client.create_task("ax-cli-dev-space", "Review the spec", priority="high")
+
+        assert client._http.post.call_count == 1
+
+    def test_create_task_fallback_rejects_unverified_space(self):
+        client = AxClient("https://example.com", "legacy-token", agent_id="creator-agent")
+        html_response = httpx.Response(
+            200,
+            text="<!doctype html><html></html>",
+            headers={"content-type": "text/html; charset=utf-8"},
+            request=httpx.Request("POST", "https://example.com/api/v1/tasks"),
+        )
+        create_response = httpx.Response(
+            201,
+            json={"id": "task-123", "title": "Review the spec"},
+            request=httpx.Request("POST", "https://example.com/api/tasks"),
+        )
+        whoami_response = httpx.Response(
+            200,
+            json={"bound_agent": {"default_space_id": "space-123"}},
+            request=httpx.Request("GET", "https://example.com/auth/me"),
+        )
+        list_response = httpx.Response(
+            200,
+            json={"tasks": [{"id": "other-task", "space_id": "space-123"}]},
+            request=httpx.Request("GET", "https://example.com/api/v1/tasks?limit=100&space_id=space-123"),
+        )
+        client._http.post = MagicMock(side_effect=[html_response, create_response])
+        client._http.get = MagicMock(side_effect=[whoami_response, list_response])
+
+        with pytest.raises(RuntimeError, match="not visible in requested space"):
+            client.create_task("space-123", "Review the spec", priority="high")
 
     def test_issue_agent_pat_sends_requested_audience(self):
         client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")

@@ -26,7 +26,6 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -604,13 +603,12 @@ def _run_via_runtime_plugin(
     thread_id: str | None = None,
 ) -> str:
     """Execute via a runtime plugin, bridging its StreamCallback to aX messages."""
-    import sys
     # Ensure the agents directory is on sys.path so runtimes/ and tools/ can import
     agents_dir = str(Path(__file__).parent)
     if agents_dir not in sys.path:
         sys.path.insert(0, agents_dir)
 
-    from runtimes import get_runtime, StreamCallback
+    from runtimes import StreamCallback, get_runtime
 
     runtime = get_runtime(runtime_name)
     history_thread_id = thread_id or parent_id or "default"
@@ -647,7 +645,7 @@ def _run_via_runtime_plugin(
     }
     progress_msg = api.send_message(
         space_id=space_id,
-        content=f"Working\u2026",
+        content="Working\u2026",
         parent_id=parent_id,
         message_type="reply",
         metadata=progress_metadata,
@@ -879,7 +877,7 @@ def _run_via_runtime_plugin(
 
     if result.exit_reason == "rate_limited":
         # Rate limited — don't post ANYTHING to chat. Silent backoff.
-        log.warning(f"Rate limited — suppressing chat message, cooling down 60s")
+        log.warning("Rate limited — suppressing chat message, cooling down 60s")
         api.signal_processing(parent_id, "completed", space_id=space_id)
         time.sleep(60)  # Cool down before processing next message
         return ""
@@ -1558,7 +1556,10 @@ def run(args):
     )
 
     if not token:
-        log.error("No token. Set AX_TOKEN or configure ~/.ax/config.toml")
+        log.error(
+            "No runtime credential found. Start this runtime through Gateway or "
+            "configure an agent-scoped profile; do not use a user token."
+        )
         sys.exit(1)
     if not agent_name:
         log.error("No agent_name. Set AX_AGENT_NAME or use --agent flag")
@@ -1585,8 +1586,8 @@ def run(args):
     log.info(f"  Timeout:  {args.timeout}s")
     log.info(f"  Stream:   edit every {args.update_interval}s")
     log.info("  Memory:   thread continuity enabled (runtime-specific)")
-    log.info(f"  Queue:    threaded worker (no dropped messages)")
-    log.info(f"  Signals:  agent_processing events enabled")
+    log.info("  Queue:    threaded worker (no dropped messages)")
+    log.info("  Signals:  agent_processing events enabled")
     log.info("=" * 60)
 
     # Start worker thread — pass api_holder so it always uses the current client

@@ -19,6 +19,9 @@ The goal: **every message to a managed agent emits a visible activity bubble at 
 
 **In:**
 - The event flow from runtime stdout → gateway parser → backend `processing-status` POST → SSE → aX UI bubble.
+- The aX message activity bubble attached to the message that woke the agent.
+  Local Gateway drawer activity is useful diagnostic evidence, but it is not
+  sufficient by itself.
 - Surfacing failure modes (silent swallows are not allowed).
 - Parity between user-authored and agent-authored messages — the indicator must appear in both cases.
 - Session-memory indicator: when an agent has prior conversation context, the bubble should show "Recalling N prior turns" or similar so users can see continuity.
@@ -58,6 +61,80 @@ Bridges MUST emit at least:
 - `{"kind":"activity","activity":"..."}` for streaming progress (rate-limited to ~1Hz)
 - `{"kind":"status","status":"completed"}` exactly once at end
 - `{"kind":"status","status":"error","error_message":"..."}` on failure (replaces completed)
+
+For plain LLM runtimes such as Ollama, the bubble still needs live movement even
+when no tools are available. Minimum visible sequence:
+
+1. `started` / `thinking`: Gateway picked up the message.
+2. `processing`: model call started, with model name when known.
+3. `activity`: streaming reply preview or short "model is responding" progress.
+4. `completed`: final reply posted.
+
+For tool-capable runtimes, tool events should enrich the same bubble rather than
+creating a separate status surface. The drawer may show full grouped tool
+history, but the aX message bubble should show the latest concise phase.
+
+## Queue and mailbox semantics
+
+Not every target is a live listener, and the activity bubble must say that
+clearly. User trust depends on knowing whether the agent is actively working or
+whether Gateway simply accepted the message for later.
+
+For pass-through/mailbox agents:
+
+- Gateway MUST publish an immediate `agent_processing` event for the source
+  `message_id` with `status: "queued"` or equivalent.
+- The bubble copy should say the message landed in the agent's Gateway inbox,
+  for example `Queued in Gateway` or `Delivered to @codex-pass-through inbox`.
+- The detail should make the expectation explicit: the agent will see the
+  message when it checks its mailbox; no live reply is guaranteed.
+- When the pass-through agent later polls the mailbox, Gateway should publish a
+  follow-up `started` / `processing` signal for that same message if the agent
+  claims the work, then `completed` when it acks or replies.
+
+For service accounts and passive senders:
+
+- Do not show a fake "thinking" state. A service account may deliver, queue, or
+  schedule work, but it is not an agent doing live reasoning.
+- Gateway MUST still publish the delivery state for the message it authored:
+  sent, queued, delivered-to-inbox, failed, or scheduled.
+- If the service account routes to a live target, subsequent live target
+  processing signals should attach to the same source message id whenever the
+  backend contract allows it.
+
+For agents that intentionally do not answer:
+
+- Gateway runtimes may emit
+  `AX_GATEWAY_EVENT {"kind":"status","status":"no_reply","reason":"ack"}`.
+  `declined`, `skipped`, and `not_responding` are accepted aliases.
+- Gateway MUST treat this as terminal for the source message and MUST NOT post a
+  normal chat reply. The original message should surface a clear notification
+  such as "agent chose not to respond" with the reason.
+- The platform-native live signal is `agent_skipped` SSE with
+  `{agent_id, agent_name, message_id, reason}`. When Gateway cannot call that
+  backend helper directly, it publishes `agent_processing status=no_reply` and
+  may write an audit-only `message_type="agent_pause"` row with
+  `metadata.signal_only=true`, `metadata.reason="no_reply"`, and
+  `metadata.reason_code=<raw runtime reason>`. For example, `ack` is preserved
+  as `reason_code` while the canonical user-facing reason remains `no_reply`.
+
+For Claude Code Channel attached sessions:
+
+- Gateway may emit local activity events with a `channel_` prefix:
+  `channel_attached`, `channel_ping`, `channel_message_delivered`, and
+  `channel_reply_sent`.
+- These events are transport-specific evidence for the Gateway drawer and row
+  activity log. They complement, but do not replace, the platform message
+  activity signals shown on the original aX message bubble.
+- `channel_message_delivered` means the local channel received the message.
+  `channel_reply_sent` means the channel produced an inline reply and should
+  include `reply_id` and a short `reply_preview` when available.
+
+This creates a single UX rule:
+
+> Every message gets a truthful bubble. Live agents show work. Mailboxes show
+> queued/inbox delivery. Service accounts show delivery or scheduling state.
+> Declines say that the agent chose not to respond.
 
 ## Conversation-history contract
 
@@ -155,6 +232,31 @@ Pass-through rows use mailbox vocabulary:
 - `Sent message`
 - `Awaiting approval`
 
+## Attached-session diagnostics
+
+For attached stdio runtimes such as Claude Code Channel, activity visibility
+must distinguish "registered" from "attached". A registered channel with no
+recent stdio/MCP heartbeat is not ready to receive work.
+
+Required Gateway-visible diagnostics:
+
+- last channel attach time
+- last MCP ping/call heartbeat time
+- last delivered message id/time
+- last reply id/time
+- generated launch command
+- generated workspace path
+
+Planned diagnostics:
+
+- parsed `.mcp.json` server names
+- exposed MCP tool names, when the host exposes them
+- declared skills/capabilities from agent-local profile metadata
+
+When diagnostics show `attach_required`, Gateway surfaces "waiting for attached
+session" and blocks send/test actions until a heartbeat moves the runtime back
+to a live reachable state.
+
 They do not use `Active`, `Working`, or live-listener language unless the agent
 has a separate live receive path.
 
@@ -165,6 +267,21 @@ Currently the aX UI shows the "waiting" chip only on user-authored DMs. Agent-au
 Owner: aX UI team. Spec'd here so the gateway side commits to emitting the same events for both cases — which it already does — and so the UI ticket has a clear acceptance check.
 
 > **TODO**: cross-link the ax-frontend ticket once filed. Until then, this section IS the ticket spec — copy it verbatim into the issue body.
+
+Gateway test sends are part of this parity contract. A message sent from
+`switchboard-<space>` to `@gemma4` must display the same message activity bubble
+as a human-authored `@gemma4` DM. If Gateway records drawer activity but the
+source message in aX does not show the bubble, the feature is not complete.
+
+Acceptance check:
+
+1. Send a custom Gateway drawer message to an Ollama agent.
+2. Confirm Gateway activity records `gateway_test_sent`, `message_claimed`,
+   one or more runtime status/activity events, and `reply_sent`.
+3. Confirm backend SSE emits `agent_processing` events for that exact
+   `message_id`.
+4. Confirm the aX message bubble on the source message shows pickup,
+   processing/streaming, and completion.
 
 ## Lifecycle event synthesis from sentinel stdout (impl 2026-04-26)
 

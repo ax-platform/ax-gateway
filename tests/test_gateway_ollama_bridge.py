@@ -1,7 +1,6 @@
 import importlib.util
 from pathlib import Path
 
-
 BRIDGE_PATH = Path(__file__).resolve().parents[1] / "examples" / "gateway_ollama" / "ollama_bridge.py"
 spec = importlib.util.spec_from_file_location("gateway_ollama_bridge", BRIDGE_PATH)
 ollama_bridge = importlib.util.module_from_spec(spec)
@@ -54,7 +53,11 @@ def test_shape_history_filters_to_agent_and_keeps_newest_context(monkeypatch):
     )
 
     assert fake.requested_space_id == "space-1"
-    assert shaped == [
+    assert shaped[0]["role"] == "system"
+    assert "@gemma4" in shaped[0]["content"]
+    assert "aX is a shared agent network" in shaped[0]["content"]
+    assert "not see every message in the space" in shaped[0]["content"]
+    assert shaped[1:] == [
         {"role": "user", "content": "My favorite color for this Gateway test is aurora-teal-7429."},
         {"role": "assistant", "content": "remembered aurora-teal-7429"},
         {

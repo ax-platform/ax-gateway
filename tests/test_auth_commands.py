@@ -294,3 +294,30 @@ def test_auth_whoami_reports_runtime_config(monkeypatch, tmp_path):
     payload = json.loads(result.output)
     assert payload["runtime_config"] == str(runtime_config)
     assert payload["resolved_agent"] == "codex"
+
+
+def test_auth_exchange_without_token_points_agents_to_gateway(monkeypatch, config_dir):
+    monkeypatch.delenv("AX_TOKEN", raising=False)
+    monkeypatch.delenv("AX_TOKEN_FILE", raising=False)
+
+    result = runner.invoke(app, ["auth", "exchange"])
+
+    assert result.exit_code == 1
+    assert "No token configured" in result.output
+    assert "ax gateway local" in result.output
+    assert "ax gateway login" in result.output
+    assert "auth token set" not in result.output
+    assert "AX_TOKEN" not in result.output
+
+
+def test_auth_token_show_without_token_points_agents_to_gateway(monkeypatch, config_dir):
+    monkeypatch.delenv("AX_TOKEN", raising=False)
+    monkeypatch.delenv("AX_TOKEN_FILE", raising=False)
+
+    result = runner.invoke(app, ["auth", "token", "show"])
+
+    assert result.exit_code == 1
+    assert "Gateway-managed agents" in result.output
+    assert "ax gateway local" in result.output
+    assert "ax gateway login" in result.output
+    assert "AX_TOKEN" not in result.output

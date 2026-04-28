@@ -62,7 +62,7 @@ def runtime_type_catalog() -> dict[str, dict[str, Any]]:
                 {
                     "name": "workdir",
                     "label": "Workdir",
-                    "required": False,
+                    "required": True,
                     "placeholder": str(repo_root),
                 },
             ],
@@ -178,6 +178,35 @@ def runtime_type_catalog() -> dict[str, dict[str, Any]]:
                 "tools": "Codex command events are recorded as tool calls; Claude tool-use blocks are surfaced as live tool activity.",
             },
         },
+        "claude_code_channel": {
+            "id": "claude_code_channel",
+            "label": "Claude Code Channel",
+            "description": "Attached Claude Code live channel. Gateway registers identity; ax-channel owns delivery.",
+            "kind": "attached_session",
+            "passive": False,
+            "requires": [],
+            "form_fields": [
+                {
+                    "name": "workdir",
+                    "label": "Workdir",
+                    "required": True,
+                    "placeholder": str(repo_root),
+                },
+            ],
+            "examples": [
+                {
+                    "label": "Claude Code channel",
+                    "runtime_type": "claude_code_channel",
+                    "workdir": str(repo_root),
+                    "note": "Run ax channel setup after Gateway registration, then launch Claude Code with ax-channel.",
+                },
+            ],
+            "signals": {
+                **_shared_signals(),
+                "activity": "ax-channel emits working on delivery and completed after the Claude Code reply tool runs.",
+                "tools": "Tool telemetry comes from the attached Claude Code session and channel integration.",
+            },
+        },
         "inbox": {
             "id": "inbox",
             "label": "Passive Inbox",
@@ -208,7 +237,7 @@ def runtime_type_definition(runtime_type: str) -> dict[str, Any]:
 
 def runtime_type_list() -> list[dict[str, Any]]:
     catalog = runtime_type_catalog()
-    ordered_ids = ["echo", "exec", "hermes_sentinel", "sentinel_cli", "inbox"]
+    ordered_ids = ["echo", "exec", "hermes_sentinel", "sentinel_cli", "claude_code_channel", "inbox"]
     return [catalog[runtime_id] for runtime_id in ordered_ids if runtime_id in catalog]
 
 
@@ -217,7 +246,7 @@ def agent_template_catalog() -> dict[str, dict[str, Any]]:
     skill_path = _gateway_setup_skill_path()
     runtime_signals = {
         key: runtime_type_definition(key)["signals"]
-        for key in ("echo", "exec", "hermes_sentinel", "sentinel_cli", "inbox")
+        for key in ("echo", "exec", "hermes_sentinel", "sentinel_cli", "claude_code_channel", "inbox")
     }
     return {
         "echo_test": {
@@ -261,7 +290,7 @@ def agent_template_catalog() -> dict[str, dict[str, Any]]:
             "telemetry_shape": "basic",
             "suggested_name": "ollama-bot",
             "operator_summary": "Good for a local model with pickup, liveness, and streaming activity.",
-            "recommended_test_message": "Reply with exactly: Gateway test OK. Then mention which local model answered.",
+            "recommended_test_message": "Reply naturally that the Gateway round trip worked, then mention which local model answered.",
             "what_you_need": [
                 "Run a local Ollama server on this machine.",
                 "Have at least one Ollama model pulled locally. Gateway can suggest an installed model when the server is reachable.",
@@ -341,38 +370,68 @@ def agent_template_catalog() -> dict[str, dict[str, Any]]:
                 "supports_command_override": False,
             },
         },
+        "service_account": {
+            "id": "service_account",
+            "label": "Service Account",
+            "description": "Named sender identity for Gateway notifications, reminders, alerts, and operator-authored probes.",
+            "availability": "ready",
+            "launchable": True,
+            "runtime_type": "inbox",
+            "asset_class": "service_account",
+            "intake_model": "notification_source",
+            "worker_model": "no_runtime",
+            "trigger_sources": ["manual_message", "automation", "scheduled_job"],
+            "return_paths": ["outbound_message"],
+            "telemetry_shape": "basic",
+            "suggested_name": "notifications",
+            "operator_summary": "Best fit for sending messages from a named automation or notification source.",
+            "recommended_test_message": "Service account delivery check.",
+            "what_you_need": [],
+            "setup_skill": "gateway-agent-setup",
+            "setup_skill_path": str(skill_path),
+            "defaults": {
+                "runtime_type": "inbox",
+                "workdir": str(repo_root),
+            },
+            "signals": {
+                **runtime_signals["inbox"],
+                "delivery": "Gateway sends messages as this named service identity.",
+                "liveness": "Service accounts are not live agents and are not expected to reply.",
+                "activity": "Gateway reports sent, queued, and automation activity for this identity.",
+                "tools": "No tool telemetry. Service accounts represent sources, not tool-running agents.",
+            },
+            "advanced": {
+                "adapter_label": "Gateway service account",
+                "supports_command_override": False,
+            },
+        },
         "claude_code_channel": {
             "id": "claude_code_channel",
             "label": "Claude Code Channel",
             "description": "Live Claude Code session bridged through aX channel delivery.",
-            "availability": "coming_soon",
-            "launchable": False,
-            "runtime_type": "exec",
+            "availability": "ready",
+            "launchable": True,
+            "runtime_type": "claude_code_channel",
             "asset_class": "interactive_agent",
             "intake_model": "live_listener",
             "trigger_sources": ["direct_message"],
             "return_paths": ["inline_reply"],
             "telemetry_shape": "basic",
             "suggested_name": "cc-channel",
-            "operator_summary": "Planned managed channel adapter. Pickup and liveness first, richer activity where possible.",
+            "operator_summary": "Gateway-registered Claude Code live channel. Gateway owns identity; ax-channel owns delivery.",
             "recommended_test_message": "Reply with exactly: Gateway test OK.",
             "what_you_need": [
-                "A dedicated managed-daemon adapter so Gateway can supervise a live ax channel session cleanly.",
+                "Claude Code with development channels enabled.",
+                "Run `ax channel setup <agent>` after Gateway registration to write .mcp.json.",
             ],
             "setup_skill": "gateway-agent-setup",
             "setup_skill_path": str(skill_path),
             "defaults": {
-                "runtime_type": "exec",
+                "runtime_type": "claude_code_channel",
             },
-            "signals": {
-                **runtime_signals["exec"],
-                "activity": (
-                    "Today the channel is usually sparse while working. Gateway should still provide reliable "
-                    "pickup and liveness even when the adapter emits little activity."
-                ),
-            },
+            "signals": runtime_signals["claude_code_channel"],
             "advanced": {
-                "adapter_label": "Managed daemon adapter",
+                "adapter_label": "Gateway-registered ax-channel",
                 "supports_command_override": False,
             },
         },
@@ -458,7 +517,16 @@ def agent_template_definition(template_id: str) -> dict[str, Any]:
 
 def agent_template_list(*, include_advanced: bool = False) -> list[dict[str, Any]]:
     catalog = agent_template_catalog()
-    ordered_ids = ["echo_test", "ollama", "hermes", "pass_through", "sentinel_cli", "claude_code_channel", "inbox"]
+    ordered_ids = [
+        "hermes",
+        "ollama",
+        "echo_test",
+        "service_account",
+        "pass_through",
+        "sentinel_cli",
+        "claude_code_channel",
+        "inbox",
+    ]
     templates = [catalog[template_id] for template_id in ordered_ids if template_id in catalog]
     if include_advanced:
         return templates

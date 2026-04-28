@@ -22,6 +22,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -100,6 +101,7 @@ _CONTROLLED_ASSET_CLASSES = {
     "scheduled_job",
     "alert_listener",
     "service_proxy",
+    "service_account",
 }
 _CONTROLLED_INTAKE_MODELS = {
     "live_listener",
@@ -110,6 +112,7 @@ _CONTROLLED_INTAKE_MODELS = {
     "scheduled_run",
     "event_triggered",
     "manual_only",
+    "notification_source",
 }
 _CONTROLLED_TRIGGER_SOURCES = {
     "direct_message",
@@ -119,6 +122,9 @@ _CONTROLLED_TRIGGER_SOURCES = {
     "scheduled_invocation",
     "external_alert",
     "manual_trigger",
+    "manual_message",
+    "automation",
+    "scheduled_job",
     "tool_call",
 }
 _CONTROLLED_RETURN_PATHS = {
@@ -128,10 +134,11 @@ _CONTROLLED_RETURN_PATHS = {
     "summary_post",
     "task_update",
     "event_log",
+    "outbound_message",
     "silent",
 }
 _CONTROLLED_TELEMETRY_SHAPES = {"rich", "basic", "heartbeat_only", "opaque"}
-_CONTROLLED_WORKER_MODELS = {"agent_check_in", "queue_drain"}
+_CONTROLLED_WORKER_MODELS = {"agent_check_in", "queue_drain", "no_runtime"}
 _CONTROLLED_ATTESTATION_STATES = {"verified", "drifted", "unknown", "blocked"}
 _CONTROLLED_APPROVAL_STATES = {"not_required", "pending", "approved", "rejected"}
 _CONTROLLED_IDENTITY_STATUSES = {
@@ -192,6 +199,7 @@ _WORKING_STATUSES = {
     "working",
 }
 _BLOCKED_STATUSES = {"rate_limited"}
+_NO_REPLY_STATUSES = {"no_reply", "declined", "skipped", "not_responding"}
 
 
 def _normalized_controlled(value: object, allowed: set[str], *, fallback: str) -> str:
@@ -316,6 +324,12 @@ def _template_operator_defaults(template_id: str | None, runtime_type: object) -
             "reply_mode": "background",
             "telemetry_level": "basic",
         },
+        "service_account": {
+            "placement": "mailbox",
+            "activation": "queue_worker",
+            "reply_mode": "silent",
+            "telemetry_level": "basic",
+        },
         "inbox": {
             "placement": "mailbox",
             "activation": "queue_worker",
@@ -347,6 +361,12 @@ def _template_operator_defaults(template_id: str | None, runtime_type: object) -
             "activation": "persistent",
             "reply_mode": "interactive",
             "telemetry_level": "rich",
+        },
+        "claude_code_channel": {
+            "placement": "attached",
+            "activation": "attach_only",
+            "reply_mode": "interactive",
+            "telemetry_level": "basic",
         },
         "inbox": {
             "placement": "mailbox",
@@ -454,6 +474,21 @@ def _template_asset_defaults(template_id: str | None, runtime_type: object) -> d
             "capabilities": ["poll_mailbox", "reply"],
             "constraints": ["requires-approval"],
         },
+        "service_account": {
+            "asset_class": "service_account",
+            "intake_model": "notification_source",
+            "trigger_sources": ["manual_message", "automation", "scheduled_job"],
+            "return_paths": ["outbound_message"],
+            "telemetry_shape": "basic",
+            "worker_model": "no_runtime",
+            "addressable": True,
+            "messageable": True,
+            "schedulable": True,
+            "externally_triggered": True,
+            "tags": ["service-account", "notifications", "automation-source"],
+            "capabilities": ["send_message", "label_source"],
+            "constraints": ["no-runtime-reply"],
+        },
         "inbox": {
             "asset_class": "background_worker",
             "intake_model": "queue_accept",
@@ -527,6 +562,8 @@ def _asset_type_label(*, asset_class: str, intake_model: str, worker_model: str 
         return "Scheduled Job"
     if asset_class == "alert_listener":
         return "Alert Listener"
+    if asset_class == "service_account":
+        return "Service Account"
     if asset_class == "service_proxy":
         return "Service / Tool Proxy"
     return "Connected Asset"
@@ -541,6 +578,7 @@ def _output_label(return_paths: list[str]) -> str:
         "summary_post": "Summary",
         "task_update": "Task",
         "event_log": "Event Log",
+        "outbound_message": "Message",
         "silent": "Silent",
     }.get(primary, "Reply")
 
@@ -888,7 +926,36 @@ def _derive_liveness(snapshot: dict[str, Any], *, raw_state: str, last_seen_age:
     return "offline", False
 
 
-def _derive_work_state(snapshot: dict[str, Any], *, liveness: str) -> str:
+def _pid_is_alive(pid: object) -> bool:
+    try:
+        pid_int = int(pid or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid_int <= 0:
+        return False
+    try:
+        os.kill(pid_int, 0)
+    except PermissionError:
+        # The local OS can deny signal checks even when the child is still
+        # visible to the user. Treat permission-denied as "alive enough" for
+        # a UI-managed attached session.
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _attached_session_log_is_ready(path: object) -> bool:
+    if not path:
+        return False
+    try:
+        content = Path(str(path)).read_text(errors="ignore")[-8000:]
+    except OSError:
+        return False
+    return "Listening for channel messages" in content or "ax-channel" in content
+
+
+def _derive_work_state(snapshot: dict[str, Any], *, liveness: str, profile: dict[str, str] | None = None) -> str:
     attestation_state = _normalized_optional_controlled(
         snapshot.get("attestation_state"), _CONTROLLED_ATTESTATION_STATES
     )
@@ -910,9 +977,11 @@ def _derive_work_state(snapshot: dict[str, Any], *, liveness: str) -> str:
         return "blocked"
     status = str(snapshot.get("current_status") or "").strip().lower()
     backlog_depth = int(snapshot.get("backlog_depth") or 0)
+    profile = profile or {}
+    queue_state_applies = profile.get("placement") == "mailbox" or profile.get("activation") == "queue_worker"
     if status in _WORKING_STATUSES:
         return "working"
-    if status == "queued" or backlog_depth > 0:
+    if queue_state_applies and (status == "queued" or backlog_depth > 0):
         return "queued"
     if status in _BLOCKED_STATUSES:
         return "blocked"
@@ -1108,10 +1177,10 @@ def _derive_confidence(
         return ("MEDIUM", "launch_available", "Gateway can launch this runtime on send. Cold start possible.")
     if liveness in {"offline", "stale"}:
         if reachability == "attach_required":
-            return ("LOW", "attach_required", "Reconnect the attached session before sending.")
+            return ("LOW", "attach_required", "Start Claude Code before sending.")
         return ("LOW", "unavailable", "Gateway does not currently have a healthy live path.")
     if liveness == "connected":
-        return ("HIGH", "live_now", "A live runtime is attached and ready to claim work.")
+        return ("HIGH", "live_now", "A live runtime is ready to claim work.")
     return ("MEDIUM", "unknown", "Gateway has partial health signals but no stronger confidence signal yet.")
 
 
@@ -1939,20 +2008,89 @@ def _find_approval_for_signature(registry: dict[str, Any], candidate_signature: 
         approval
         for approval in registry.get("approvals", [])
         if str(approval.get("candidate_signature") or "") == candidate_signature
+        and _approval_status(approval) != "archived"
     ]
     if not matches:
         return None
     return sorted(matches, key=lambda item: str(item.get("requested_at") or ""))[-1]
 
 
-def list_gateway_approvals(*, status: str | None = None) -> list[dict[str, Any]]:
+def _approval_is_stale(registry: dict[str, Any], approval: dict[str, Any]) -> bool:
+    if _approval_status(approval) != "pending":
+        return False
+
+    asset_id = str(approval.get("asset_id") or "").strip()
+    install_id = str(approval.get("install_id") or "").strip()
+    signature = str(approval.get("candidate_signature") or "").strip()
+    if not asset_id and not install_id:
+        return True
+
+    matching_entries = [
+        entry
+        for entry in registry.get("agents", [])
+        if (asset_id and str(entry.get("asset_id") or entry.get("agent_id") or "") == asset_id)
+        or (install_id and str(entry.get("install_id") or "") == install_id)
+    ]
+    if not matching_entries:
+        return True
+
+    gateway_id = _gateway_id_from_registry(registry)
+    for entry in matching_entries:
+        candidate = _binding_candidate_for_entry(entry, registry)
+        if signature and str(candidate.get("candidate_signature") or "") != signature:
+            continue
+        binding = find_binding(registry, install_id=str(entry.get("install_id") or ""))
+        if not binding:
+            return False
+        if str(binding.get("gateway_id") or "") != gateway_id:
+            return False
+        if str(binding.get("asset_id") or "") != str(candidate.get("asset_id") or ""):
+            return False
+        if str(binding.get("approved_state") or "approved").lower() == "rejected":
+            return False
+        if str(binding.get("path") or "") != str(candidate.get("path") or ""):
+            return False
+        if str(binding.get("launch_spec_hash") or "") != str(candidate.get("launch_spec_hash") or ""):
+            return False
+        return True
+
+    return True
+
+
+def archive_stale_gateway_approvals(*, decided_by: str | None = None) -> dict[str, Any]:
     registry = load_gateway_registry()
     _ensure_registry_lists(registry)
-    normalized_status = _normalized_optional_controlled(status, {"pending", "approved", "rejected"})
+    archived: list[dict[str, Any]] = []
+    for approval in registry.get("approvals", []):
+        if not _approval_is_stale(registry, approval):
+            continue
+        approval["status"] = "archived"
+        approval["decision"] = "archive"
+        approval["decided_by"] = decided_by or "local_gateway_operator"
+        approval["decided_at"] = _now_iso()
+        approval["archived_reason"] = "Approval no longer matches a current managed agent binding."
+        archived.append(dict(approval))
+    if archived:
+        save_gateway_registry(registry)
+    return {
+        "archived": archived,
+        "archived_count": len(archived),
+        "remaining_pending": len(
+            [item for item in registry.get("approvals", []) if _approval_status(item) == "pending"]
+        ),
+    }
+
+
+def list_gateway_approvals(*, status: str | None = None, include_archived: bool = False) -> list[dict[str, Any]]:
+    registry = load_gateway_registry()
+    _ensure_registry_lists(registry)
+    normalized_status = _normalized_optional_controlled(status, {"pending", "approved", "rejected", "archived"})
     approvals: list[dict[str, Any]] = []
     for approval in registry.get("approvals", []):
         row = dict(approval)
         row["status"] = _approval_status(row)
+        if row["status"] == "archived" and not include_archived and normalized_status != "archived":
+            continue
         if normalized_status and row["status"] != normalized_status:
             continue
         approvals.append(row)
@@ -2373,7 +2511,23 @@ def annotate_runtime_health(
     asset_descriptor = infer_asset_descriptor(enriched, operator_profile=profile)
     state = str(enriched.get("effective_state") or "stopped").lower()
     raw_state = state
+    attached_session_alive = False
     liveness, connected = _derive_liveness(enriched, raw_state=state, last_seen_age=last_seen_age)
+    if profile["activation"] == "attach_only":
+        local_pid_alive = str(enriched.get("desired_state") or "").lower() == "running" and _pid_is_alive(
+            enriched.get("attached_session_pid")
+        )
+        if local_pid_alive:
+            attached_session_alive = True
+            if liveness in {"stale", "offline"}:
+                liveness = "connected"
+                connected = True
+                state = "running"
+            enriched["local_attach_state"] = "connected"
+            enriched["local_attach_detail"] = "Gateway-managed Claude Code session is running locally."
+        elif str(enriched.get("local_attach_state") or "").lower() == "connected":
+            enriched["local_attach_state"] = "stopped"
+            enriched["local_attach_detail"] = "Claude Code is not running locally."
     if liveness == "stale" and raw_state == "running":
         state = "stale"
     elif liveness == "setup_error":
@@ -2381,7 +2535,7 @@ def annotate_runtime_health(
     elif liveness == "offline" and state not in {"stopped", "error"}:
         state = "stopped"
 
-    work_state = _derive_work_state(enriched, liveness=liveness)
+    work_state = _derive_work_state(enriched, liveness=liveness, profile=profile)
     mode = _derive_mode(profile)
     presence = _derive_presence(mode=mode, liveness=liveness, work_state=work_state)
     reply = _derive_reply(profile["reply_mode"])
@@ -2419,6 +2573,8 @@ def annotate_runtime_health(
     enriched["asset_descriptor"] = asset_descriptor
     enriched["effective_state"] = state
     enriched["connected"] = connected
+    if attached_session_alive:
+        enriched["last_seen_age_seconds"] = 0
     enriched["liveness"] = _normalized_controlled(liveness, _CONTROLLED_LIVENESS, fallback="offline")
     enriched["work_state"] = _normalized_controlled(work_state, _CONTROLLED_WORK_STATES, fallback="idle")
     enriched["mode"] = _normalized_controlled(mode, _CONTROLLED_MODES, fallback="ON-DEMAND")
@@ -2448,8 +2604,19 @@ def annotate_runtime_health(
     enriched["active_space_source"] = _normalized_optional_controlled(
         enriched.get("active_space_source"), _CONTROLLED_ACTIVE_SPACE_SOURCES
     )
-    enriched["queue_capable"] = profile["placement"] == "mailbox"
-    enriched["queue_depth"] = int(enriched.get("backlog_depth") or 0)
+    queue_capable = profile["placement"] == "mailbox"
+    enriched["queue_capable"] = queue_capable
+    enriched["queue_depth"] = int(enriched.get("backlog_depth") or 0) if queue_capable else 0
+    if not queue_capable and str(enriched.get("current_status") or "").strip().lower() == "queued":
+        enriched["current_status"] = "idle"
+        if str(enriched.get("current_activity") or "").strip().lower().startswith("queued in gateway"):
+            enriched["current_activity"] = None
+    if str(enriched.get("current_status") or "").strip().lower() == "attaching" and (
+        connected or (_age_seconds(enriched.get("last_started_at"), now=now) or 0) > 30
+    ):
+        enriched["current_status"] = None
+        if str(enriched.get("current_activity") or "").strip().lower().startswith("starting attached"):
+            enriched["current_activity"] = None
     enriched.setdefault("last_successful_doctor_at", None)
     enriched.setdefault("last_doctor_result", None)
     return enriched
@@ -2624,10 +2791,26 @@ def _default_registry() -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any], *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    tmp.chmod(mode)
-    tmp.replace(path)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            json.dump(payload, tmp, indent=2, sort_keys=True)
+            tmp.write("\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        tmp_path.chmod(mode)
+        tmp_path.replace(path)
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
     path.chmod(mode)
 
 
@@ -3510,14 +3693,16 @@ def _sentinel_model(entry: dict[str, Any], runtime_name: str) -> str | None:
 
 
 def _build_sentinel_claude_cmd(entry: dict[str, Any], session_id: str | None) -> list[str]:
+    add_dir = str(entry.get("add_dir") or entry.get("workdir") or os.getcwd())
     cmd = [
         "claude",
         "-p",
         "--output-format",
         "stream-json",
+        "--verbose",
         "--dangerously-skip-permissions",
         "--add-dir",
-        str(entry.get("add_dir") or "/home/ax-agent/shared/repos"),
+        add_dir,
     ]
     if session_id:
         cmd.extend(["--resume", session_id])
@@ -3630,6 +3815,7 @@ class ManagedAgentRuntime:
         self._reply_anchor_ids: set[str] = set()
         self._seen_ids: set[str] = set()
         self._completed_seen_ids: set[str] = set()
+        self._no_reply_seen_ids: set[str] = set()
         self._sentinel_sessions: dict[str, str] = {}
         self._state_lock = threading.Lock()
         self._stream_client = None
@@ -3716,6 +3902,21 @@ class ManagedAgentRuntime:
             seen = message_id in self._completed_seen_ids
             if seen:
                 self._completed_seen_ids.discard(message_id)
+            return seen
+
+    def _mark_no_reply_seen(self, message_id: str) -> None:
+        if not message_id:
+            return
+        with self._state_lock:
+            self._no_reply_seen_ids.add(message_id)
+
+    def _consume_no_reply_seen(self, message_id: str) -> bool:
+        if not message_id:
+            return False
+        with self._state_lock:
+            seen = message_id in self._no_reply_seen_ids
+            if seen:
+                self._no_reply_seen_ids.discard(message_id)
             return seen
 
     def _handle_placement_event(self, data: dict[str, Any]) -> None:
@@ -4023,11 +4224,19 @@ class ManagedAgentRuntime:
                 if not message_id:
                     continue
                 status = str(event.get("status") or "processing").strip()
+                normalized_status = status.lower()
                 activity = str(event.get("activity") or event.get("message") or "").strip() or None
                 tool_name = str(event.get("tool_name") or event.get("tool") or "").strip() or None
                 # Mirror the runtime worker's update + publish path so the row
                 # status pill and the aX UI bubble both reflect what the
                 # sentinel is currently doing.
+                if normalized_status in _NO_REPLY_STATUSES:
+                    self._record_no_reply_decision(
+                        message_id,
+                        reason=str(event.get("reason") or normalized_status),
+                        activity=activity,
+                    )
+                    continue
                 updates: dict[str, Any] = {"current_status": status, "last_seen_at": _now_iso()}
                 if activity is not None:
                     updates["current_activity"] = activity[:240]
@@ -4197,6 +4406,74 @@ class ManagedAgentRuntime:
         except Exception as exc:  # noqa: BLE001
             self._log(f"processing-status post failed: msg={message_id} status={status} err={exc}")
 
+    def _record_no_reply_decision(
+        self,
+        message_id: str,
+        *,
+        reason: str | None = None,
+        activity: str | None = None,
+    ) -> None:
+        """Record an explicit terminal no-reply decision without posting a chat reply."""
+        self._mark_no_reply_seen(message_id)
+        raw_reason_code = (reason or "no_reply").strip() or "no_reply"
+        canonical_reason = "no_reply"
+        message = (activity or "Chose not to respond").strip() or "Chose not to respond"
+        self._update_state(
+            current_status=None,
+            current_activity=None,
+            current_tool=None,
+            current_tool_call_id=None,
+            last_error=None,
+            last_work_completed_at=_now_iso(),
+        )
+        self._publish_processing_status(
+            message_id,
+            "no_reply",
+            activity=message,
+            reason=canonical_reason,
+            detail={"terminal": True, "reply_created": False, "reason_code": raw_reason_code},
+        )
+        record_gateway_activity(
+            "agent_skipped",
+            entry=self.entry,
+            message_id=message_id,
+            status="no_reply",
+            activity_message=message,
+            reason=canonical_reason,
+            reason_code=raw_reason_code,
+        )
+        if not self._send_client:
+            return
+        metadata = self._gateway_message_metadata(message_id)
+        gateway_meta = metadata.setdefault("gateway", {})
+        gateway_meta.update(
+            {
+                "signal_kind": "agent_skipped",
+                "reason": canonical_reason,
+                "reason_code": raw_reason_code,
+                "reply_created": False,
+            }
+        )
+        metadata.update(
+            {
+                "signal_only": True,
+                "reason": canonical_reason,
+                "reason_code": raw_reason_code,
+                "signal_kind": "agent_skipped",
+            }
+        )
+        try:
+            self._send_client.send_message(
+                self.space_id,
+                message,
+                agent_id=self.agent_id,
+                parent_id=message_id,
+                metadata=metadata,
+                message_type="agent_pause",
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"agent-pause audit row failed: msg={message_id} reason={raw_reason_code} err={exc}")
+
     @staticmethod
     def _processing_status_metadata(event: dict[str, Any]) -> dict[str, Any]:
         progress = event.get("progress") if isinstance(event.get("progress"), dict) else None
@@ -4285,11 +4562,19 @@ class ManagedAgentRuntime:
             return
         if kind == "status":
             status = str(event.get("status") or "processing").strip()
+            normalized_status = status.lower()
             if status == "completed":
                 self._mark_completed_seen(message_id)
             activity = str(event.get("message") or event.get("activity") or "").strip() or None
             tool_name = str(event.get("tool") or event.get("tool_name") or "").strip() or None
             metadata = self._processing_status_metadata(event)
+            if normalized_status in _NO_REPLY_STATUSES:
+                self._record_no_reply_decision(
+                    message_id,
+                    reason=metadata["reason"] or normalized_status,
+                    activity=activity,
+                )
+                return
             updates: dict[str, Any] = {}
             updates["current_status"] = status
             if activity is not None:
@@ -4723,7 +5008,8 @@ class ManagedAgentRuntime:
                     )
             try:
                 response_text = self._handle_prompt(prompt, message_id=message_id, data=data)
-                if response_text and self._send_client:
+                runtime_declined = self._consume_no_reply_seen(message_id)
+                if response_text and self._send_client and not runtime_declined:
                     result = self._send_client.send_message(
                         self.space_id,
                         response_text,
@@ -4749,7 +5035,7 @@ class ManagedAgentRuntime:
                 bridge_already_closed = (
                     runtime_type in {"exec", "command"} or _is_sentinel_cli_runtime(runtime_type)
                 ) and self._consume_completed_seen(message_id)
-                if message_id and not bridge_already_closed:
+                if message_id and not bridge_already_closed and not runtime_declined:
                     self._publish_processing_status(message_id, "completed")
                 self._bump("processed_count")
                 self._update_state(
@@ -5041,6 +5327,31 @@ class GatewayDaemon:
             return
         if hermes_status.get("resolved_path"):
             entry["hermes_repo_path"] = str(hermes_status["resolved_path"])
+        profile = infer_operator_profile(entry)
+        if profile["placement"] == "attached" and profile["activation"] == "attach_only":
+            if runtime is not None:
+                runtime.stop()
+                self._runtimes.pop(name, None)
+            last_seen_age = _age_seconds(entry.get("last_seen_at"))
+            attached_state = (
+                "running" if last_seen_age is not None and last_seen_age <= RUNTIME_STALE_AFTER_SECONDS else "stale"
+            )
+            entry.update(
+                {
+                    "effective_state": attached_state if desired_state == "running" else "stopped",
+                    "runtime_instance_id": None,
+                    "backlog_depth": 0,
+                    "current_tool": None,
+                    "current_tool_call_id": None,
+                }
+            )
+            if str(entry.get("last_error") or "") == f"Unsupported runtime_type: {entry.get('runtime_type')}":
+                entry["last_error"] = None
+            if str(entry.get("current_status") or "").strip().lower() in {"queued", "error"}:
+                entry["current_status"] = None
+                if str(entry.get("current_activity") or "").strip().lower().startswith("queued in gateway"):
+                    entry["current_activity"] = None
+            return
         allowed_to_run = (
             desired_state == "running"
             and attestation_state in {None, "verified"}

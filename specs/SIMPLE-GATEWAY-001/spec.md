@@ -109,8 +109,14 @@ Rules:
 - If the per-space service sender cannot be created or used, Gateway may fall
   back to a clearly marked self-authored diagnostic send rather than crashing.
   The response metadata must say that fallback happened.
+- The drawer's custom message composer must not silently fall back to the
+  target agent as sender. If the service sender is unavailable, disable or fail
+  the send with a clear message.
 - The message is sent to the target agent's current active space after
   placement reconciliation.
+- If the target runtime is stopped, disconnected, starting, rebinding, or
+  reconnecting, the drawer must not offer the send action until the current
+  registry/activity state says it is routable again.
 - The drawer should use a compact composer: visible sender, message text,
   immediate send, and later schedule/cron controls.
 
@@ -138,6 +144,21 @@ For pass-through/mailbox rows, use the more specific contract from
 - pending approval: `Awaiting approval`.
 
 Refreshing `/api/status` must not reset a queued message to `just now`.
+
+## Drawer refresh and local activity
+
+The local Gateway dashboard may poll local APIs instead of using SSE, but polling
+must feel stable:
+
+- opening a drawer may build the full drawer once;
+- subsequent `/api/agents/<name>` refreshes must update status, row state, and
+  activity in place instead of clearing/rebuilding the full drawer body;
+- users must be able to select and copy stable details such as workdir,
+  fingerprint chips, and command/path text while the drawer is open;
+- the activity section must retain existing cards while a refresh is in flight
+  and must only re-render when the activity signature actually changes;
+- row last-activity text must continue to summarize the latest meaningful
+  action while the drawer is open.
 
 ## System-agent visibility
 

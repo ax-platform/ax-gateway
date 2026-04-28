@@ -157,10 +157,46 @@ agents.
 | `attached_channel` | Existing external session attached through Gateway | Claude Code Channel |
 | `launch_on_send` | Gateway starts a bridge per message | current Ollama bridge |
 | `polling_mailbox` | Agent checks inbox when available | Codex pass-through |
+| `doorbell_watcher` | Approved pass-through binding runs a local background watcher that can notify or wake its host when inbox work arrives | Codex background terminal, long-running CLI task |
 
 The registry row is the identity. Connection paths are bindings on that row.
 If a live listener later adds a pass-through shell workspace, it should attach a
 new binding to the same `agent_id` instead of creating a second agent identity.
+
+`doorbell_watcher` is a refinement of `polling_mailbox`, not a live listener. It
+does not mean Gateway can push work directly into the agent runtime. It means
+the approved local origin has chosen to keep a small watcher process alive so
+mailbox changes can become local notifications, Codex automations, desktop
+alerts, task reminders, or resumable background-terminal events.
+
+Doorbell bindings must be recorded as local-origin bindings with the same
+fingerprint and approval requirements as normal pass-through. They may carry
+additional non-secret state:
+
+```json
+{
+  "connection_path": "doorbell_watcher",
+  "parent_path": "polling_mailbox",
+  "agent_id": "4b621389-b7c6-452e-807d-a428cda9a9ca",
+  "local_origin_id": "origin_codex_ax_cli",
+  "session_id": "local-session-id",
+  "notify_target": "codex",
+  "poll_interval_seconds": 5,
+  "mark_read_default": true,
+  "filters": {
+    "ignore_self_authored": true,
+    "target_agent_id": "4b621389-b7c6-452e-807d-a428cda9a9ca",
+    "watch_reply_threads": true
+  },
+  "last_watcher_seen_at": "2026-04-27T03:00:00Z"
+}
+```
+
+The registry must support concurrent doorbell watcher and interactive CLI use.
+Starting a watcher, sending a message, reconnecting, or refreshing a session may
+happen at the same time. Local registry/session writes therefore require
+atomic-write semantics and a single-writer guard; a watcher must never corrupt
+`registry.json` or duplicate JSON roots while another command is connecting.
 
 ## Default local flow
 
@@ -191,8 +227,23 @@ Gateway behavior:
 - read `.ax/config.toml` when present;
 - infer candidate identity from config, cwd, registry ref, or explicit name;
 - compute local fingerprint;
+- match the fingerprinted local origin before trusting an explicit name;
 - find existing registry row or create a pending one;
 - issue a local session only when the row and fingerprint are approved.
+
+Local pass-through workspaces should use environment-specific names by default,
+for example `mac_frontend`, `mac_backend`, `mac_mcp`, or
+`jacob_codex_ax_cli`. This avoids collisions with canonical server/listener
+agents such as `frontend_sentinel` while still making the row recognizable to
+the operator.
+
+If a fingerprinted origin is already registered, an explicit `--agent` value
+must not create a second identity from the same folder/executable/user tuple.
+Gateway should reconnect the existing row when the config or registry ref
+matches, or fail with an identity-mismatch message that tells the agent to use
+the repo-local config, reconnect by registry ref, or ask the operator to
+remove/rename the existing row. This keeps fingerprint/registry identity as the
+main entrance and makes `--agent` a hint, not a bypass.
 
 ### 3. Agent tools resolve identity automatically
 
@@ -281,6 +332,88 @@ name, stable id, origin folder, fingerprint summary, and current connection
 paths before approval. After approval, aliases should preserve lookup and audit
 history so old messages remain attributable to the same registry identity.
 
+For the current implementation, rejecting a first-time pending binding may remove
+the row and keep the rejected approval as audit evidence. That is acceptable for
+bad-name cleanup before demo/RC. The follow-up rename flow should preserve the
+same `agent_id` and local-origin binding when the thumbprint/fingerprint has not
+changed, rather than forcing a delete/recreate cycle.
+
+## Agent sessions
+
+An agent identity may have many runtime sessions. The durable registry row says
+"who is allowed to act"; the session says "which current runtime invocation is
+acting right now."
+
+Examples:
+
+- `mac_frontend` durable agent, `ChatGPT QA run` session;
+- `codex-pass-through` durable agent, `Codex terminal` session;
+- `orion` durable agent, `Claude Code channel` attached session.
+
+### Session start
+
+The runtime must obtain a session before acting:
+
+```bash
+ax gateway local session start --workdir "$PWD" --tag "ChatGPT QA run"
+```
+
+Gateway checks the durable binding, current fingerprint, approval state, and
+optional local challenge/authorization code. If approved, it returns a
+short-lived local session token and session metadata.
+
+The agent must remember that issued session token for the life of the current
+runtime invocation. It should not repeatedly create fresh sessions just because
+it forgot how to call Gateway. Repeated reconnects, no-token fallbacks, or
+identity mismatches are session-health signals and should be visible in the
+drawer.
+
+### Storage rules
+
+- `.ax/config.toml` may store non-secret hints: Gateway URL, agent handle,
+  workdir, preferred display name, and profile metadata.
+- `.ax/config.toml` must not store the active session token.
+- Repo-local files must not store a reusable session token.
+- Gateway stores active session records in its private local state.
+- The runtime may hold the token in memory, an inherited env var, or a
+  Gateway-owned temp/session store with restrictive permissions.
+- A new process in the same folder starts its own session and receives its own
+  `session_id`.
+
+### User-visible model
+
+The Gateway drawer should show active/recent sessions under the durable agent:
+
+```text
+mac_frontend
+  Sessions
+  - ChatGPT QA run · active · started 12m ago
+  - Codex terminal · idle · started 34m ago
+```
+
+Session tags are low-risk presentation metadata and can be set by the session.
+Display name, avatar, bio, and capabilities are agent profile metadata. Handle,
+fingerprint, runtime path, grants, and space changes remain approval-bound.
+
+### Claiming and contention
+
+Multiple sessions under one durable agent are allowed. Gateway must make
+contention explicit instead of pretending all invocations are one process:
+
+- one inbox item can have one active `claim_owner_session_id`;
+- a second session may see that work is claimed and either wait, decline, or
+  request takeover;
+- live/attached listener sessions should usually take priority over ephemeral
+  polling sessions;
+- stale sessions can be closed by Gateway or the user;
+- a session can be promoted/pinned into a long-running runtime after explicit
+  user approval.
+
+This is not intended to be a perfect defense against a compromised local
+machine. It is intended to prevent accidental impersonation, copied config
+drift, wrong-folder authorship, stale context, and agents silently falling back
+to user credentials.
+
 ## Security requirements
 
 - User bootstrap credentials may provision and approve; they must not author
@@ -289,10 +422,16 @@ history so old messages remain attributable to the same registry identity.
   registry row.
 - Copying `.ax/config.toml` to another folder must not grant access.
 - A changed trust signature creates a pending approval or blocks use.
+- A doorbell watcher must reuse an approved local session while valid and must
+  not rewrite registry approval state on every poll.
+- A doorbell watcher must filter self-authored messages and unrelated space
+  traffic before notifying or waking the host.
 - Gateway must show whether OS fingerprint verification is full, partial, or
   unavailable.
 - Gateway must never silently use another local identity when the current
   directory binding is invalid.
+- Gateway must never create a new local identity from an origin that is already
+  fingerprint-bound to another registry row just because `--agent` was passed.
 - One registered identity may have multiple bindings, but each binding has its
   own approval evidence and audit trail.
 - A connected listener and a local pass-through workspace that represent the
@@ -324,6 +463,10 @@ history so old messages remain attributable to the same registry identity.
   config write, and approval status.
 - Add automatic local identity resolution for `ax send`, `ax messages`,
   `ax tasks`, and `ax context` when running in a registered directory.
+- Add `ax gateway local inbox watch` and host notification hooks for the
+  pass-through doorbell pattern.
+- Add atomic local registry/session writes and tests for concurrent watcher,
+  send, and reconnect operations.
 - Add profile update commands and local API endpoints.
 - Add UI drawer section for self-profile and connection paths.
 - Add tests for copied config, changed workdir, and multi-binding same identity.

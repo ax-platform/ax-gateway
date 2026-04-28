@@ -1,3 +1,4 @@
+import io
 import json
 import socket
 import sys
@@ -59,6 +60,169 @@ class _FakeHttpResponse:
 class _FakeUserClient:
     def update_agent(self, *args, **kwargs):
         return {"ok": True}
+
+    def send_message(self, space_id, content, *, agent_id=None, parent_id=None, metadata=None, **kwargs):
+        return {
+            "id": "user-msg-1",
+            "space_id": space_id,
+            "content": content,
+            "agent_id": agent_id,
+            "parent_id": parent_id,
+            "metadata": metadata or {},
+        }
+
+
+def test_gateway_local_init_writes_tokenless_config(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_request_local_connect(**kwargs):
+        calls.update(kwargs)
+        return {"status": "approved", "session_token": "local-session", "agent": {"name": kwargs["agent_name"]}}
+
+    monkeypatch.setattr(gateway_cmd, "_request_local_connect", fake_request_local_connect)
+
+    result = runner.invoke(
+        app,
+        [
+            "gateway",
+            "local",
+            "init",
+            "mac_backend",
+            "--workdir",
+            str(tmp_path),
+            "--force",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    config_path = tmp_path / ".ax" / "config.toml"
+    assert config_path.exists()
+    config_text = config_path.read_text()
+    assert 'mode = "local"' in config_text
+    assert 'agent_name = "mac_backend"' in config_text
+    assert "token" not in config_text
+    assert "space_id" not in config_text
+    assert calls["agent_name"] == "mac_backend"
+    assert calls["space_id"] is None
+    assert json.loads(result.output)["token_stored"] is False
+
+
+def test_existing_agent_home_space_prefers_backend_default_space():
+    class FakeClient:
+        def list_agents(self):
+            return [
+                {"name": "other", "space_id": "space-other"},
+                {"name": "backend_sentinel", "default_space_id": "space-from-db", "space_id": "space-row"},
+            ]
+
+    assert gateway_cmd._existing_agent_home_space(FakeClient(), "backend_sentinel") == "space-row"
+
+
+def test_existing_agent_home_space_prefers_backend_current_space():
+    assert (
+        gateway_cmd._agent_space_id_from_backend_record(
+            {
+                "name": "backend_sentinel",
+                "current_space": {"id": "space-current", "name": "Current"},
+                "space_id": "space-row",
+                "default_space_id": "space-default",
+            }
+        )
+        == "space-current"
+    )
+
+
+def test_local_session_send_hydrates_space_from_database(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-session",
+            "username": "madtank",
+        }
+    )
+    entry = {
+        "name": "codex-pass-through",
+        "agent_id": "agent-codex",
+        "space_id": "space-stale",
+        "base_url": "https://paxai.app",
+        "token_file": str(tmp_path / "codex-token"),
+        "approval_state": "approved",
+        "attestation_state": "verified",
+    }
+    registry = {
+        "agents": [entry],
+    }
+    session_payload = gateway_core.issue_local_session(registry, entry)
+    registry = {
+        "agents": [entry],
+        "local_sessions": registry["local_sessions"],
+    }
+    (tmp_path / "codex-token").write_text("axp_a_test\n")
+    gateway_core.save_gateway_registry(registry)
+
+    class FakeUserClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def list_agents(self):
+            return {
+                "agents": [
+                    {
+                        "id": "agent-codex",
+                        "name": "codex-pass-through",
+                        "space_id": "space-from-db",
+                        "space_name": "DB Space",
+                    }
+                ]
+            }
+
+    sent = {}
+
+    class FakeManagedClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def send_message(
+            self,
+            space_id,
+            content,
+            *,
+            agent_id=None,
+            channel="main",
+            parent_id=None,
+            metadata=None,
+            message_type="text",
+        ):
+            sent.update(
+                {
+                    "space_id": space_id,
+                    "content": content,
+                    "agent_id": agent_id,
+                    "channel": channel,
+                    "parent_id": parent_id,
+                    "metadata": metadata,
+                    "message_type": message_type,
+                }
+            )
+            return {"message": {"id": "msg-1", "space_id": space_id}}
+
+    monkeypatch.setattr(gateway_cmd, "AxClient", FakeUserClient)
+    monkeypatch.setattr(gateway_cmd, "_load_managed_agent_client", lambda entry: FakeManagedClient())
+
+    payload = gateway_cmd._send_local_session_message(
+        session_token=session_payload["session_token"],
+        body={"content": "hello from repo", "space_id": None},
+    )
+
+    assert payload["message"]["message"]["space_id"] == "space-from-db"
+    assert sent["space_id"] == "space-from-db"
+    updated = gateway_core.load_gateway_registry()["agents"][0]
+    assert updated["space_id"] == "space-from-db"
+    assert updated["active_space_name"] == "DB Space"
 
     def send_message(self, space_id, content, *, agent_id=None, parent_id=None, metadata=None):
         return {
@@ -125,6 +289,7 @@ class _SharedRuntimeClient:
                 "agent_id": agent_id,
                 "parent_id": parent_id,
                 "metadata": kwargs.get("metadata"),
+                "message_type": kwargs.get("message_type", "text"),
             }
         )
         return {"message": {"id": "reply-1"}}
@@ -561,6 +726,128 @@ def test_gateway_agents_add_pass_through_requires_fingerprint_approval(monkeypat
     assert registry["approvals"][0]["candidate_binding"]["path"] == str(Path(__file__).resolve().parent.parent)
 
 
+def test_gateway_agents_add_claude_code_channel_registers_gateway_identity_running_by_default(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "madtank",
+        }
+    )
+    monkeypatch.setattr(gateway_cmd, "_load_gateway_user_client", lambda: _FakeUserClient())
+    monkeypatch.setattr(gateway_cmd, "_find_agent_in_space", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        gateway_cmd,
+        "_create_agent_in_space",
+        lambda *args, **kwargs: {"id": "agent-channel-1", "name": "orion"},
+    )
+    monkeypatch.setattr(gateway_cmd, "_polish_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gateway_cmd, "_mint_agent_pat", lambda *args, **kwargs: ("axp_a_agent.secret", "mgmt"))
+
+    result = runner.invoke(
+        app,
+        [
+            "gateway",
+            "agents",
+            "add",
+            "orion",
+            "--template",
+            "claude_code_channel",
+            "--workdir",
+            str(tmp_path / "orion"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["template_id"] == "claude_code_channel"
+    assert payload["runtime_type"] == "claude_code_channel"
+    assert payload["desired_state"] == "running"
+    assert payload["credential_source"] == "gateway"
+    assert payload["token_file"]
+    workspace_config = tmp_path / "orion" / ".ax" / "config.toml"
+    assert workspace_config.exists()
+    assert 'agent_name = "orion"' in workspace_config.read_text()
+    workspace_readme = tmp_path / "orion" / ".ax" / "README.md"
+    assert workspace_readme.exists()
+    assert "registered with the local aX Gateway" in workspace_readme.read_text()
+    workspace_context = tmp_path / "orion" / ".ax" / "AGENT_CONTEXT.md"
+    assert workspace_context.exists()
+    assert "multi-user, multi-agent network" in workspace_context.read_text()
+    assert "Do not ask the user for a PAT" in workspace_context.read_text()
+    assert (tmp_path / "orion" / "AGENTS.md").exists()
+    assert (tmp_path / "orion" / "CLAUDE.md").exists()
+
+
+def test_claude_code_channel_ignores_stale_mailbox_backlog_for_presence():
+    annotated = gateway_core.annotate_runtime_health(
+        {
+            "name": "orion",
+            "template_id": "claude_code_channel",
+            "runtime_type": "claude_code_channel",
+            "effective_state": "stopped",
+            "backlog_depth": 3,
+            "current_status": "queued",
+            "current_activity": "Queued in Gateway (3 pending)",
+        }
+    )
+
+    assert annotated["mode"] == "LIVE"
+    assert annotated["queue_capable"] is False
+    assert annotated["queue_depth"] == 0
+    assert annotated["presence"] == "OFFLINE"
+    assert annotated["work_state"] == "idle"
+    assert annotated["current_status"] == "idle"
+    assert annotated["current_activity"] is None
+
+
+def test_gateway_daemon_does_not_launch_claude_code_channel(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    started: list[str] = []
+
+    class FakeRuntime:
+        def __init__(self, entry, **kwargs):
+            self.entry = dict(entry)
+
+        def start(self):
+            started.append(str(self.entry.get("name")))
+
+        def stop(self, timeout=None):
+            return None
+
+    monkeypatch.setattr(gateway_core, "ManagedAgentRuntime", FakeRuntime)
+    daemon = gateway_core.GatewayDaemon(client_factory=lambda **kwargs: _SharedRuntimeClient({}))
+    entry = {
+        "name": "orion",
+        "agent_id": "agent-orion",
+        "space_id": "space-1",
+        "base_url": "https://paxai.app",
+        "template_id": "claude_code_channel",
+        "runtime_type": "claude_code_channel",
+        "desired_state": "running",
+        "attestation_state": "verified",
+        "approval_state": "approved",
+        "identity_status": "verified",
+        "environment_status": "environment_allowed",
+        "space_status": "active_allowed",
+        "last_error": "Unsupported runtime_type: claude_code_channel",
+        "current_status": "error",
+    }
+
+    daemon._reconcile_runtime(entry)
+
+    assert started == []
+    assert daemon._runtimes == {}
+    assert entry["last_error"] is None
+    assert entry["current_status"] is None
+    assert entry["backlog_depth"] == 0
+
+
 def test_gateway_local_connect_requests_approval_then_issues_session(monkeypatch, tmp_path):
     config_dir = tmp_path / "config"
     monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
@@ -801,9 +1088,97 @@ def test_gateway_local_connect_infers_home_space_from_agent_rows(monkeypatch, tm
     payload = gateway_cmd._connect_local_pass_through_agent(agent_name="codex-local", fingerprint=fingerprint)
 
     assert payload["status"] == "pending"
+    assert payload["approval"]["approval_id"] == payload["approval_id"]
+    assert payload["approval"]["risk"] == "medium"
     stored = gateway_core.load_gateway_registry()
     entry = gateway_core.find_agent_entry(stored, "codex-local")
     assert entry["space_id"] == "space-from-row"
+
+
+def test_gateway_local_send_pending_approval_guides_agent(monkeypatch):
+    monkeypatch.setattr(
+        gateway_cmd,
+        "_request_local_connect",
+        lambda **kwargs: {
+            "status": "pending",
+            "approval_id": "approval-456",
+            "agent": {
+                "name": "backend_sentinel",
+                "workdir": "/Users/jacob/claude_home/ax-backend-extract",
+                "active_space_name": "madtank's Workspace",
+            },
+            "approval": {"approval_kind": "new_binding", "risk": "medium"},
+        },
+    )
+
+    with pytest.raises(ValueError) as exc:
+        gateway_cmd._resolve_local_gateway_session(
+            session_token=None,
+            agent_name="backend_sentinel",
+            gateway_url="http://127.0.0.1:8765",
+            workdir="/Users/jacob/claude_home/ax-backend-extract",
+        )
+
+    message = str(exc.value)
+    assert "Gateway approval required for @backend_sentinel" in message
+    assert "open http://127.0.0.1:8765" in message.lower()
+    assert "approval_id=approval-456" in message
+    assert "workdir=/Users/jacob/claude_home/ax-backend-extract" in message
+    assert "Do not fall back to a direct PAT" in message
+
+
+def test_gateway_local_connect_infers_agent_from_workdir_config(monkeypatch, tmp_path):
+    ax_dir = tmp_path / ".ax"
+    ax_dir.mkdir()
+    (ax_dir / "config.toml").write_text(
+        "[gateway]\n"
+        'mode = "local"\n'
+        'url = "http://127.0.0.1:8765"\n'
+        "[agent]\n"
+        'agent_name = "frontend_sentinel"\n'
+    )
+
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": "pending", "approval_id": "approval-frontend"}
+
+    def fake_post(url, *, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResponse()
+
+    monkeypatch.setattr(gateway_cmd.httpx, "post", fake_post)
+    monkeypatch.setattr(
+        gateway_cmd,
+        "_local_process_fingerprint",
+        lambda **kwargs: {"agent_name": kwargs["agent_name"], "cwd": kwargs["cwd"]},
+    )
+
+    payload = gateway_cmd._request_local_connect(workdir=str(tmp_path))
+
+    assert payload["approval_id"] == "approval-frontend"
+    assert captured["json"]["agent_name"] == "frontend_sentinel"
+    assert captured["json"]["fingerprint"] == {"agent_name": "frontend_sentinel", "cwd": str(tmp_path)}
+
+
+def test_gateway_local_connect_rejects_agent_workdir_mismatch(tmp_path):
+    ax_dir = tmp_path / ".ax"
+    ax_dir.mkdir()
+    (ax_dir / "config.toml").write_text(
+        "[gateway]\n" 'mode = "local"\n' "[agent]\n" 'agent_name = "frontend_sentinel"\n'
+    )
+
+    with pytest.raises(ValueError) as exc:
+        gateway_cmd._request_local_connect(agent_name="codex", workdir=str(tmp_path))
+
+    assert "Gateway identity mismatch" in str(exc.value)
+    assert "configured for @frontend_sentinel" in str(exc.value)
+    assert "requested @codex" in str(exc.value)
 
 
 def test_gateway_local_connect_rejects_registry_ref_for_managed_runtime(monkeypatch, tmp_path):
@@ -831,6 +1206,36 @@ def test_gateway_local_connect_rejects_registry_ref_for_managed_runtime(monkeypa
 
     with pytest.raises(ValueError, match="registry_ref_not_attachable"):
         gateway_cmd._connect_local_pass_through_agent(registry_ref="#1", fingerprint=fingerprint)
+
+
+def test_gateway_local_connect_rejects_second_identity_from_same_origin(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    fingerprint = {
+        "agent_name": "mac_frontend",
+        "pid": 999999,
+        "parent_pid": 1,
+        "cwd": str(tmp_path),
+        "exe_path": sys.executable,
+        "user": "madtank",
+    }
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "mac_frontend",
+            "agent_id": "agent-mac-frontend-1",
+            "space_id": "space-1",
+            "template_id": "pass_through",
+            "runtime_type": "inbox",
+            "local_fingerprint": dict(fingerprint),
+        }
+    ]
+    gateway_core.save_gateway_registry(registry)
+    changed_name = dict(fingerprint)
+    changed_name["agent_name"] = "frontend_sentinel"
+
+    with pytest.raises(ValueError, match="already registered as @mac_frontend"):
+        gateway_cmd._connect_local_pass_through_agent(agent_name="frontend_sentinel", fingerprint=changed_name)
 
 
 def test_find_agent_entry_by_ref_matches_row_and_stable_prefix():
@@ -1217,6 +1622,159 @@ def test_gateway_approvals_deny_marks_request_rejected(monkeypatch, tmp_path):
     assert approval["status"] == "rejected"
 
 
+def test_gateway_ui_agent_reject_marks_pending_approval_rejected(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "reject-ui-bot",
+            "agent_id": "agent-reject-ui-1",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "template_id": "pass_through",
+            "runtime_type": "inbox",
+            "desired_state": "running",
+            "requires_approval": True,
+            "install_id": "install-reject-ui-1",
+            "workdir": str(tmp_path / "repo-a"),
+        }
+    ]
+    daemon = gateway_core.GatewayDaemon(client_factory=lambda **kwargs: _SharedRuntimeClient({}))
+    reconciled = daemon._reconcile_registry(registry, {"token": "axp_u_test.token", "base_url": "https://paxai.app"})
+    gateway_core.save_gateway_registry(reconciled)
+    attestation = reconciled["agents"][0]
+
+    handler_cls = gateway_cmd._build_gateway_ui_handler(activity_limit=5, refresh_ms=1000)
+
+    class FakeHandler(handler_cls):
+        def __init__(self):
+            self.path = "/api/agents/reject-ui-bot/reject"
+            self.headers = {"Content-Length": "2"}
+            self.rfile = __import__("io").BytesIO(b"{}")
+            self.status = None
+            self.body = b""
+
+        def send_response(self, status):
+            self.status = status
+
+        def send_header(self, *args):
+            return None
+
+        def end_headers(self):
+            return None
+
+        @property
+        def wfile(self):
+            class Writer:
+                def __init__(self, outer):
+                    self.outer = outer
+
+                def write(self, data):
+                    self.outer.body += data
+
+            return Writer(self)
+
+    handler = FakeHandler()
+    handler.do_POST()
+
+    assert handler.status == 201
+    payload = json.loads(handler.body.decode("utf-8"))
+    assert payload["approval"]["status"] == "rejected"
+    assert payload["removed"] is True
+    assert payload["removed_agent"]["name"] == "reject-ui-bot"
+    stored = gateway_core.load_gateway_registry()
+    assert gateway_core.find_agent_entry(stored, "reject-ui-bot") is None
+    approval = next(item for item in stored["approvals"] if item["approval_id"] == attestation["approval_id"])
+    assert approval["status"] == "rejected"
+
+
+def test_gateway_agents_remove_archives_orphaned_pending_approval(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "pending-remove-bot",
+            "agent_id": "agent-pending-remove-1",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "template_id": "pass_through",
+            "runtime_type": "inbox",
+            "desired_state": "running",
+            "requires_approval": True,
+            "install_id": "install-pending-remove-1",
+            "workdir": str(tmp_path / "repo-a"),
+        }
+    ]
+    daemon = gateway_core.GatewayDaemon(client_factory=lambda **kwargs: _SharedRuntimeClient({}))
+    reconciled = daemon._reconcile_registry(registry, {"token": "axp_u_test.token", "base_url": "https://paxai.app"})
+    gateway_core.save_gateway_registry(reconciled)
+    approval_id = reconciled["agents"][0]["approval_id"]
+
+    removed = gateway_cmd._remove_managed_agent("pending-remove-bot")
+
+    assert removed["name"] == "pending-remove-bot"
+    stored = gateway_core.load_gateway_registry()
+    assert gateway_core.find_agent_entry(stored, "pending-remove-bot") is None
+    approval = next(item for item in stored["approvals"] if item["approval_id"] == approval_id)
+    assert approval["status"] == "archived"
+    assert approval["decision"] == "archive"
+
+
+def test_gateway_approvals_cleanup_archives_stale_pending(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    registry = gateway_core.load_gateway_registry()
+    entry = {
+        "name": "stable-bot",
+        "agent_id": "agent-stable-1",
+        "runtime_type": "exec",
+        "exec_command": "python3 worker.py",
+        "workdir": str(tmp_path / "repo"),
+        "created_via": "cli",
+    }
+    gateway_core.ensure_local_asset_binding(registry, entry, created_via="cli", auto_approve=True)
+    registry["agents"] = [entry]
+    candidate = gateway_core._binding_candidate_for_entry(entry, registry)
+    asset_id = gateway_core._asset_id_for_entry(entry)
+    registry["approvals"] = [
+        {
+            "approval_id": "approval-superseded",
+            "asset_id": asset_id,
+            "install_id": entry["install_id"],
+            "candidate_signature": candidate["candidate_signature"],
+            "candidate_binding": candidate,
+            "approval_kind": "new_binding",
+            "status": "pending",
+            "requested_at": "2026-04-27T12:00:00+00:00",
+        },
+        {
+            "approval_id": "approval-orphaned",
+            "asset_id": "missing-agent",
+            "install_id": "missing-install",
+            "candidate_signature": "sha256:missing",
+            "approval_kind": "binding_drift",
+            "status": "pending",
+            "requested_at": "2026-04-27T12:01:00+00:00",
+        },
+    ]
+    gateway_core.save_gateway_registry(registry)
+
+    result = runner.invoke(app, ["gateway", "approvals", "cleanup", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["archived_count"] == 2
+    assert payload["remaining_pending"] == 0
+    stored = gateway_core.load_gateway_registry()
+    assert {item["status"] for item in stored["approvals"]} == {"archived"}
+    visible = gateway_core.list_gateway_approvals(status="pending")
+    assert visible == []
+    archived = gateway_core.list_gateway_approvals(status="archived")
+    assert len(archived) == 2
+
+
 def test_sanitize_exec_env_strips_ax_credentials(monkeypatch):
     monkeypatch.setenv("AX_TOKEN", "secret-token")
     monkeypatch.setenv("AX_USER_TOKEN", "secret-user")
@@ -1429,11 +1987,79 @@ print("done", flush=True)
     assert shared.tool_calls[0]["tool_name"] == "sleep"
     assert shared.tool_calls[0]["message_id"] == "msg-1"
     assert snapshot["current_activity"] in {None, "warming up"}
-    recent = gateway_core.load_recent_gateway_activity()
+    recent = gateway_core.load_recent_gateway_activity(limit=20)
     events = [row["event"] for row in recent]
     assert "message_claimed" in events
     assert "tool_started" in events
     assert "tool_finished" in events
+
+
+def test_managed_exec_runtime_can_decline_without_chat_reply(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    token_file = tmp_path / "token"
+    token_file.write_text("axp_a_agent.secret")
+    script = tmp_path / "decline_bridge.py"
+    script.write_text(
+        """
+import json
+
+prefix = "AX_GATEWAY_EVENT "
+print(prefix + json.dumps({"kind": "status", "status": "no_reply", "reason": "ack", "message": "Chose not to respond"}), flush=True)
+""".strip()
+    )
+    payload = {
+        "id": "msg-1",
+        "content": "@exec-bot thanks, no action needed",
+        "author": {"id": "user-1", "name": "madtank", "type": "user"},
+        "mentions": ["exec-bot"],
+    }
+    shared = _SharedRuntimeClient(payload)
+
+    runtime = gateway_core.ManagedAgentRuntime(
+        {
+            "name": "exec-bot",
+            "agent_id": "agent-1",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "exec",
+            "exec_command": f"{sys.executable} {script}",
+            "token_file": str(token_file),
+        },
+        client_factory=lambda **kwargs: shared,
+    )
+
+    runtime.start()
+    deadline = time.time() + 3.0
+    while time.time() < deadline and not any(row["status"] == "no_reply" for row in shared.processing):
+        time.sleep(0.05)
+    runtime.stop()
+
+    assert [row["status"] for row in shared.processing] == ["started", "processing", "no_reply"]
+    no_reply = shared.processing[-1]
+    assert no_reply["activity"] == "Chose not to respond"
+    assert no_reply["reason"] == "no_reply"
+    assert no_reply["detail"] == {"terminal": True, "reply_created": False, "reason_code": "ack"}
+    assert len(shared.sent) == 1
+    pause_row = shared.sent[0]
+    assert pause_row["space_id"] == "space-1"
+    assert pause_row["content"] == "Chose not to respond"
+    assert pause_row["agent_id"] == "agent-1"
+    assert pause_row["parent_id"] == "msg-1"
+    assert pause_row["message_type"] == "agent_pause"
+    assert pause_row["metadata"]["control_plane"] == "gateway"
+    assert pause_row["metadata"]["signal_only"] is True
+    assert pause_row["metadata"]["reason"] == "no_reply"
+    assert pause_row["metadata"]["reason_code"] == "ack"
+    assert pause_row["metadata"]["signal_kind"] == "agent_skipped"
+    assert pause_row["metadata"]["gateway"]["parent_message_id"] == "msg-1"
+    assert pause_row["metadata"]["gateway"]["signal_kind"] == "agent_skipped"
+    assert pause_row["metadata"]["gateway"]["reason"] == "no_reply"
+    assert pause_row["metadata"]["gateway"]["reason_code"] == "ack"
+    assert pause_row["metadata"]["gateway"]["reply_created"] is False
+    recent = gateway_core.load_recent_gateway_activity()
+    assert "agent_skipped" in [row["event"] for row in recent]
 
 
 def test_managed_exec_runtime_marks_message_timed_out(tmp_path, monkeypatch):
@@ -1598,6 +2224,46 @@ def test_managed_sentinel_cli_runtime_resumes_agent_session(tmp_path, monkeypatc
     ]
     assert shared.tool_calls[0]["tool_name"] == "shell"
     assert shared.tool_calls[0]["message_id"] == "msg-1"
+
+
+def test_sentinel_claude_command_is_current_claude_code_compatible(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+
+    cmd = gateway_core._build_sentinel_claude_cmd(
+        {
+            "name": "claude_max",
+            "runtime_type": "sentinel_cli",
+            "sentinel_runtime": "claude",
+            "workdir": str(workdir),
+        },
+        session_id="session-1",
+    )
+
+    assert cmd[:5] == ["claude", "-p", "--output-format", "stream-json", "--verbose"]
+    assert "--dangerously-skip-permissions" in cmd
+    assert cmd[cmd.index("--add-dir") + 1] == str(workdir)
+    assert "/home/ax-agent/shared/repos" not in cmd
+    assert cmd[cmd.index("--resume") + 1] == "session-1"
+
+
+def test_sentinel_claude_command_prefers_explicit_add_dir(tmp_path):
+    workdir = tmp_path / "repo"
+    add_dir = tmp_path / "shared"
+    workdir.mkdir()
+    add_dir.mkdir()
+
+    cmd = gateway_core._build_sentinel_claude_cmd(
+        {
+            "name": "claude_max",
+            "workdir": str(workdir),
+            "add_dir": str(add_dir),
+        },
+        session_id=None,
+    )
+
+    assert cmd[cmd.index("--add-dir") + 1] == str(add_dir)
 
 
 def test_managed_hermes_sentinel_runtime_supervises_long_running_listener(tmp_path, monkeypatch):
@@ -1794,6 +2460,33 @@ def test_annotate_runtime_health_marks_stale_after_missed_heartbeat():
     assert snapshot["effective_state"] == "stale"
     assert snapshot["connected"] is False
     assert snapshot["last_seen_age_seconds"] >= gateway_core.RUNTIME_STALE_AFTER_SECONDS
+
+
+def test_annotate_runtime_health_treats_managed_attached_session_as_connected(monkeypatch, tmp_path):
+    log_path = tmp_path / "attached-session.log"
+    log_path.write_text("Listening for channel messages from: server:ax-channel\n")
+    monkeypatch.setattr(gateway_core, "_pid_is_alive", lambda pid: int(pid) == 1234)
+
+    snapshot = gateway_core.annotate_runtime_health(
+        {
+            "template_id": "claude_code_channel",
+            "placement": "attached",
+            "activation": "attach_only",
+            "reply_mode": "interactive",
+            "desired_state": "running",
+            "effective_state": "running",
+            "last_seen_at": (
+                datetime.now(timezone.utc) - timedelta(seconds=gateway_core.RUNTIME_STALE_AFTER_SECONDS + 20)
+            ).isoformat(),
+            "attached_session_pid": 1234,
+            "attached_session_log_path": str(log_path),
+        }
+    )
+
+    assert snapshot["connected"] is True
+    assert snapshot["presence"] == "IDLE"
+    assert snapshot["reachability"] == "live_now"
+    assert snapshot["local_attach_state"] == "connected"
 
 
 def test_annotate_runtime_health_derives_identity_space_snapshot(monkeypatch, tmp_path):
@@ -2285,9 +2978,17 @@ def test_gateway_templates_command_json():
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     ids = [item["id"] for item in payload["templates"]]
-    assert ids[:6] == ["echo_test", "ollama", "hermes", "pass_through", "sentinel_cli", "claude_code_channel"]
+    assert ids[:7] == [
+        "hermes",
+        "ollama",
+        "echo_test",
+        "service_account",
+        "pass_through",
+        "sentinel_cli",
+        "claude_code_channel",
+    ]
     assert "inbox" not in ids
-    assert payload["count"] == 6
+    assert payload["count"] == 7
     ollama = next(item for item in payload["templates"] if item["id"] == "ollama")
     assert ollama["runtime_type"] == "exec"
     assert ollama["launchable"] is True
@@ -2299,6 +3000,14 @@ def test_gateway_templates_command_json():
     assert pass_through["runtime_type"] == "inbox"
     assert pass_through["requires_approval"] is True
     assert pass_through["intake_model"] == "polling_mailbox"
+    service_account = next(item for item in payload["templates"] if item["id"] == "service_account")
+    assert service_account["runtime_type"] == "inbox"
+    assert service_account["asset_type_label"] == "Service Account"
+    assert service_account["output_label"] == "Message"
+    channel = next(item for item in payload["templates"] if item["id"] == "claude_code_channel")
+    assert channel["runtime_type"] == "claude_code_channel"
+    assert channel["intake_model"] == "live_listener"
+    assert channel["launchable"] is True
 
 
 def test_gateway_template_echo_alias_resolves():
@@ -2334,7 +3043,7 @@ def test_gateway_runtime_types_command_json():
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     ids = [item["id"] for item in payload["runtime_types"]]
-    assert ids == ["echo", "exec", "hermes_sentinel", "sentinel_cli", "inbox"]
+    assert ids == ["echo", "exec", "hermes_sentinel", "sentinel_cli", "claude_code_channel", "inbox"]
     exec_type = next(item for item in payload["runtime_types"] if item["id"] == "exec")
     assert exec_type["signals"]["activity"]
     assert exec_type["examples"]
@@ -2342,6 +3051,8 @@ def test_gateway_runtime_types_command_json():
     assert hermes_type["kind"] == "supervised_process"
     sentinel_type = next(item for item in payload["runtime_types"] if item["id"] == "sentinel_cli")
     assert sentinel_type["signals"]["tools"]
+    channel_type = next(item for item in payload["runtime_types"] if item["id"] == "claude_code_channel")
+    assert channel_type["kind"] == "attached_session"
 
 
 def test_gateway_ui_handler_serves_status_and_agent_detail(monkeypatch, tmp_path):
@@ -2408,15 +3119,19 @@ def test_gateway_ui_handler_serves_status_and_agent_detail(monkeypatch, tmp_path
             runtime_types = client.get("/api/runtime-types")
             assert runtime_types.status_code == 200
             runtime_payload = runtime_types.json()
-            assert runtime_payload["count"] == 5
+            assert runtime_payload["count"] == 6
             assert runtime_payload["runtime_types"][1]["id"] == "exec"
 
             templates = client.get("/api/templates")
             assert templates.status_code == 200
             template_payload = templates.json()
-            assert template_payload["templates"][0]["id"] == "echo_test"
-            assert template_payload["templates"][5]["launchable"] is False
-            assert template_payload["count"] == 6
+            assert template_payload["templates"][0]["id"] == "hermes"
+            assert template_payload["templates"][3]["id"] == "service_account"
+            channel_template = next(
+                item for item in template_payload["templates"] if item["id"] == "claude_code_channel"
+            )
+            assert channel_template["runtime_type"] == "claude_code_channel"
+            assert template_payload["count"] == 7
 
             detail = client.get("/api/agents/echo-bot")
             assert detail.status_code == 200
@@ -2427,6 +3142,8 @@ def test_gateway_ui_handler_serves_status_and_agent_detail(monkeypatch, tmp_path
             page = client.get("/")
             assert page.status_code == 200
             assert "Bring your agents" in page.text
+            assert "Start" in page.text
+            assert "/attach" in page.text
             assert "window.__GATEWAY_DEMO_REFRESH_MS__ = 1500" in page.text
             assert 'href="/operator"' in page.text
 
@@ -2516,7 +3233,7 @@ def test_gateway_ui_handler_supports_agent_mutations(monkeypatch, tmp_path):
             assert tested_payload["sender_agent"].startswith("switchboard-")
             assert (
                 tested_payload["content"]
-                == "@ui-bot Reply with exactly: Gateway test OK. Then mention which local model answered."
+                == "@ui-bot Reply naturally that the Gateway round trip worked, then mention which local model answered."
             )
 
             doctored = client.post("/api/agents/ui-bot/doctor", json={})
@@ -2650,6 +3367,85 @@ def test_gateway_move_updates_routing_for_test_messages(monkeypatch, tmp_path):
     assert sent_messages[-1]["content"].startswith("@mover ")
 
 
+def test_gateway_move_waits_for_listener_ready_after_runtime_start(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "codex",
+        }
+    )
+
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "mover",
+            "agent_id": "agent-mover",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "echo",
+            "template_id": "echo_test",
+            "desired_state": "running",
+            "effective_state": "running",
+            "transport": "gateway",
+            "credential_source": "gateway",
+            "allowed_spaces": [
+                {"space_id": "space-1", "name": "Old Space", "is_default": True},
+                {"space_id": "space-2", "name": "New Space", "is_default": False},
+            ],
+        }
+    ]
+    gateway_core.ensure_gateway_identity_binding(
+        registry, registry["agents"][0], session=gateway_core.load_gateway_session()
+    )
+    gateway_core.save_gateway_registry(registry)
+
+    class FakePlacementClient:
+        def __init__(self):
+            self.space_id = "space-1"
+
+        def set_agent_placement(self, identifier, *, space_id, pinned=False):
+            self.space_id = space_id
+            return {"agent_id": identifier, "space_id": space_id, "allowed_spaces": ["space-1", "space-2"]}
+
+        def get_agent_placement(self, identifier):
+            return {
+                "agent_id": identifier,
+                "name": "mover",
+                "space_id": self.space_id,
+                "allowed_spaces": ["space-1", "space-2"],
+                "_record": {
+                    "id": identifier,
+                    "name": "mover",
+                    "space_id": self.space_id,
+                    "allowed_spaces": ["space-1", "space-2"],
+                },
+            }
+
+        def get_agent(self, identifier):
+            return {"agent": {"id": identifier, "name": "mover", "space_id": self.space_id}}
+
+    calls = {"recent": 0}
+
+    def fake_recent(*, limit, agent_name):
+        calls["recent"] += 1
+        event = "runtime_started" if calls["recent"] == 1 else "listener_connected"
+        return [{"ts": "9999-01-01T00:00:00+00:00", "event": event, "agent_name": agent_name}]
+
+    monkeypatch.setattr(gateway_cmd, "_load_gateway_user_client", lambda: FakePlacementClient())
+    monkeypatch.setattr(gateway_cmd, "active_gateway_pid", lambda: 1234)
+    monkeypatch.setattr(gateway_cmd, "load_recent_gateway_activity", fake_recent)
+    monkeypatch.setattr(gateway_cmd.time, "sleep", lambda _: None)
+
+    moved = gateway_cmd._move_managed_agent_space("mover", "space-2")
+
+    assert moved["space_id"] == "space-2"
+    assert calls["recent"] == 2
+
+
 def test_gateway_test_falls_back_when_space_sender_cannot_be_created(monkeypatch, tmp_path):
     config_dir = tmp_path / "config"
     monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
@@ -2719,6 +3515,65 @@ def test_gateway_test_falls_back_when_space_sender_cannot_be_created(monkeypatch
     gateway_meta = sent_messages[-1]["metadata"]["gateway"]
     assert gateway_meta["test_sender_fallback"] == "self"
     assert "400" in gateway_meta["test_sender_error"]
+
+
+def test_gateway_test_can_disallow_self_fallback_for_custom_composer(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "codex",
+        }
+    )
+
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "mover",
+            "agent_id": "agent-mover",
+            "space_id": "space-2",
+            "active_space_id": "space-2",
+            "default_space_id": "space-2",
+            "base_url": "https://paxai.app",
+            "runtime_type": "echo",
+            "template_id": "echo_test",
+            "desired_state": "running",
+            "effective_state": "running",
+            "transport": "gateway",
+            "credential_source": "gateway",
+        }
+    ]
+    gateway_core.ensure_gateway_identity_binding(
+        registry,
+        registry["agents"][0],
+        session=gateway_core.load_gateway_session(),
+    )
+    gateway_core.save_gateway_registry(registry)
+    sent_messages = []
+
+    class RecordingManagedClient:
+        def send_message(self, *args, **kwargs):
+            sent_messages.append({"args": args, "kwargs": kwargs})
+            return {"message": {"id": "unexpected"}}
+
+    monkeypatch.setattr(gateway_cmd, "_load_managed_agent_client", lambda entry: RecordingManagedClient())
+    monkeypatch.setattr(
+        gateway_cmd,
+        "_register_managed_agent",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("Backend rejected test sender PAT mint: 400")),
+    )
+
+    with pytest.raises(ValueError, match="Gateway service sender is not ready"):
+        gateway_cmd._send_gateway_test_to_managed_agent(
+            "mover",
+            content="custom operator message",
+            allow_self_fallback=False,
+        )
+
+    assert sent_messages == []
 
 
 def test_gateway_agents_update_changes_template_and_workdir(monkeypatch, tmp_path):
@@ -3226,6 +4081,337 @@ def test_gateway_agents_test_can_send_as_user(monkeypatch, tmp_path):
     assert payload["message"]["metadata"]["gateway"]["test_author"] == "user"
 
 
+def test_gateway_agents_test_blocks_attached_session_until_connected(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "codex",
+        }
+    )
+    registry = gateway_core.load_gateway_registry()
+    token_file = tmp_path / "roger.token"
+    token_file.write_text("axp_a_agent.secret\n")
+    registry["agents"] = [
+        {
+            "name": "roger",
+            "agent_id": "agent-roger",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "claude_code_channel",
+            "template_id": "claude_code_channel",
+            "workdir": str(tmp_path / "roger"),
+            "desired_state": "running",
+            "effective_state": "stale",
+            "transport": "gateway",
+            "credential_source": "gateway",
+            "token_file": str(token_file),
+            "attestation_state": "verified",
+            "approval_state": "approved",
+            "identity_status": "verified",
+            "environment_status": "environment_allowed",
+            "space_status": "active_allowed",
+        }
+    ]
+    gateway_core.ensure_gateway_identity_binding(
+        registry, registry["agents"][0], session=gateway_core.load_gateway_session()
+    )
+    gateway_core.save_gateway_registry(registry)
+
+    result = runner.invoke(app, ["gateway", "agents", "test", "roger", "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "is stopped and cannot receive messages yet" in result.output
+    assert "test_gateway_agents_test_block0/roger" in result.output.replace("\n", "")
+
+
+def test_gateway_agents_attach_writes_channel_config_and_command(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    workdir = tmp_path / "roger"
+    token_file = tmp_path / "roger.token"
+    token_file.write_text("axp_a_agent.secret\n")
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "roger",
+            "agent_id": "agent-roger",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "claude_code_channel",
+            "template_id": "claude_code_channel",
+            "workdir": str(workdir),
+            "desired_state": "stopped",
+            "effective_state": "stale",
+            "transport": "gateway",
+            "credential_source": "gateway",
+            "token_file": str(token_file),
+            "attestation_state": "verified",
+            "approval_state": "approved",
+            "identity_status": "verified",
+            "environment_status": "environment_allowed",
+            "space_status": "active_allowed",
+        }
+    ]
+    gateway_core.save_gateway_registry(registry)
+
+    def fake_write_channel_setup(*, agent_name, workdir, **kwargs):
+        return {
+            "agent": agent_name,
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "mode": "local",
+            "mcp_path": str(workdir / ".mcp.json"),
+            "env_path": str(tmp_path / "roger.env"),
+            "cli_config_path": str(workdir / ".ax" / "config.toml"),
+            "cli_readme_path": str(workdir / ".ax" / "README.md"),
+            "server_name": "ax-channel",
+            "launch_command": f"claude --strict-mcp-config --mcp-config {workdir / '.mcp.json'} "
+            "--dangerously-load-development-channels server:ax-channel",
+        }
+
+    from ax_cli.commands import channel as channel_mod
+
+    monkeypatch.setattr(channel_mod, "write_channel_setup", fake_write_channel_setup)
+
+    result = runner.invoke(app, ["gateway", "agents", "attach", "roger", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["agent"] == "roger"
+    assert payload["attach_command"].startswith(f"cd {workdir}")
+    assert "--dangerously-load-development-channels server:ax-channel" in payload["attach_command"]
+    updated = gateway_core.find_agent_entry(gateway_core.load_gateway_registry(), "roger")
+    assert updated["desired_state"] == "running"
+
+
+def test_gateway_ui_attach_launches_attached_session(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "codex",
+        }
+    )
+    workdir = tmp_path / "roger"
+    token_file = tmp_path / "roger.token"
+    token_file.write_text("axp_a_agent.secret\n")
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "roger",
+            "agent_id": "agent-roger",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "claude_code_channel",
+            "template_id": "claude_code_channel",
+            "workdir": str(workdir),
+            "desired_state": "stopped",
+            "effective_state": "stale",
+            "transport": "gateway",
+            "credential_source": "gateway",
+            "token_file": str(token_file),
+            "attestation_state": "verified",
+            "approval_state": "approved",
+            "identity_status": "verified",
+            "environment_status": "environment_allowed",
+            "space_status": "active_allowed",
+        }
+    ]
+    gateway_core.save_gateway_registry(registry)
+
+    def fake_write_channel_setup(*, agent_name, workdir, **kwargs):
+        return {
+            "agent": agent_name,
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "mode": "local",
+            "mcp_path": str(workdir / ".mcp.json"),
+            "env_path": str(tmp_path / "roger.env"),
+            "cli_config_path": str(workdir / ".ax" / "config.toml"),
+            "cli_readme_path": str(workdir / ".ax" / "README.md"),
+            "server_name": "ax-channel",
+            "launch_command": f"claude --strict-mcp-config --mcp-config {workdir / '.mcp.json'} "
+            "--dangerously-load-development-channels server:ax-channel",
+        }
+
+    from ax_cli.commands import channel as channel_mod
+
+    monkeypatch.setattr(channel_mod, "write_channel_setup", fake_write_channel_setup)
+    monkeypatch.setattr(
+        gateway_cmd,
+        "_launch_attached_agent_session",
+        lambda payload: {**payload, "launched": True, "launch_mode": "test", "message": "attached"},
+    )
+
+    handler = gateway_cmd._build_gateway_ui_handler(activity_limit=5, refresh_ms=1500)
+    with closing(socket.socket()) as probe:
+        probe.bind(("127.0.0.1", 0))
+        host, port = probe.getsockname()
+    server = gateway_cmd._GatewayUiServer((host, port), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with httpx.Client(base_url=f"http://{host}:{port}", timeout=2.0) as client:
+            attached = client.post("/api/agents/roger/attach", json={})
+            assert attached.status_code == 202
+            payload = attached.json()
+            assert payload["agent"] == "roger"
+            assert payload["launched"] is True
+            assert payload["launch_mode"] == "test"
+            updated = gateway_core.find_agent_entry(gateway_core.load_gateway_registry(), "roger")
+            assert updated["desired_state"] == "running"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+
+def test_launch_attached_agent_session_uses_script_log_without_stdout_duplication(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    workdir = tmp_path / "roger"
+    workdir.mkdir()
+    mcp_path = workdir / ".mcp.json"
+    mcp_path.write_text("{}")
+    gateway_core.save_gateway_registry(
+        {
+            "agents": [
+                {
+                    "name": "roger",
+                    "runtime_type": "claude_code_channel",
+                    "template_id": "claude_code_channel",
+                    "workdir": str(workdir),
+                    "desired_state": "stopped",
+                }
+            ]
+        }
+    )
+
+    which_calls = []
+
+    def fake_which(name):
+        which_calls.append(name)
+        if name == "claude":
+            return "/usr/local/bin/claude"
+        if name == "script":
+            return "/usr/bin/script"
+        return None
+
+    popen_calls = []
+
+    class FakeProcess:
+        pid = 9876
+
+        def __init__(self):
+            self.stdin = io.BytesIO()
+
+        def poll(self):
+            return None
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append({"command": command, **kwargs})
+        return FakeProcess()
+
+    monkeypatch.setattr(gateway_cmd.shutil, "which", fake_which)
+    monkeypatch.setattr(gateway_cmd.sys, "platform", "darwin")
+    monkeypatch.setattr(gateway_cmd.subprocess, "Popen", fake_popen)
+
+    payload = gateway_cmd._launch_attached_agent_session(
+        {
+            "agent": "roger",
+            "mcp_path": str(mcp_path),
+            "server_name": "ax-channel",
+            "launch_command": "claude --strict-mcp-config --mcp-config .mcp.json",
+        }
+    )
+
+    assert payload["launched"] is True
+    assert which_calls == ["claude", "script"]
+    assert popen_calls[0]["command"][:3] == [
+        "/usr/bin/script",
+        "-q",
+        str(config_dir / "gateway" / "agents" / "roger" / "attached-session.log"),
+    ]
+    assert popen_calls[0]["stdout"] == gateway_cmd.subprocess.DEVNULL
+    assert popen_calls[0]["stdin"] == gateway_cmd.subprocess.PIPE
+    entry = gateway_core.find_agent_entry(gateway_core.load_gateway_registry(), "roger")
+    assert entry["attached_session_pid"] == 9876
+    assert entry["effective_state"] == "starting"
+
+
+def test_gateway_ui_create_starts_claude_code_channel(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    gateway_core.save_gateway_session(
+        {
+            "token": "axp_u_test.token",
+            "base_url": "https://paxai.app",
+            "space_id": "space-1",
+            "username": "codex",
+        }
+    )
+    workdir = tmp_path / "sam"
+    launched = {}
+
+    def fake_register(**kwargs):
+        return {
+            "name": kwargs["name"],
+            "agent_id": "agent-sam",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "claude_code_channel",
+            "template_id": "claude_code_channel",
+            "workdir": str(workdir),
+            "desired_state": "running",
+            "effective_state": "stopped",
+            "transport": "gateway",
+            "credential_source": "gateway",
+        }
+
+    def fake_prepare(name):
+        return {
+            "agent": name,
+            "mcp_path": str(workdir / ".mcp.json"),
+            "launch_command": "claude --strict-mcp-config --mcp-config .mcp.json",
+        }
+
+    def fake_launch(payload):
+        launched.update(payload)
+        return {**payload, "launched": True, "launch_mode": "test"}
+
+    monkeypatch.setattr(gateway_cmd, "_register_managed_agent", fake_register)
+    monkeypatch.setattr(gateway_cmd, "_prepare_attached_agent_payload", fake_prepare)
+    monkeypatch.setattr(gateway_cmd, "_launch_attached_agent_session", fake_launch)
+
+    handler = gateway_cmd._build_gateway_ui_handler(activity_limit=5, refresh_ms=1500)
+    with closing(socket.socket()) as probe:
+        probe.bind(("127.0.0.1", 0))
+        host, port = probe.getsockname()
+    server = gateway_cmd._GatewayUiServer((host, port), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with httpx.Client(base_url=f"http://{host}:{port}", timeout=2.0) as client:
+            response = client.post(
+                "/api/agents",
+                json={"name": "sam", "template_id": "claude_code_channel", "workdir": str(workdir)},
+            )
+            assert response.status_code == 201
+            assert response.json()["desired_state"] == "running"
+            assert launched["agent"] == "sam"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+
 def test_gateway_local_send_auto_connects_with_agent(monkeypatch):
     calls = []
 
@@ -3250,7 +4436,18 @@ def test_gateway_local_send_auto_connects_with_agent(monkeypatch):
             )
         raise AssertionError(f"unexpected POST {url}")
 
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append({"method": "GET", "url": url, "params": params, "headers": headers, "timeout": timeout})
+        return _FakeHttpResponse(
+            {
+                "agent": "codex-pass-through",
+                "messages": [{"id": "reply-1", "content": "@codex-pass-through received"}],
+                "marked_read_count": 1,
+            }
+        )
+
     monkeypatch.setattr(gateway_cmd.httpx, "post", fake_post)
+    monkeypatch.setattr(gateway_cmd.httpx, "get", fake_get)
 
     result = runner.invoke(
         app,
@@ -3273,9 +4470,59 @@ def test_gateway_local_send_auto_connects_with_agent(monkeypatch):
     assert calls[1]["url"].endswith("/local/send")
     assert calls[1]["headers"] == {"X-Gateway-Session": "axgw_s_test.session"}
     assert calls[1]["json"]["content"] == "@night-owl please QA PR 114"
+    assert calls[2]["method"] == "GET"
+    assert calls[2]["url"].endswith("/local/inbox")
+    assert calls[2]["params"]["mark_read"] == "true"
     payload = json.loads(result.output)
     assert payload["agent"] == "codex-pass-through"
     assert payload["connect"]["agent"] == "codex-pass-through"
+    assert payload["inbox"]["messages"][0]["content"] == "@codex-pass-through received"
+
+
+def test_gateway_local_send_can_skip_inbox_check(monkeypatch):
+    calls = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append({"method": "POST", "url": url, "json": json, "headers": headers, "timeout": timeout})
+        if url.endswith("/local/connect"):
+            return _FakeHttpResponse(
+                {
+                    "status": "approved",
+                    "agent": {"name": "codex-pass-through"},
+                    "registry_ref": "#4",
+                    "session_token": "axgw_s_test.session",
+                }
+            )
+        if url.endswith("/local/send"):
+            return _FakeHttpResponse({"agent": "codex-pass-through", "message": {"id": "msg-1"}}, status_code=201)
+        raise AssertionError(f"unexpected POST {url}")
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(gateway_cmd.httpx, "post", fake_post)
+    monkeypatch.setattr(gateway_cmd.httpx, "get", fake_get)
+
+    result = runner.invoke(
+        app,
+        [
+            "gateway",
+            "local",
+            "send",
+            "--agent",
+            "codex-pass-through",
+            "--url",
+            "http://127.0.0.1:8765",
+            "--no-inbox",
+            "@night-owl please QA PR 114",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [call["method"] for call in calls] == ["POST", "POST"]
+    payload = json.loads(result.output)
+    assert "inbox" not in payload
 
 
 def test_gateway_local_inbox_auto_connects_and_marks_read(monkeypatch):
@@ -3321,6 +4568,56 @@ def test_gateway_local_inbox_auto_connects_and_marks_read(monkeypatch):
     payload = json.loads(result.output)
     assert payload["agent"] == "codex-pass-through"
     assert payload["connect"]["registry_ref"] == "#4"
+
+
+def test_gateway_local_inbox_waits_until_message_arrives(monkeypatch):
+    calls = []
+    get_count = {"value": 0}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append({"method": "POST", "url": url, "json": json, "headers": headers, "timeout": timeout})
+        return _FakeHttpResponse(
+            {
+                "status": "approved",
+                "agent": {"name": "codex-pass-through"},
+                "registry_ref": "#4",
+                "session_token": "axgw_s_test.session",
+            }
+        )
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        get_count["value"] += 1
+        calls.append({"method": "GET", "url": url, "params": params, "headers": headers, "timeout": timeout})
+        messages = [] if get_count["value"] == 1 else [{"id": "msg-1", "content": "ready"}]
+        return _FakeHttpResponse({"agent": "codex-pass-through", "messages": messages, "count": len(messages)})
+
+    monkeypatch.setattr(gateway_cmd.httpx, "post", fake_post)
+    monkeypatch.setattr(gateway_cmd.httpx, "get", fake_get)
+    monkeypatch.setattr(gateway_cmd.time, "sleep", lambda _seconds: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "gateway",
+            "local",
+            "inbox",
+            "--agent",
+            "codex-pass-through",
+            "--url",
+            "http://127.0.0.1:8765",
+            "--wait",
+            "3",
+            "--poll-interval",
+            "0.5",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert get_count["value"] == 2
+    payload = json.loads(result.output)
+    assert payload["messages"] == [{"id": "msg-1", "content": "ready"}]
+    assert payload["waited_seconds"] == 3
 
 
 def test_gateway_agents_doctor_persists_structured_result(monkeypatch, tmp_path):

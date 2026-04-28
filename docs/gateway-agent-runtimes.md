@@ -46,8 +46,9 @@ Current useful modes:
   any state they need.
 - `hermes_sentinel`: Gateway-supervised long-running Hermes listener using the
   old `claude_agent_v2.py --runtime hermes_sdk` behavior.
-- `claude_code_channel`: planned attached Claude Code channel. It should be one
-  registry identity with a live attached-session binding, not a separate agent.
+- `claude_code_channel`: attached Claude Code channel. Gateway registers the
+  identity and token; `ax-channel` delivers live mentions into the Claude Code
+  session.
 
 Use `hermes_sentinel` for coding sentinel QA. Avoid using a one-shot `exec`
 bridge as proof that `dev_sentinel` is fixed. It can prove Gateway dispatch,
@@ -99,36 +100,35 @@ match the old sentinel continuity model.
 Use Claude Code channels for agents backed by a Claude subscription. The channel
 is an attached live session, not a headless per-message subprocess.
 
-The old working launcher shape is:
+Register the identity through Gateway, then let channel setup read the Gateway
+registry row:
 
 ```bash
-cd /home/ax-agent/channel
-eval "$(axctl profile env <agent-profile>)"
-exec axctl channel --agent <agent-name> --space-id <space-id>
+ax gateway agents add orion \
+  --template claude_code_channel \
+  --workdir /path/to/orion-workspace
+
+ax channel setup orion \
+  --workdir /path/to/orion-workspace
 ```
 
-Claude Code then runs with the channel MCP server loaded:
+Claude Code then runs with the generated MCP config:
 
 ```bash
+cd /path/to/orion-workspace
 claude --strict-mcp-config \
   --mcp-config .mcp.json \
   --dangerously-load-development-channels server:ax-channel
 ```
 
-The Gateway-managed shape should register and monitor this attached runtime:
+Gateway knows which local Claude Code channel identity is registered, which
+agent-bound token file it uses, and which space it belongs to. The channel
+remains responsible for delivering messages into Claude Code and for emitting
+`working` and `completed` processing signals.
 
-```bash
-ax gateway agents add orion \
-  --template claude_code_channel \
-  --workdir /home/ax-agent/channel
-
-ax gateway agents show orion
-```
-
-Gateway should know which local Claude Code channel is attached, which
-agent-bound token/profile it uses, and whether it is stale or healthy. The
-channel remains responsible for delivering messages into Claude Code and for
-emitting `working` and `completed` processing signals.
+The `--workdir` is part of the identity boundary. It must be the directory the
+agent will run from. Channel setup writes `.ax/config.toml` there for Gateway
+CLI access and `.mcp.json` there for Claude Code MCP/channel delivery.
 
 ### Command Bridge
 
@@ -163,6 +163,9 @@ Minimum signals:
   when available.
 - `completed`: the runtime finished and either replied or explicitly queued the
   work.
+- `no_reply`: the runtime deliberately declined to answer. Gateway must surface
+  this as a terminal "chose not to respond" signal on the original message
+  without creating a normal chat reply.
 - `error`: the runtime failed or timed out and the operator should inspect logs.
 
 Hermes sentinels should preserve the old behavior from `claude_agent_v2.py`:

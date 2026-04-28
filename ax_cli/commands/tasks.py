@@ -234,6 +234,9 @@ def create(
         )
     except httpx.HTTPStatusError as e:
         handle_error(e)
+    except RuntimeError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
     task = data.get("task", data)
     if isinstance(task, dict):
         task = _annotate_task_space(task, space_info)

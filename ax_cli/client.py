@@ -327,12 +327,25 @@ class AxClient:
             headers["X-Agent-Id"] = agent_id
         return headers
 
+    def _is_html_response(self, r: httpx.Response) -> bool:
+        content_type = r.headers.get("content-type", "")
+        return "text/html" in content_type or r.text.lstrip().startswith("<!")
+
     def _parse_json(self, r: httpx.Response) -> dict | list[dict]:
         """Parse JSON response, raising a clear error if HTML is returned."""
-        content_type = r.headers.get("content-type", "")
-        if "text/html" in content_type or r.text.lstrip().startswith("<!"):
+        if self._is_html_response(r):
+            path = r.request.url.path if r.request else str(r.url)
+            method = r.request.method.upper() if r.request else ""
+            if method == "POST" and path == "/api/v1/agents":
+                detail = (
+                    "Agent create returned HTML instead of JSON. The hosted API must return a JSON 4xx "
+                    "with an explicit reason such as quota, rate limit, name conflict, or feature flag; "
+                    "the CLI cannot safely infer the denied create reason from the SPA shell."
+                )
+            else:
+                detail = f"Expected JSON but got HTML from {r.url} — the frontend may be catching this API route"
             raise httpx.HTTPStatusError(
-                f"Expected JSON but got HTML from {r.url} — the frontend may be catching this API route",
+                detail,
                 request=r.request,
                 response=r,
             )
@@ -345,8 +358,7 @@ class AxClient:
         while older/local mounts expose /agents/manage/*. Fall back only for
         route-shape misses; authz/authn failures must remain visible.
         """
-        content_type = r.headers.get("content-type", "")
-        if "text/html" in content_type or r.text.lstrip().startswith("<!"):
+        if self._is_html_response(r):
             return True
         return r.status_code in {404, 405}
 
@@ -665,9 +677,99 @@ class AxClient:
             body["description"] = description
         if assignee_id:
             body["assignee_id"] = assignee_id
-        r = self._http.post("/api/v1/tasks", json=body, headers=self._with_agent(agent_id))
+        headers = self._with_agent(agent_id)
+        r = self._http.post("/api/v1/tasks", json=body, headers=headers)
+        if r.status_code < 400 and self._is_html_response(r):
+            # Hosted frontend deployments may catch POST /api/v1/tasks and
+            # return the app shell. Fall back to the frontend write endpoint,
+            # but only when the current session is already scoped to the
+            # requested space: /api/tasks ignores explicit space_id.
+            self._verify_session_space_for_task_fallback(space_id)
+            legacy_r = self._http.post(
+                "/api/tasks",
+                json={
+                    "title": title,
+                    "description": description,
+                    "priority": priority,
+                    "requirements": {},
+                },
+                headers=headers,
+            )
+            legacy_r.raise_for_status()
+            data = self._parse_json(legacy_r)
+            self._verify_created_task_space(data, space_id)
+            return data
+
         r.raise_for_status()
-        return self._parse_json(r)
+        data = self._parse_json(r)
+        self._verify_created_task_space(data, space_id)
+        return data
+
+    def _task_from_create_response(self, data: object) -> dict:
+        if isinstance(data, dict) and isinstance(data.get("task"), dict):
+            return data["task"]
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    def _whoami_space_id(self, data: dict) -> str | None:
+        for key in ("resolved_space_id", "space_id"):
+            value = data.get(key)
+            if value:
+                return str(value)
+
+        bound_agent = data.get("bound_agent")
+        if isinstance(bound_agent, dict):
+            for key in ("default_space_id", "space_id"):
+                value = bound_agent.get(key)
+                if value:
+                    return str(value)
+        return None
+
+    def _verify_session_space_for_task_fallback(self, expected_space_id: str) -> None:
+        try:
+            data = self.whoami()
+        except httpx.HTTPStatusError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                "Hosted task create route returned HTML and axctl could not verify the active session space "
+                "before using the fallback write route."
+            ) from exc
+
+        actual_space_id = self._whoami_space_id(data)
+        if actual_space_id != str(expected_space_id):
+            raise RuntimeError(
+                "Hosted task create route returned HTML, and the fallback write route uses the credential's "
+                "active space instead of --space-id. Refusing to create the task because the active session "
+                f"space is {actual_space_id or 'unknown'}, not requested space {expected_space_id}."
+            )
+
+    def _verify_created_task_space(self, data: object, expected_space_id: str) -> None:
+        task = self._task_from_create_response(data)
+        actual_space_id = task.get("space_id")
+        if actual_space_id:
+            if str(actual_space_id) != str(expected_space_id):
+                raise RuntimeError(
+                    f"Task was created in the wrong space: expected {expected_space_id}, got {actual_space_id}."
+                )
+            return
+
+        task_id = task.get("id")
+        if not task_id:
+            raise RuntimeError(
+                "Task create response did not include an id or space_id, so axctl cannot prove the target space."
+            )
+
+        listed = self.list_tasks(limit=100, space_id=expected_space_id)
+        tasks = listed if isinstance(listed, list) else listed.get("tasks", [])
+        if any(str(item.get("id")) == str(task_id) for item in tasks if isinstance(item, dict)):
+            return
+
+        raise RuntimeError(
+            "Task create response did not include space_id and the new task was not visible in "
+            f"requested space {expected_space_id}. It may have landed in the credential's default space."
+        )
 
     def list_tasks(
         self,

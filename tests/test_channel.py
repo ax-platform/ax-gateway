@@ -6,6 +6,7 @@ import os
 
 from typer.testing import CliRunner
 
+from ax_cli import gateway as gateway_core
 from ax_cli.commands import channel as channel_mod
 from ax_cli.commands.channel import ChannelBridge, MentionEvent, _load_channel_env
 from ax_cli.commands.listen import _is_self_authored, _remember_reply_anchor, _should_respond
@@ -749,16 +750,80 @@ def test_channel_setup_writes_per_agent_mcp_and_env(tmp_path):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["mcp_path"] == str(workdir / ".mcp.json")
+    assert payload["cli_config_path"] == str(workdir / ".ax" / "config.toml")
+    assert payload["cli_readme_path"] == str(workdir / ".ax" / "README.md")
+    assert payload["agent_context_path"] == str(workdir / ".ax" / "AGENT_CONTEXT.md")
     mcp = json.loads((workdir / ".mcp.json").read_text())
     server = mcp["mcpServers"]["ax-channel"]
     assert server["command"] == "axctl"
-    assert server["args"] == ["channel", "--agent", "orion", "--space-id", "space-123"]
+    assert server["args"] == ["channel"]
     assert server["env"]["AX_CHANNEL_ENV_FILE"] == str(env_path)
     env_text = env_path.read_text()
     assert 'AX_TOKEN_FILE="' in env_text
     assert 'AX_BASE_URL="https://paxai.app"' in env_text
     assert 'AX_AGENT_NAME="orion"' in env_text
     assert 'AX_SPACE_ID="space-123"' in env_text
+    cli_config = (workdir / ".ax" / "config.toml").read_text()
+    assert 'url = "http://127.0.0.1:8765"' in cli_config
+    assert 'agent_name = "orion"' in cli_config
+    assert f'workdir = "{workdir.resolve()}"' in cli_config
+    cli_readme = (workdir / ".ax" / "README.md").read_text()
+    assert "aX Claude Code Channel" in cli_readme
+    assert "ax gateway local connect --workdir ." in cli_readme
+    agent_context = (workdir / ".ax" / "AGENT_CONTEXT.md").read_text()
+    assert "multi-user, multi-agent network" in agent_context
+    assert "Do not ask the user for a PAT" in agent_context
+    assert (workdir / "AGENTS.md").exists()
+    assert (workdir / "CLAUDE.md").exists()
+
+
+def test_channel_setup_uses_gateway_registry_defaults(monkeypatch, tmp_path):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    token_file = tmp_path / "gateway" / "orion.token"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text("axp_a_agent.secret\n")
+    gateway_core.save_gateway_registry(
+        {
+            "agents": [
+                {
+                    "name": "orion",
+                    "agent_id": "agent-orion",
+                    "space_id": "space-123",
+                    "base_url": "https://paxai.app",
+                    "token_file": str(token_file),
+                }
+            ]
+        }
+    )
+    workdir = tmp_path / "work"
+    env_path = tmp_path / "orion.env"
+
+    result = runner.invoke(
+        channel_mod.app,
+        [
+            "setup",
+            "orion",
+            "--workdir",
+            str(workdir),
+            "--env-path",
+            str(env_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["agent"] == "orion"
+    assert payload["space_id"] == "space-123"
+    assert payload["base_url"] == "https://paxai.app"
+    mcp = json.loads((workdir / ".mcp.json").read_text())
+    server = mcp["mcpServers"]["ax-channel"]
+    assert server["args"] == ["channel"]
+    env_text = env_path.read_text()
+    assert f'AX_TOKEN_FILE="{token_file}"' in env_text
+    assert 'AX_AGENT_ID="agent-orion"' in env_text
+    cli_config = (workdir / ".ax" / "config.toml").read_text()
+    assert 'agent_name = "orion"' in cli_config
 
 
 def test_channel_setup_can_generate_docker_mcp_command(tmp_path):

@@ -26,6 +26,20 @@ DEFAULT_OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 HISTORY_LIMIT = int(os.environ.get("AX_OLLAMA_HISTORY_LIMIT", "20") or 20)
 HISTORY_FETCH_LIMIT = int(os.environ.get("AX_OLLAMA_HISTORY_FETCH_LIMIT", str(max(50, HISTORY_LIMIT * 3))) or 50)
 HISTORY_CHAR_BUDGET = int(os.environ.get("AX_OLLAMA_HISTORY_CHAR_BUDGET", "12000") or 12000)
+SYSTEM_PROMPT_TEMPLATE = """\
+You are @{agent_name}, an agent connected to aX through the local Gateway.
+aX is a shared agent network where humans, service accounts, and AI agents can
+send messages, route tasks, and coordinate work across spaces.
+
+You are running as a local Ollama model. Answer as @{agent_name}, not as the
+Gateway or switchboard service. You may receive relevant conversation history
+from this aX space: messages addressed to you and messages you authored. You do
+not see every message in the space, and you should not imply that you do.
+
+Use the provided history for continuity. If the answer depends on context you
+were not given, say that directly. Do not claim to have called tools or inspected
+files unless those capabilities are explicitly provided in the current message.
+"""
 
 # Make the ax_cli package importable when the bridge is launched from the
 # ax-cli workdir (the gateway's default for managed agents).
@@ -131,13 +145,19 @@ def _strip_agent_mention(text: str, agent_name: str) -> str:
     return stripped
 
 
+def _system_prompt(agent_name: str) -> str:
+    normalized = agent_name.strip().lstrip("@") or "ollama-agent"
+    return SYSTEM_PROMPT_TEMPLATE.format(agent_name=normalized).strip()
+
+
 def _shape_history(prompt: str) -> list[dict[str, str]]:
     """Return Ollama-style messages[] for /api/chat.
 
     Falls back to a single-turn user message when history can't be fetched.
     """
-    fallback = [{"role": "user", "content": prompt}]
     agent_name = os.environ.get("AX_GATEWAY_AGENT_NAME", "").strip()
+    system_message = {"role": "system", "content": _system_prompt(agent_name or "ollama-agent")}
+    fallback = [system_message, {"role": "user", "content": prompt}]
     agent_id = os.environ.get("AX_GATEWAY_AGENT_ID", "").strip() or os.environ.get("AX_AGENT_ID", "").strip() or None
     space_id = os.environ.get("AX_GATEWAY_SPACE_ID", "").strip() or os.environ.get("AX_SPACE_ID", "").strip()
     if not agent_name or not space_id:
@@ -191,13 +211,13 @@ def _shape_history(prompt: str) -> list[dict[str, str]]:
             break
 
     # Ollama expects chronological order.
-    shaped = list(reversed(selected_newest))
+    shaped = [system_message, *reversed(selected_newest)]
 
     if not incoming_seen:
         # Belt-and-suspenders — make sure the actual prompt is the last turn.
         shaped.append({"role": "user", "content": prompt})
 
-    if not shaped:
+    if len(shaped) == 1:
         return fallback
     return shaped
 
@@ -210,7 +230,8 @@ def _chat(messages: list[dict[str, str]]) -> str:
         "messages": messages,
         "stream": True,
     }
-    history_turns = max(0, len(messages) - 1)
+    chat_turns = [msg for msg in messages if msg.get("role") != "system"]
+    history_turns = max(0, len(chat_turns) - 1)
     emit_event(
         {
             "kind": "status",

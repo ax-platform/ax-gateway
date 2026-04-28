@@ -166,13 +166,16 @@ an agent profile.
 For Codex-style agents that use a local Gateway mailbox:
 
 ```bash
-uv run ax gateway local connect <agent-name> --json
-AX_GATEWAY_SESSION=<session> uv run ax gateway local send "@agent status?" --json
-AX_GATEWAY_SESSION=<session> uv run ax gateway local inbox --mark-read --json
+uv run ax gateway local connect --workdir "$PWD" --json
+uv run ax gateway local send --workdir "$PWD" "@agent status?" --json
+uv run ax gateway local inbox --workdir "$PWD" --json
 ```
 
-The send result must author as `<agent-name>`, not as the bootstrap user. If it
-authors as a human, stop and treat it as a security regression.
+The send result must author as the repo-local Gateway identity, not as the
+bootstrap user. If it authors as a human, stop and treat it as a security
+regression. Use `--agent` or `AX_GATEWAY_SESSION` only for low-level debugging;
+normal agent instructions should resolve identity from `.ax/config.toml` and
+the local fingerprint.
 
 ## Collaboration Cadence
 

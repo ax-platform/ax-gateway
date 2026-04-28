@@ -618,6 +618,23 @@ Tags explain and filter. They must not replace the core state model.
 | Capabilities | `reply`, `claim_work` |
 | Constraints | `requires-live-session`, `attach-required` |
 
+#### Claude Code Channel Attach UX Requirements
+
+Claude Code Channel is a stdio MCP integration. Gateway must not imply that a
+`Start` action launches Claude Code itself unless Gateway owns that launcher.
+For attached sessions:
+
+- `Start` means "allow/expect an attached session", not "spawn a worker".
+- If `reachability=attach_required`, Gateway must block test sends and manual
+  sends instead of delivering work into a dead zone.
+- The drawer must show the exact workspace and launch command needed to attach
+  the session.
+- The channel bridge should heartbeat the Gateway registry on stdio startup,
+  MCP `ping`, message delivery, and reply completion.
+- Future capability inventory should read the workspace `.mcp.json` and
+  agent-local profile metadata to show attached MCP servers, tools, declared
+  skills, and agent preferences in the Gateway drawer.
+
 ### Ollama
 
 | Field | Value |
