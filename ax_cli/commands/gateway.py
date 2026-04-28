@@ -688,7 +688,10 @@ def _agent_space_name_from_backend_record(agent: dict, space_id: str | None) -> 
         current_id = str(raw_current.get("space_id") or raw_current.get("id") or "").strip()
         if not space_id or current_id == space_id:
             return str(raw_current.get("name") or raw_current.get("space_name") or "").strip() or None
-    return str(agent.get("space_name") or agent.get("active_space_name") or agent.get("default_space_name") or "").strip() or None
+    return (
+        str(agent.get("space_name") or agent.get("active_space_name") or agent.get("default_space_name") or "").strip()
+        or None
+    )
 
 
 def _backend_agent_record(client: AxClient, name: str) -> dict | None:
@@ -1153,7 +1156,10 @@ def _reject_managed_agent_approval(name: str) -> dict:
     approval = get_gateway_approval(approval_id)
     rejected = deny_gateway_approval(approval_id)
     removed = None
-    if str(approval.get("status") or "").lower() == "pending" and str(approval.get("approval_kind") or "") == "new_binding":
+    if (
+        str(approval.get("status") or "").lower() == "pending"
+        and str(approval.get("approval_kind") or "") == "new_binding"
+    ):
         try:
             removed = _remove_managed_agent(name)
         except LookupError:
@@ -2147,9 +2153,7 @@ def _run_gateway_doctor(name: str, *, send_test: bool = False) -> dict:
                 elif bool(snapshot.get("connected")):
                     add_check("claude_code_session", "passed", "Claude Code is connected to Gateway.")
                 else:
-                    add_check(
-                        "claude_code_session", "failed", "Gateway does not currently have Claude Code running."
-                    )
+                    add_check("claude_code_session", "failed", "Gateway does not currently have Claude Code running.")
             elif runtime_type != "echo":
                 if exec_command:
                     add_check("runtime_launch", "passed", "Gateway has a launch command for this runtime.")
@@ -4387,7 +4391,9 @@ def _build_gateway_ui_handler(*, activity_limit: int, refresh_ms: int):
                         and profile["activation"] == "attach_only"
                         and str(payload.get("desired_state") or "").strip().lower() == "running"
                     ):
-                        launch_payload = _launch_attached_agent_session(_prepare_attached_agent_payload(payload["name"]))
+                        launch_payload = _launch_attached_agent_session(
+                            _prepare_attached_agent_payload(payload["name"])
+                        )
                         record_gateway_activity(
                             "attached_session_launch_requested",
                             agent_name=payload["name"],
@@ -5375,7 +5381,9 @@ def run(
 
 @approvals_app.command("list")
 def list_approvals(
-    status: str | None = typer.Option(None, "--status", help="Optional filter: pending | approved | rejected | archived"),
+    status: str | None = typer.Option(
+        None, "--status", help="Optional filter: pending | approved | rejected | archived"
+    ),
     include_archived: bool = typer.Option(False, "--include-archived", help="Include archived/stale approvals"),
     as_json: bool = JSON_OPTION,
 ):
@@ -5567,7 +5575,9 @@ def _gateway_local_config_from_workdir(workdir: str | None) -> dict:
     agent_name = str(
         agent.get("agent_name") or agent.get("name") or cfg.get("gateway_agent_name") or cfg.get("agent_name") or ""
     ).strip()
-    registry_ref = str(agent.get("registry_ref") or agent.get("registry") or cfg.get("gateway_registry_ref") or "").strip()
+    registry_ref = str(
+        agent.get("registry_ref") or agent.get("registry") or cfg.get("gateway_registry_ref") or ""
+    ).strip()
     if mode not in {"local", "pass_through", "gateway"} and not url:
         return {}
     return {
@@ -5621,13 +5631,11 @@ def _approval_required_guidance(
     approval = connect_payload.get("approval") if isinstance(connect_payload.get("approval"), dict) else {}
     fingerprint = connect_payload.get("fingerprint") if isinstance(connect_payload.get("fingerprint"), dict) else {}
     name = str(agent.get("name") or agent_name or connect_payload.get("agent_name") or "").strip()
-    approval_id = str(connect_payload.get("approval_id") or approval.get("approval_id") or agent.get("approval_id") or "").strip()
+    approval_id = str(
+        connect_payload.get("approval_id") or approval.get("approval_id") or agent.get("approval_id") or ""
+    ).strip()
     resolved_workdir = str(
-        workdir
-        or agent.get("workdir")
-        or fingerprint.get("cwd")
-        or approval.get("resource")
-        or ""
+        workdir or agent.get("workdir") or fingerprint.get("cwd") or approval.get("resource") or ""
     ).strip()
     space_label = str(
         agent.get("active_space_name")
@@ -5922,7 +5930,9 @@ def local_send(
     inbox_payload = payload.get("inbox") if isinstance(payload.get("inbox"), dict) else {}
     messages = inbox_payload.get("messages") if isinstance(inbox_payload, dict) else []
     if messages:
-        console.print(f"[bold]inbox[/bold] @{inbox_payload.get('agent') or payload.get('agent')}: {len(messages)} unread")
+        console.print(
+            f"[bold]inbox[/bold] @{inbox_payload.get('agent') or payload.get('agent')}: {len(messages)} unread"
+        )
         for message in messages:
             created = str(message.get("created_at") or "")
             author = str(message.get("display_name") or message.get("agent_name") or message.get("sender") or "-")
@@ -6399,7 +6409,17 @@ def attach_agent(
     err_console.print(payload["attach_command"])
     if run:
         os.chdir(workdir)
-        os.execvp("claude", ["claude", "--strict-mcp-config", "--mcp-config", payload["mcp_path"], "--dangerously-load-development-channels", f"server:{payload['server_name']}"])
+        os.execvp(
+            "claude",
+            [
+                "claude",
+                "--strict-mcp-config",
+                "--mcp-config",
+                payload["mcp_path"],
+                "--dangerously-load-development-channels",
+                f"server:{payload['server_name']}",
+            ],
+        )
 
 
 @agents_app.command("stop")

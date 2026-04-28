@@ -230,8 +230,12 @@ def _write_channel_workspace_context(workdir: Path, *, agent_name: str) -> Path:
     context_path = workdir / ".ax" / "AGENT_CONTEXT.md"
     context_path.parent.mkdir(parents=True, exist_ok=True)
     context_path.write_text(_channel_agent_context_text(agent_name=agent_name, workdir=workdir), encoding="utf-8")
-    _write_channel_context_hint(workdir / "AGENTS.md", agent_name=agent_name, context_path=Path(".ax") / "AGENT_CONTEXT.md")
-    _write_channel_context_hint(workdir / "CLAUDE.md", agent_name=agent_name, context_path=Path(".ax") / "AGENT_CONTEXT.md")
+    _write_channel_context_hint(
+        workdir / "AGENTS.md", agent_name=agent_name, context_path=Path(".ax") / "AGENT_CONTEXT.md"
+    )
+    _write_channel_context_hint(
+        workdir / "CLAUDE.md", agent_name=agent_name, context_path=Path(".ax") / "AGENT_CONTEXT.md"
+    )
     return context_path
 
 

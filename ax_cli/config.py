@@ -782,7 +782,9 @@ def resolve_gateway_config() -> dict:
     agent_name = str(
         agent.get("agent_name") or agent.get("name") or cfg.get("gateway_agent_name") or cfg.get("agent_name") or ""
     ).strip()
-    registry_ref = str(agent.get("registry_ref") or agent.get("registry") or cfg.get("gateway_registry_ref") or "").strip()
+    registry_ref = str(
+        agent.get("registry_ref") or agent.get("registry") or cfg.get("gateway_registry_ref") or ""
+    ).strip()
     workdir = str(agent.get("workdir") or gateway.get("workdir") or cfg.get("gateway_workdir") or "").strip()
     enabled = mode in {"local", "pass_through", "gateway"} or bool(url)
     if not enabled:

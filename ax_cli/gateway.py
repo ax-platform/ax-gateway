@@ -2514,9 +2514,8 @@ def annotate_runtime_health(
     attached_session_alive = False
     liveness, connected = _derive_liveness(enriched, raw_state=state, last_seen_age=last_seen_age)
     if profile["activation"] == "attach_only":
-        local_pid_alive = (
-            str(enriched.get("desired_state") or "").lower() == "running"
-            and _pid_is_alive(enriched.get("attached_session_pid"))
+        local_pid_alive = str(enriched.get("desired_state") or "").lower() == "running" and _pid_is_alive(
+            enriched.get("attached_session_pid")
         )
         if local_pid_alive:
             attached_session_alive = True
@@ -5331,7 +5330,9 @@ class GatewayDaemon:
                 runtime.stop()
                 self._runtimes.pop(name, None)
             last_seen_age = _age_seconds(entry.get("last_seen_at"))
-            attached_state = "running" if last_seen_age is not None and last_seen_age <= RUNTIME_STALE_AFTER_SECONDS else "stale"
+            attached_state = (
+                "running" if last_seen_age is not None and last_seen_age <= RUNTIME_STALE_AFTER_SECONDS else "stale"
+            )
             entry.update(
                 {
                     "effective_state": attached_state if desired_state == "running" else "stopped",
