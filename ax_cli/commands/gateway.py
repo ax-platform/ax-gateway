@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -6176,6 +6177,52 @@ def start_agent(name: str = typer.Argument(..., help="Managed agent name")):
         err_console.print(f"[red]Managed agent not found:[/red] {name}")
         raise typer.Exit(1)
     err_console.print(f"[green]Desired state set to running:[/green] @{name}")
+
+
+def _attach_command_for_payload(payload: dict) -> str:
+    workdir = Path(str(payload["mcp_path"])).parent
+    return f"cd {shlex.quote(str(workdir))} && {payload['launch_command']}"
+
+
+@agents_app.command("attach")
+def attach_agent(
+    name: str = typer.Argument(..., help="Attached-session agent name"),
+    run: bool = typer.Option(False, "--run", help="Run Claude Code in this terminal after writing config"),
+    as_json: bool = JSON_OPTION,
+):
+    """Write channel config for an attached Claude Code agent and print the attach command."""
+    registry = load_gateway_registry()
+    entry = find_agent_entry(registry, name)
+    if not entry:
+        err_console.print(f"[red]Managed agent not found:[/red] {name}")
+        raise typer.Exit(1)
+    profile = gateway_core.infer_operator_profile(entry)
+    if profile["placement"] != "attached" or profile["activation"] != "attach_only":
+        err_console.print(f"[red]Not an attached-session agent:[/red] @{name}")
+        raise typer.Exit(1)
+    workdir = str(entry.get("workdir") or "").strip()
+    if not workdir:
+        err_console.print(f"[red]Attached agent has no workdir:[/red] @{name}")
+        raise typer.Exit(1)
+
+    from ..commands.channel import write_channel_setup
+
+    payload = write_channel_setup(agent_name=name, workdir=Path(workdir))
+    payload["attach_command"] = _attach_command_for_payload(payload)
+    _set_managed_agent_desired_state(name, "running")
+    if as_json:
+        print_json(payload)
+        return
+    err_console.print(f"[green]Claude Code channel ready:[/green] @{name}")
+    err_console.print(f"  workdir = {workdir}")
+    err_console.print(f"  mcp     = {payload['mcp_path']}")
+    err_console.print(f"  env     = {payload['env_path']}")
+    err_console.print("")
+    err_console.print("[bold]Attach from a terminal:[/bold]")
+    err_console.print(payload["attach_command"])
+    if run:
+        os.chdir(workdir)
+        os.execvp("claude", ["claude", "--strict-mcp-config", "--mcp-config", payload["mcp_path"], "--dangerously-load-development-channels", f"server:{payload['server_name']}"])
 
 
 @agents_app.command("stop")
