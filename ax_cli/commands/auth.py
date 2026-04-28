@@ -524,7 +524,11 @@ def exchange(
     """
     token = resolve_token()
     if not token:
-        console.print("[red]No token configured.[/red] Use `ax auth init` or `ax auth token set`.")
+        console.print(
+            "[red]No token configured.[/red] For Gateway-managed agents, use "
+            "`ax gateway local ... --workdir <path>` so Gateway can broker the "
+            "agent identity. For user setup, log into Gateway with `ax gateway login`."
+        )
         raise typer.Exit(1)
     if not token.startswith("axp_"):
         console.print("[red]Token is not a PAT (must start with axp_).[/red]")
@@ -576,7 +580,11 @@ def token_set(
     token: str = typer.Argument(..., help="PAT token (axp_u_...)"),
     global_: bool = typer.Option(False, "--global", "-g", help="Save to ~/.ax/ instead of local .ax/"),
 ):
-    """Save token to local .ax/config.toml (default) or ~/.ax/ with --global."""
+    """Advanced: save token to local .ax/config.toml or ~/.ax/.
+
+    Gateway-managed agents should not use this. Use `ax gateway local ...`
+    instead so Gateway owns the token boundary and audit trail.
+    """
     save_token(token, local=not global_)
     if global_:
         config_path = _global_config_dir() / "config.toml"
@@ -591,7 +599,12 @@ def token_show():
     """Show saved token (masked)."""
     token = resolve_token()
     if not token:
-        typer.echo("No token configured.", err=True)
+        typer.echo(
+            "No token configured. Gateway-managed agents should use "
+            "`ax gateway local ... --workdir <path>`; users should log into "
+            "Gateway with `ax gateway login`.",
+            err=True,
+        )
         raise typer.Exit(1)
     if len(token) > 10:
         masked = token[:6] + "..." + token[-4:]

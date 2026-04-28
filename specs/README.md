@@ -21,6 +21,7 @@ agent skills.
 - [GATEWAY-AGENT-REGISTRY-001: Agent Registry, Local Binding, and Self-Profile](GATEWAY-AGENT-REGISTRY-001/spec.md)
 - [GATEWAY-ASSET-TAXONOMY-001: Gateway Asset Taxonomy and Flow Semantics](GATEWAY-ASSET-TAXONOMY-001/spec.md)
 - [GATEWAY-PASS-THROUGH-MAILBOX-001: Pass-through Mailbox Agents](GATEWAY-PASS-THROUGH-MAILBOX-001/spec.md)
+- [GATEWAY-ALERT-ROUTING-001: Alert Routing and Agent Notifications](GATEWAY-ALERT-ROUTING-001/spec.md)
 - [CONNECTED-ASSET-GOVERNANCE-001: Registry, Provenance, Capabilities, Grants, Secrets, and Approval](CONNECTED-ASSET-GOVERNANCE-001/spec.md)
 - [AGENT-CONTACT-001: Agent Contact Modes](AGENT-CONTACT-001/spec.md)
 - [AGENT-MESH-PATTERNS-001: Shared-State Agent Mesh](AGENT-MESH-PATTERNS-001/spec.md)

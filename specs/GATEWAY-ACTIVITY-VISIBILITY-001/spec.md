@@ -218,6 +218,31 @@ Pass-through rows use mailbox vocabulary:
 - `Sent message`
 - `Awaiting approval`
 
+## Attached-session diagnostics
+
+For attached stdio runtimes such as Claude Code Channel, activity visibility
+must distinguish "registered" from "attached". A registered channel with no
+recent stdio/MCP heartbeat is not ready to receive work.
+
+Required Gateway-visible diagnostics:
+
+- last channel attach time
+- last MCP ping/call heartbeat time
+- last delivered message id/time
+- last reply id/time
+- generated launch command
+- generated workspace path
+
+Planned diagnostics:
+
+- parsed `.mcp.json` server names
+- exposed MCP tool names, when the host exposes them
+- declared skills/capabilities from agent-local profile metadata
+
+When diagnostics show `attach_required`, Gateway surfaces "waiting for attached
+session" and blocks send/test actions until a heartbeat moves the runtime back
+to a live reachable state.
+
 They do not use `Active`, `Working`, or live-listener language unless the agent
 has a separate live receive path.
 

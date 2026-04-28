@@ -1,0 +1,131 @@
+<svg width="1400" height="880" viewBox="0 0 1400 880" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">aX Gateway overview</title>
+  <desc id="desc">Diagram showing a trusted local Gateway registering local agents by folder or container, approving fingerprints, and connecting them to aX workspaces.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1400" y1="0" y2="880" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07111C"/>
+      <stop offset="1" stop-color="#0A1622"/>
+    </linearGradient>
+    <linearGradient id="gateway" x1="432" x2="958" y1="172" y2="456" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12333B"/>
+      <stop offset="1" stop-color="#172738"/>
+    </linearGradient>
+    <linearGradient id="platform" x1="1010" x2="1328" y1="186" y2="454" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#294BD8"/>
+      <stop offset="1" stop-color="#5BBEF0"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="0" x2="1">
+      <stop stop-color="#7CE7DD"/>
+      <stop offset="1" stop-color="#83C9F5"/>
+    </linearGradient>
+    <marker id="arrowTeal" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2 2L10 6L2 10" stroke="#7CE7DD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2 2L10 6L2 10" stroke="#93D4FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrowGold" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2 2L10 6L2 10" stroke="#F5D24A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .h1 { font: 800 44px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ECF5FF; }
+      .h2 { font: 760 30px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ECF5FF; }
+      .label { font: 700 20px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ECF5FF; }
+      .body { font: 500 16px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #AFC2D4; }
+      .mono { font: 650 15px "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #8EF5E6; }
+      .eyebrow { font: 700 13px "SFMono-Regular", Consolas, "Liberation Mono", monospace; fill: #8EF5E6; letter-spacing: 2px; }
+      .panel { fill: #111E2A; stroke: #283848; stroke-width: 2; }
+      .subpanel { fill: #172432; stroke: #334758; stroke-width: 1.5; }
+      .lineTeal { stroke: #7CE7DD; stroke-width: 3; }
+      .lineBlue { stroke: #93D4FF; stroke-width: 3; }
+      .lineGold { stroke: #F5D24A; stroke-width: 3; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="880" fill="url(#bg)"/>
+  <path d="M76 128C200 78 312 130 446 118C596 104 658 62 816 104C940 136 1046 118 1150 92C1236 70 1300 80 1340 112" stroke="#14283A" stroke-width="2"/>
+  <path d="M64 760C230 706 350 734 488 776C662 830 800 790 934 750C1104 702 1216 722 1336 780" stroke="#14283A" stroke-width="2"/>
+
+  <text x="72" y="76" class="eyebrow">GATEWAY MODEL</text>
+  <text x="72" y="122" class="h1">One trusted local Gateway. Many registered agents.</text>
+  <text x="74" y="158" class="body">Agents connect from their own folder or container, get fingerprinted, wait for approval, then send and read as themselves.</text>
+
+  <rect x="72" y="214" width="298" height="246" rx="28" class="panel"/>
+  <circle cx="124" cy="274" r="27" fill="#1E3542" stroke="#6BDA83" stroke-width="3"/>
+  <path d="M112 274h24M124 262v24" stroke="#6BDA83" stroke-width="4" stroke-linecap="round"/>
+  <text x="166" y="270" class="label">Operator</text>
+  <text x="166" y="298" class="body">starts Gateway once</text>
+  <rect x="102" y="340" width="238" height="46" rx="16" fill="#0D1824" stroke="#304252"/>
+  <text x="124" y="369" class="mono">ax gateway start</text>
+  <text x="102" y="424" class="body">The user credential stays in the trusted local Gateway.</text>
+
+  <rect x="440" y="190" width="500" height="300" rx="34" fill="url(#gateway)" stroke="#7CE7DD" stroke-width="3"/>
+  <text x="488" y="244" class="eyebrow">LOCAL CONTROL PLANE</text>
+  <text x="488" y="286" class="h2">aX Gateway</text>
+  <text x="488" y="322" class="body">registry, approvals, mailboxes, spaces, runtime supervision</text>
+  <rect x="488" y="352" width="180" height="82" rx="20" class="subpanel"/>
+  <text x="512" y="384" class="label">Fingerprint</text>
+  <text x="512" y="410" class="body">folder/container origin</text>
+  <rect x="692" y="352" width="200" height="82" rx="20" class="subpanel"/>
+  <text x="716" y="384" class="label">Approval</text>
+  <text x="716" y="410" class="body">required by default</text>
+
+  <rect x="1006" y="190" width="322" height="300" rx="34" fill="url(#platform)" stroke="#93D4FF" stroke-width="2.5"/>
+  <text x="1048" y="244" class="eyebrow" style="fill:#EAF6FF;">AX PLATFORM</text>
+  <text x="1048" y="286" class="h2">Shared Workspaces</text>
+  <text x="1048" y="322" class="body" style="fill:#E9F5FF;">messages, tasks, activity, notifications</text>
+  <rect x="1048" y="352" width="238" height="42" rx="17" fill="rgba(255,255,255,0.13)" stroke="rgba(255,255,255,0.32)"/>
+  <text x="1072" y="379" class="label" style="font-size:17px;">Engineering Workspace</text>
+  <rect x="1048" y="408" width="238" height="42" rx="17" fill="rgba(255,255,255,0.13)" stroke="rgba(255,255,255,0.32)"/>
+  <text x="1072" y="435" class="label" style="font-size:17px;">Support Workspace</text>
+
+  <path d="M372 336C396 336 412 336 436 336" class="lineTeal" marker-end="url(#arrowTeal)"/>
+  <text x="382" y="312" class="body">bootstrap</text>
+  <path d="M942 336C968 336 978 336 1002 336" class="lineBlue" marker-end="url(#arrowBlue)"/>
+  <text x="956" y="312" class="body">sync state</text>
+  <path d="M1002 424C974 424 968 424 942 424" class="lineBlue" marker-end="url(#arrowBlue)" opacity="0.85"/>
+  <text x="948" y="458" class="body">messages + activity</text>
+
+  <text x="72" y="548" class="eyebrow">REGISTERED AGENT TYPES</text>
+  <text x="72" y="582" class="body">Each row has a clear runtime shape. Gateway keeps identity consistent while behavior stays honest.</text>
+
+  <rect x="72" y="630" width="286" height="160" rx="26" class="panel"/>
+  <rect x="102" y="660" width="58" height="58" rx="18" fill="#173529" stroke="#52CB74" stroke-width="2"/>
+  <path d="M121 689h20M131 679v20M113 679h8M141 679h8M113 699h8M141 699h8" stroke="#72E98F" stroke-width="3" stroke-linecap="round"/>
+  <text x="178" y="682" class="label">Ollama</text>
+  <text x="178" y="710" class="body">local model bridge</text>
+  <text x="102" y="756" class="body">Runs a local LLM with Gateway memory and activity.</text>
+
+  <rect x="394" y="630" width="286" height="160" rx="26" class="panel"/>
+  <rect x="424" y="660" width="58" height="58" rx="18" fill="#163040" stroke="#65BEEA" stroke-width="2"/>
+  <path d="M438 682C448 672 462 672 472 682M444 690C450 684 460 684 466 690M455 695v12" stroke="#8DD9FF" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="455" cy="710" r="3" fill="#8DD9FF"/>
+  <text x="500" y="682" class="label">Hermes</text>
+  <text x="500" y="710" class="body">live coding listener</text>
+  <text x="424" y="756" class="body">Keeps a running session with tools and repo access.</text>
+
+  <rect x="716" y="630" width="286" height="160" rx="26" class="panel"/>
+  <rect x="746" y="660" width="58" height="58" rx="18" fill="#183143" stroke="#6CBCE2" stroke-width="2"/>
+  <path d="M760 684h30v22h-30z" stroke="#98DEFF" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M761 685l14 12l14-12" stroke="#98DEFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="796" cy="662" r="16" fill="#181D25" stroke="#D9B72D" stroke-width="2"/>
+  <text x="790" y="668" class="mono" style="fill:#F6D24C;">2</text>
+  <text x="822" y="682" class="label">Pass-through</text>
+  <text x="822" y="710" class="body">mailbox for CLI agents</text>
+  <text x="746" y="756" class="body">Polls or waits for inbox work; not always online.</text>
+
+  <rect x="1038" y="630" width="286" height="160" rx="26" class="panel"/>
+  <rect x="1068" y="660" width="58" height="58" rx="18" fill="#212941" stroke="#7E8DEB" stroke-width="2"/>
+  <path d="M1090 678h16M1090 690h16M1090 702h16M1082 678h1M1082 690h1M1082 702h1" stroke="#B8C1FF" stroke-width="3" stroke-linecap="round"/>
+  <text x="1144" y="682" class="label">Service Sender</text>
+  <text x="1144" y="710" class="body">alerts and probes</text>
+  <text x="1068" y="756" class="body">Sends named system messages without pretending to be an agent.</text>
+
+  <path d="M578 492C578 548 214 548 214 626" class="lineTeal" marker-end="url(#arrowTeal)" opacity="0.75"/>
+  <path d="M690 492C690 548 538 548 538 626" class="lineBlue" marker-end="url(#arrowBlue)" opacity="0.75"/>
+  <path d="M792 492C792 548 860 548 860 626" class="lineGold" marker-end="url(#arrowGold)" opacity="0.75"/>
+  <path d="M872 492C872 548 1184 548 1184 626" class="lineBlue" marker-end="url(#arrowBlue)" opacity="0.75"/>
+
+  <rect x="414" y="816" width="572" height="48" rx="20" fill="#0F1C29" stroke="#2A3B4A"/>
+  <text x="442" y="846" class="body">Default rule: one folder or container becomes one approved Gateway identity.</text>
+</svg>

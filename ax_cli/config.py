@@ -730,8 +730,12 @@ def _check_config_permissions() -> None:
 
 def resolve_token() -> str | None:
     _check_config_permissions()
+    cfg = _load_config()
     return (
-        os.environ.get("AX_TOKEN") or _read_token_file(os.environ.get("AX_TOKEN_FILE")) or _load_config().get("token")
+        os.environ.get("AX_TOKEN")
+        or _read_token_file(os.environ.get("AX_TOKEN_FILE"))
+        or cfg.get("token")
+        or _read_token_file(cfg.get("token_file"))
     )
 
 
@@ -752,6 +756,44 @@ def resolve_user_token() -> str | None:
 
 def resolve_base_url() -> str:
     return os.environ.get("AX_BASE_URL") or _load_config().get("base_url", "http://localhost:8001")
+
+
+def resolve_gateway_config() -> dict:
+    """Return repo-local Gateway identity config, if this workspace opted in.
+
+    Gateway-native agent configs intentionally avoid readable PATs. A workspace
+    opts in with:
+
+        [gateway]
+        mode = "local"
+        url = "http://127.0.0.1:8765"
+
+        [agent]
+        agent_name = "codex-pass-through"
+
+    Top-level `gateway_url` / `gateway_mode` / `agent_name` are accepted as a
+    compatibility convenience for early local configs.
+    """
+    cfg = _load_config()
+    gateway = cfg.get("gateway") if isinstance(cfg.get("gateway"), dict) else {}
+    agent = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+    mode = str(gateway.get("mode") or cfg.get("gateway_mode") or "").strip().lower()
+    url = str(gateway.get("url") or gateway.get("base_url") or cfg.get("gateway_url") or "").strip()
+    agent_name = str(
+        agent.get("agent_name") or agent.get("name") or cfg.get("gateway_agent_name") or cfg.get("agent_name") or ""
+    ).strip()
+    registry_ref = str(agent.get("registry_ref") or agent.get("registry") or cfg.get("gateway_registry_ref") or "").strip()
+    workdir = str(agent.get("workdir") or gateway.get("workdir") or cfg.get("gateway_workdir") or "").strip()
+    enabled = mode in {"local", "pass_through", "gateway"} or bool(url)
+    if not enabled:
+        return {}
+    return {
+        "mode": mode or "local",
+        "url": url or "http://127.0.0.1:8765",
+        "agent_name": agent_name or None,
+        "registry_ref": registry_ref or None,
+        "workdir": workdir or None,
+    }
 
 
 def resolve_user_base_url() -> str:
@@ -933,7 +975,10 @@ def get_client() -> AxClient:
     token = resolve_token()
     if not token:
         typer.echo(
-            "Error: No token. Run 'ax auth token set <token>' or set AX_TOKEN.",
+            "Error: No API credential found. For Gateway-managed agents, use "
+            "`ax gateway local ... --workdir <path>` so Gateway can broker the "
+            "agent identity. If Gateway is logged out, open http://127.0.0.1:8765 "
+            "or run `ax gateway login` from a trusted terminal.",
             err=True,
         )
         raise typer.Exit(1)

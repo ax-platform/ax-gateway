@@ -217,6 +217,24 @@ def test_mark_all_messages_read_calls_backend_endpoint():
     assert client._http.post.call_args.args[0] == "/api/v1/messages/mark-all-read"
 
 
+def test_parse_json_names_agent_create_html_shell_as_api_contract_failure():
+    client = AxClient("https://example.com", "legacy-token")
+    response = httpx.Response(
+        200,
+        text="<!DOCTYPE html><html></html>",
+        headers={"content-type": "text/html"},
+        request=httpx.Request("POST", "https://example.com/api/v1/agents"),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        client._parse_json(response)
+
+    message = str(exc.value)
+    assert "Agent create returned HTML instead of JSON" in message
+    assert "quota" in message
+    assert "name conflict" in message
+
+
 def test_record_tool_call_posts_audit_payload():
     client = AxClient("https://example.com", "legacy-token", agent_id="agent-123", agent_name="codex")
     response = httpx.Response(

@@ -38,12 +38,19 @@ The pitch is layered: **offline first, online when you want it.** Every tier is 
 
 ### T0 — Offline (no auth, no network)
 
+**Implementation status:** target design, not the current primary demo path.
+The current Gateway PR has the local registry, approval flow, activity log, and
+Gateway-local pass-through CLI, but pass-through message delivery still depends
+on the connected aX backend. Until the local-only router lands, a disconnected
+Gateway should say `Not connected` / `Sign in to use network messaging` rather
+than imply remote inbox delivery will work.
+
 **Scope is intentionally narrow** (madtank 2026-04-26): T0 is **messages only**.
 Online mode (T1+) is what we promote as the suite. T0 is the low-friction
 on-ramp — no signup, just "your local agents can talk to each other through
 me." People who want more grow into online.
 
-**What works:**
+**Target behavior:**
 - Run `ax gateway start` with zero config. Gateway daemon boots, simple-gateway UI at `127.0.0.1:8765` opens in offline mode.
 - Add local agents (echo, ollama, hermes, custom) — gateway routes messages between them locally.
 - Pass-through agents (GATEWAY-LOCAL-CONNECT-001) connect via fingerprint approval, exchange messages through the local gateway.
@@ -52,6 +59,7 @@ me." People who want more grow into online.
 
 **What does NOT work — by design (don't expand T0):**
 - No remote agents
+- No aX-backed pass-through mailbox delivery
 - No remote tasks (no `ax tasks` in T0)
 - No remote contexts (no `ax context` in T0)
 - No search
@@ -81,12 +89,40 @@ ax send --local "@bigsky hi"                       # local-only routing
 ax tasks list                                      # → "Offline mode — sign in to use tasks"
 ```
 
+Until T0 local routing is implemented, the first-run CLI hint should be:
+
+```bash
+ax gateway start
+ax gateway login
+```
+
+If no session exists, Gateway should show a local URL and/or browser/device
+auth hint rather than telling an agent to set a token:
+
+```text
+Gateway is not connected. Open http://127.0.0.1:8765 and sign in, or run
+`ax gateway login` from a trusted terminal. Agents should continue using
+`ax gateway local ... --workdir <path>` after the user approves them.
+```
+
 ### T1 — PAT paste (sign in with existing token)
 
 **Onboarding:**
 - Gateway shows "Sign in" button in topbar / first-run modal.
 - Operator pastes their existing aX PAT (from `ax login` elsewhere, or from the aX web UI).
 - Gateway validates by hitting `/auth/exchange`, persists the PAT to `~/.ax/gateway/session.json`, flips connection pill to `Connected · paxai.app`.
+
+**Audit shape:**
+- The upstream aX platform must record this as a **Gateway login session**, not
+  as an anonymous token usage event.
+- Audit rows should include at least `gateway_id`, host fingerprint, OS user,
+  Gateway version, base URL, login tier (`pat_paste`), first seen, last seen,
+  and last IP/user agent where available.
+- The user-facing credentials/session screen should show that the token is being
+  used by the local Gateway and allow revoking that Gateway session without
+  guessing which machine or process is involved.
+- Business actions performed by managed/pass-through agents remain attributed to
+  the acting agent; the bootstrap user credential is only the enrollment root.
 
 **What this unlocks beyond T0:**
 - Remote agents discoverable via `ax agents list`
@@ -121,6 +157,11 @@ ax gateway login                                   # opens browser, prints URL f
 ax gateway login --no-browser                      # prints URL, polls for callback
 ```
 
+For terminal-only agents or SSH sessions, this should behave like a device-code
+flow: print a URL and short code, let the human authenticate in the browser,
+then have Gateway poll until the session is approved. That keeps the secret out
+of agent context and preserves the Gateway audit trail.
+
 **Backend ask:** aX needs `/auth/cli-handshake` endpoint pair. Currently `/auth/exchange` requires a PAT in hand; cli-handshake is the new "I don't have one, give me one" path. Cross-ref to **AGENT-PAT-001** — same PAT shape, just minted via redirect instead of `ax token mint`.
 
 ### T3 — OAuth (long-lived, refresh, machine identity)
@@ -136,6 +177,12 @@ ax gateway login --no-browser                      # prints URL, polls for callb
 - Audit log entries cite gateway_id, not just user.
 
 **Out of scope for first-pass demo.** Spec'd here so the climbing path is documented; impl can wait.
+
+**Priority note:** OAuth/device login should replace PAT paste as soon as the
+Gateway path is stable. The user experience goal is "log into Gateway" rather
+than "copy a secret into a tool," and the platform audit model should already
+use Gateway-session language so T1 can evolve into T3 without changing runtime
+identity semantics.
 
 ## Mode transitions
 

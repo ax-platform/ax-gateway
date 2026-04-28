@@ -70,10 +70,29 @@ Examples:
 
 ```bash
 uv run ax gateway agents add echo-bot --template echo
-uv run ax gateway agents add northstar --template hermes
+uv run ax gateway agents add northstar --template hermes --workdir /absolute/path/to/hermes-workspace
 uv run ax gateway agents add ollama-bot --template ollama
+uv run ax gateway agents add orion --template claude_code_channel --workdir /absolute/path/to/claude-workspace
 uv run ax gateway agents add codex-pass-through --template pass_through
 ```
+
+For Hermes and Claude Code Channel, always choose the directory the agent will
+actually run from. Do not let setup default to the `ax-cli` checkout just
+because that is where the operator launched Gateway.
+
+Claude Code Channel is an attached-session setup. After Gateway creates the
+registry row and token, generate the Claude Code MCP config from that Gateway
+row:
+
+```bash
+uv run ax channel setup orion --workdir /absolute/path/to/claude-workspace
+cd /absolute/path/to/claude-workspace
+claude --strict-mcp-config --mcp-config .mcp.json --dangerously-load-development-channels server:ax-channel
+```
+
+`ax channel setup` writes `.mcp.json` for the live channel and
+`.ax/config.toml` for Gateway CLI access from the same folder. Do not mint a
+separate token or put a user PAT in `.mcp.json`.
 
 ### 4. Update instead of recreating when possible
 
@@ -137,19 +156,26 @@ must send and read through their own approved Gateway identity, never through
 the bootstrap user or a switchboard identity.
 
 ```bash
-uv run ax gateway local connect codex-pass-through --json
-uv run ax gateway local inbox --agent codex-pass-through --json
-uv run ax gateway local inbox --agent codex-pass-through --wait 120 --json
-uv run ax gateway local send --agent codex-pass-through "@night_owl status?" --json
+uv run ax gateway local init mac_frontend --workdir "$PWD" --json
+uv run ax gateway local connect --workdir "$PWD" --json
+uv run ax gateway local inbox --workdir "$PWD" --json
+uv run ax gateway local inbox --workdir "$PWD" --wait 120 --json
+uv run ax gateway local send --workdir "$PWD" "@night_owl status?" --json
 ```
 
 If `local connect` returns `pending`, the operator must approve the fingerprint
 in the drawer before the agent can send or poll.
 
-The explicit `AX_GATEWAY_SESSION` path is only for low-level session debugging
-or older CLI builds. Normal agent instructions should use `--agent` so Gateway
-resolves the approved local identity and marks checked mailbox items read by
-default.
+Use local, machine/workspace-specific names such as `mac_frontend`,
+`mac_backend`, or `mac_mcp`. Do not reuse a hosted/listener agent name unless
+the operator explicitly wants to attach this local mailbox binding to that same
+registry identity.
+
+After `.ax/config.toml` exists, normal agent instructions should omit `--agent`.
+Gateway resolves the approved identity from the repo-local config and local
+fingerprint, then marks checked mailbox items read by default. The explicit
+`--agent` and `AX_GATEWAY_SESSION` paths are only for low-level session
+debugging or older CLI builds.
 
 ## Hermes Notes
 

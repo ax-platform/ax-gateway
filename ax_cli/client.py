@@ -334,8 +334,18 @@ class AxClient:
     def _parse_json(self, r: httpx.Response) -> dict | list[dict]:
         """Parse JSON response, raising a clear error if HTML is returned."""
         if self._is_html_response(r):
+            path = r.request.url.path if r.request else str(r.url)
+            method = r.request.method.upper() if r.request else ""
+            if method == "POST" and path == "/api/v1/agents":
+                detail = (
+                    "Agent create returned HTML instead of JSON. The hosted API must return a JSON 4xx "
+                    "with an explicit reason such as quota, rate limit, name conflict, or feature flag; "
+                    "the CLI cannot safely infer the denied create reason from the SPA shell."
+                )
+            else:
+                detail = f"Expected JSON but got HTML from {r.url} — the frontend may be catching this API route"
             raise httpx.HTTPStatusError(
-                f"Expected JSON but got HTML from {r.url} — the frontend may be catching this API route",
+                detail,
                 request=r.request,
                 response=r,
             )

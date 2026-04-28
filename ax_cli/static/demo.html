@@ -51,7 +51,7 @@
 
     .shell { width: min(1180px, calc(100vw - 40px)); margin: 0 auto; padding: 28px 0 80px; }
 
-    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 44px; flex-wrap: wrap; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
 
     .brand { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 13px; letter-spacing: 0.04em; color: var(--muted); }
     .brand-mark { width: 40px; height: 40px; border-radius: 13px; box-shadow: 0 12px 30px rgba(94, 234, 212, 0.28); display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -75,13 +75,13 @@
     .system-toggle.on { border-color: rgba(94,234,212,0.4); color: var(--accent); background: rgba(94,234,212,0.08); }
     .chip.system { color: var(--muted); border-color: var(--line); background: rgba(255,255,255,0.04); }
 
-    .hero { display: grid; grid-template-columns: 1fr; gap: 24px; margin-bottom: 40px; }
-    .hero-eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); margin-bottom: 18px; }
-    .hero h1 { margin: 0 0 18px; font-size: clamp(40px, 5.6vw, 72px); line-height: 1.02; letter-spacing: -0.035em; font-weight: 600; max-width: 18ch; }
+    .hero { display: grid; grid-template-columns: 1fr; gap: 18px; margin-bottom: 30px; }
+    .hero-eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+    .hero h1 { margin: 0 0 12px; font-size: clamp(34px, 4.1vw, 52px); line-height: 1.05; letter-spacing: -0.025em; font-weight: 600; max-width: 760px; }
     .hero h1 .accent { background: linear-gradient(120deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .hero p { margin: 0; max-width: 56ch; color: var(--muted); font-size: 18px; line-height: 1.55; }
+    .hero p { margin: 0; max-width: 58ch; color: var(--muted); font-size: 16px; line-height: 1.5; }
 
-    .hero-actions { display: flex; align-items: center; gap: 18px; margin-top: 32px; flex-wrap: wrap; }
+    .hero-actions { display: flex; align-items: center; gap: 16px; margin-top: 24px; flex-wrap: wrap; }
 
     .btn { appearance: none; border: none; cursor: pointer; font-family: var(--sans); font-size: 15px; letter-spacing: -0.005em; transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease; }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
@@ -95,6 +95,7 @@
     .cli-hint { display: inline-flex; align-items: center; gap: 12px; padding: 10px 14px 10px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); font-family: var(--mono); font-size: 12px; color: var(--muted); }
     .cli-hint code { color: var(--accent); font-family: var(--mono); }
     .cli-hint .hint-label { color: var(--muted-2); letter-spacing: 0.05em; text-transform: uppercase; font-size: 10px; }
+    .command-pill { display: block; max-width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.24); color: var(--accent); font-family: var(--mono); font-size: 11px; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
 
     .section-title { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
     .section-title h2 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.005em; }
@@ -169,6 +170,7 @@
     }
     .row-approve:hover:not(:disabled) { background: rgba(94, 234, 212, 0.2); border-color: rgba(125, 211, 252, 0.7); transform: translateY(-1px); }
     .row-approve:disabled { opacity: 0.55; cursor: progress; transform: none; }
+    .approval-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
     .chip { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line); font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; color: var(--muted); }
     .chip.template { color: var(--accent); border-color: rgba(94, 234, 212, 0.3); background: var(--accent-soft); }
@@ -310,8 +312,10 @@
     }
     @media (max-width: 720px) {
       .template-grid { grid-template-columns: 1fr; }
-      .hero h1 { font-size: 44px; }
-      .topbar { margin-bottom: 28px; }
+      .hero h1 { font-size: 36px; }
+      .hero p { font-size: 15px; }
+      .hero-actions { margin-top: 20px; }
+      .topbar { margin-bottom: 24px; }
       .agent-grid-cols { grid-template-columns: 34px minmax(0, 1fr) minmax(96px, 0.55fr) minmax(116px, 0.65fr) minmax(22px, auto); gap: 10px; }
       .type-mark { width: 30px; height: 30px; border-radius: 9px; }
       .type-mark svg { width: 18px; height: 18px; }
@@ -428,6 +432,11 @@
           <select id="ollama-model-input"></select>
           <div class="field-hint" id="ollama-hint"></div>
         </div>
+        <div class="field" id="agent-workdir-field" style="display: none;">
+          <label for="agent-workdir-input">Runtime folder</label>
+          <input id="agent-workdir-input" type="text" placeholder="/path/to/agent-workspace" autocomplete="off" spellcheck="false" />
+          <div class="field-hint" id="agent-workdir-hint"></div>
+        </div>
         <div class="field" id="hermes-preflight-field" style="display: none;">
           <div class="status-detail warning" id="hermes-preflight">
             <div style="font-weight: 500; color: var(--text); margin-bottom: 8px;">Heads up — Hermes setup not detected</div>
@@ -468,7 +477,7 @@
       ollama: { name: "Ollama", tag: "Local model", desc: "Run a local LLM on this machine. Pickup, liveness, and streaming activity." },
       hermes: { name: "Hermes", tag: "Coding agent", desc: "Persistent live listener with tool use, repo access, and session continuity." },
       sentinel_cli: { name: "Sentinel CLI", tag: "Session agent", desc: "Long-lived Claude or Codex CLI runtime with session resume and tool activity." },
-      claude_code_channel: { name: "Claude Code Channel", tag: "MCP channel", desc: "Planned live Claude Code channel adapter for a supervised Gateway session." },
+      claude_code_channel: { name: "Claude Code Channel", tag: "MCP channel", desc: "Gateway-registered live Claude Code session through ax-channel." },
       pass_through: { name: "Pass-through", tag: "Polling inbox", desc: "Mailbox identity for agents that check Gateway instead of listening live. Requires approval." },
       service_account: { name: "Service Account", tag: "Notification source", desc: "Named sender for alerts, reminders, automation, and operator probes. Not a live agent." },
       echo_test: { name: "Echo", tag: "Test runtime", desc: "Zero setup. Confirms your gateway can deliver and receive in real time." },
@@ -708,6 +717,13 @@
         }
         return { label: "Inbox", tone: "muted", detail: detail || "Mailbox is available. It is not a live listener." };
       }
+      if (isAttachedRuntime(agent) && presence === "STALE") {
+        return {
+          label: "Waiting for attach",
+          tone: "warning",
+          detail: detail || "Start the attached runtime from its workspace before sending messages.",
+        };
+      }
       if (presence === "STALE") return { label: "Stale", tone: "warning", detail: detail || "Heartbeat is overdue." };
       if (presence === "OFFLINE") return { label: "Offline", tone: "muted", detail: detail || "Runtime is not currently connected." };
       if (presence === "ACTIVE" || presence === "LIVE" || agent.connected) {
@@ -747,7 +763,11 @@
         return { disabled: true, reason: "Gateway is reconnecting this agent. Try again in a few seconds." };
       }
       const presence = String(agent.presence || "").toUpperCase();
-      if (!isMailboxRuntime(agent) && (presence === "OFFLINE" || presence === "ERROR")) {
+      const reachability = String(agent.reachability || "").toLowerCase();
+      if (isAttachedRuntime(agent) && (presence === "STALE" || reachability === "attach_required")) {
+        return { disabled: true, reason: "Open the attached session from this agent's workspace before sending." };
+      }
+      if (!isMailboxRuntime(agent) && (presence === "OFFLINE" || presence === "ERROR" || presence === "STALE")) {
         return { disabled: true, reason: "Agent is not connected right now." };
       }
       return { disabled: false, reason: "" };
@@ -823,13 +843,14 @@
         const payload = await api("GET", "/api/templates");
         state.templates = (Array.isArray(payload.templates) ? payload.templates : []).filter((template) => {
           const id = String(template.id || "").toLowerCase();
-          return !["pass_through", "sentinel_cli", "claude_code_channel", "inbox"].includes(id);
+          return !["pass_through", "sentinel_cli", "inbox"].includes(id);
         });
         if (!state.templates.some((t) => String(t.id || "").toLowerCase() === state.selectedTemplateId)) {
           state.selectedTemplateId = String((state.templates[0] || {}).id || "hermes").toLowerCase();
         }
         renderTemplateGrid();
         renderOllamaModelField();
+        renderWorkdirField();
         renderHermesPreflight();
       } catch (err) {
         state.templates = [];
@@ -995,6 +1016,7 @@
           state.selectedTemplateId = String(event.target.value || "").toLowerCase();
           renderTemplateGrid();
           renderOllamaModelField();
+          renderWorkdirField();
           renderHermesPreflight();
         },
       });
@@ -1072,6 +1094,39 @@
         select.appendChild(opt);
       }
       hint.textContent = tmpl.ollama_server_reachable ? "Local Ollama server reachable." : "Ollama server not reachable. Make sure `ollama serve` is running.";
+    }
+
+    function selectedTemplateDefinition() {
+      return state.templates.find((t) => String(t.id || "").toLowerCase() === state.selectedTemplateId) || null;
+    }
+
+    function selectedTemplateRequiresWorkdir() {
+      const id = String(state.selectedTemplateId || "").toLowerCase();
+      if (["hermes", "sentinel_cli", "claude_code_channel"].includes(id)) return true;
+      const fields = Array.isArray((selectedTemplateDefinition() || {}).form_fields)
+        ? selectedTemplateDefinition().form_fields
+        : [];
+      return fields.some((field) => String(field.name || "") === "workdir" && field.required === true);
+    }
+
+    function renderWorkdirField() {
+      const field = $("agent-workdir-field");
+      const input = $("agent-workdir-input");
+      const hint = $("agent-workdir-hint");
+      const id = String(state.selectedTemplateId || "").toLowerCase();
+      const show = ["hermes", "sentinel_cli", "claude_code_channel"].includes(id);
+      if (!show) {
+        field.style.display = "none";
+        input.value = "";
+        return;
+      }
+      const label = id === "claude_code_channel" ? "Claude Code workspace" : "Agent runtime folder";
+      field.querySelector("label").textContent = label;
+      input.placeholder = id === "claude_code_channel"
+        ? "/path/to/claude-code-workspace"
+        : "/path/to/agent-workspace";
+      hint.textContent = "Gateway writes identity/config here and fingerprints this folder as the agent's runtime origin.";
+      field.style.display = "block";
     }
 
     /* --- Agent list (in-place updates) ------------------------------- */
@@ -1310,6 +1365,27 @@
         if (button) {
           button.disabled = false;
           button.textContent = original || "Approve";
+        }
+      }
+    }
+
+    async function rejectAgent(agent, button) {
+      if (!agent || !agent.name) return;
+      const original = button ? button.textContent : "";
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Rejecting";
+      }
+      try {
+        await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/reject", {});
+        showToast("Rejected @" + agent.name, "ok");
+        await loadStatus();
+        if (state.drawerAgentName === agent.name) refreshDrawer();
+      } catch (err) {
+        showToast(err.message || "Reject failed", "err");
+        if (button) {
+          button.disabled = false;
+          button.textContent = original || "Reject";
         }
       }
     }
@@ -1585,7 +1661,24 @@
       const intakeModel = String(agent.intake_model || "").toLowerCase();
       const runtimeType = String(agent.runtime_type || "").toLowerCase();
       const template = String(agent.template_id || "").toLowerCase();
+      if (template === "claude_code_channel" || runtimeType === "claude_code_channel") return false;
       return intakeModel === "polling_mailbox" || runtimeType === "inbox" || template === "pass_through";
+    }
+
+    function isAttachedRuntime(agent) {
+      if (!agent) return false;
+      const placement = String(agent.placement || "").toLowerCase();
+      const activation = String(agent.activation || "").toLowerCase();
+      const runtimeType = String(agent.runtime_type || "").toLowerCase();
+      const template = String(agent.template_id || "").toLowerCase();
+      return placement === "attached" || activation === "attach_only" || runtimeType === "claude_code_channel" || template === "claude_code_channel";
+    }
+
+    function attachedLaunchCommand(agent) {
+      if (!isAttachedRuntime(agent)) return "";
+      const workdir = String(agent.workdir || "").trim();
+      if (!workdir) return "";
+      return "cd " + workdir + " && claude --strict-mcp-config --mcp-config .mcp.json --dangerously-load-development-channels server:ax-channel";
     }
 
     function mailboxStateLabel(agent) {
@@ -1808,10 +1901,16 @@
       const sendLock = sendAvailability(agent);
       const actions = makeEl("div", { class: "drawer-actions" });
       if (needsApproval) {
-        actions.appendChild(makeEl("button", {
-          class: "btn btn-primary",
-          onclick: (event) => approveAgent(agent, event.currentTarget),
-        }, ["Approve connection"]));
+        actions.appendChild(makeEl("div", { class: "approval-actions" }, [
+          makeEl("button", {
+            class: "btn btn-primary",
+            onclick: (event) => approveAgent(agent, event.currentTarget),
+          }, ["Approve connection"]),
+          makeEl("button", {
+            class: "btn-danger",
+            onclick: (event) => rejectAgent(agent, event.currentTarget),
+          }, ["Reject"]),
+        ]));
       }
       const defaultPrompt = defaultTestPrompt(agent);
       const senderName = "switchboard-" + String(agent.space_id || agent.active_space_id || "default").replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase();
@@ -1865,6 +1964,17 @@
         makeEl("div", { class: "message-composer-actions" }, [sendButton, resetButton]),
       ]));
       if (desiredRunning) {
+        if (isAttachedRuntime(agent) && String(agent.presence || "").toUpperCase() === "STALE") {
+          const launchCommand = attachedLaunchCommand(agent);
+          actions.appendChild(makeEl("div", { class: "hint" }, [
+            "Waiting for the attached session. Run Claude Code from ",
+            makeEl("strong", {}, [String(agent.workdir || "this agent's workspace")]),
+            " with the generated channel config.",
+          ]));
+          if (launchCommand) {
+            actions.appendChild(makeEl("code", { class: "command-pill" }, [launchCommand]));
+          }
+        }
         actions.appendChild(makeEl("button", {
           class: "btn btn-ghost",
           onclick: async () => {
@@ -1880,13 +1990,20 @@
       } else {
         actions.appendChild(makeEl("button", {
           class: "btn btn-ghost",
-          onclick: async () => {
+          onclick: async (event) => {
+            const btn = event.currentTarget;
+            btn.disabled = true;
             try {
               await api("POST", "/api/agents/" + encodeURIComponent(agent.name) + "/start", {});
-              showToast("Starting @" + agent.name + "…", "ok");
+              const message = isAttachedRuntime(agent)
+                ? "Waiting for @" + agent.name + " to attach…"
+                : "Starting @" + agent.name + "…";
+              showToast(message, "ok");
               await loadStatus();
             } catch (err) {
               showToast(err.message || "Start failed", "err");
+            } finally {
+              btn.disabled = false;
             }
           },
         }, ["Start"]));
@@ -2025,8 +2142,10 @@
       formError.style.display = "none";
       formStatus.style.display = "none";
       nameInput.value = "";
+      $("agent-workdir-input").value = "";
       wizard.classList.add("open");
       renderAgentSpaceOptions();
+      renderWorkdirField();
       renderHermesPreflight();
       // Wire copy button if not yet wired.
       const copyBtn = $("hermes-preflight-copy");
@@ -2091,6 +2210,14 @@
         const model = $("ollama-model-input").value;
         if (model) body.ollama_model = model;
       }
+      const workdir = $("agent-workdir-input").value.trim();
+      if (selectedTemplateRequiresWorkdir() && !workdir) {
+        formError.textContent = "Choose the folder this agent will run from.";
+        formError.style.display = "block";
+        $("agent-workdir-input").focus();
+        return;
+      }
+      if (workdir) body.workdir = workdir;
       formError.style.display = "none";
       formStatus.style.display = "flex";
       formStatusText.textContent = "Connecting…";

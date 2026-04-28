@@ -1,12 +1,21 @@
-# axctl — CLI for the aX Platform
+# aX Gateway
 
 [![PyPI](https://img.shields.io/pypi/v/axctl.svg)](https://pypi.org/project/axctl/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/axctl.svg)](https://pypi.org/project/axctl/)
-[![CI](https://github.com/ax-platform/ax-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ax-platform/ax-cli/actions/workflows/ci.yml)
+[![CI](https://github.com/ax-platform/ax-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/ax-platform/ax-gateway/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The local Gateway and command-line interface for [aX](https://paxai.app), the
-platform where humans and AI agents collaborate in shared workspaces.
+The local Gateway for [aX](https://paxai.app), the platform where humans and AI
+agents collaborate in shared workspaces. Gateway is the default way to bring
+local agents online: it owns the trusted user bootstrap, registers agents,
+fingerprints local folders or containers, supervises runtimes, and gives
+pass-through agents a mailbox.
+
+![Gateway overview](docs/images/gateway-demo-overview.png)
+
+This repository was previously named `ax-cli`. The package and commands remain
+`axctl` / `ax` for compatibility; the product and documentation now lead with
+Gateway.
 
 ## Install
 
@@ -16,7 +25,31 @@ pipx install axctl           # recommended — isolated venv per agent
 pip install -e .             # from source
 ```
 
-`pipx` is recommended for agents in containers or shared hosts — isolated environment, no conflicts, `axctl` / `ax` land on `$PATH` automatically.
+`pipx` is recommended for agents in containers or shared hosts: isolated
+environment, no conflicts, `axctl` / `ax` land on `$PATH` automatically.
+
+## How It Works
+
+Gateway separates user setup from agent work:
+
+```text
+user signs in once -> Gateway registers agents -> user approves fingerprints -> agents send/read as themselves
+```
+
+The user starts Gateway from a trusted terminal. Local agents then register from
+their own folder or container. Gateway fingerprints that origin, shows a pending
+row in the dashboard, and waits for operator approval. Once approved, the agent
+uses Gateway-managed credentials to send messages, check its mailbox, and report
+activity. The agent never needs the user's PAT.
+
+Use one registered identity per working folder or container. If several agents
+share the same directory, they also share too much local origin evidence, which
+makes identity and approval harder to reason about. The simplest reliable model
+is:
+
+```text
+one folder/container -> one Gateway fingerprint -> one agent registry row
+```
 
 ## Quick Start: Gateway
 
@@ -41,34 +74,75 @@ ax gateway start --host 127.0.0.1 --port 8765
 # http://127.0.0.1:8765
 ```
 
-From the dashboard, use **Connect agent** to add Hermes, Ollama, Echo, or a
-Service Account. Pass-through agents register themselves through the local
-Gateway mailbox flow so the operator can approve their fingerprint before they
-send as an agent. The same flows are available from CLI:
+From the dashboard, use **Connect agent** to add Hermes, Ollama, Echo, Claude
+Code Channel, or a Service Account. Pass-through agents register themselves
+from their own folder or container through the local Gateway mailbox flow so the
+operator can approve their fingerprint before they send as an agent. The same
+flows are available from CLI:
 
 ```bash
 ax gateway agents add gemma4 --template ollama --ollama-model gemma4:latest
-ax gateway agents add demo-hermes --template hermes
+ax gateway agents add demo-hermes --template hermes --workdir /path/to/hermes-workspace
+ax gateway agents add claude-channel --template claude_code_channel --workdir /path/to/claude-code-workspace
+ax channel setup claude-channel --workdir /path/to/claude-code-workspace
 ax gateway agents add notifications --template service_account
 ax gateway agents add codex-pass-through --template pass_through
 ax gateway agents test gemma4
 ax gateway agents show gemma4
 ```
 
-For Codex-style or other polling agents, connect and use the mailbox as the
-agent itself:
+Hermes and Claude Code Channel agents are folder-bound runtimes. Pick the
+folder they will actually run from, not the `ax-cli` checkout you happened to
+launch Gateway from. Gateway fingerprints that folder and writes local agent
+identity there. Claude Code Channel setup writes both files the agent needs:
+`.ax/config.toml` for Gateway CLI access and `.mcp.json` for the live
+`ax-channel` MCP connection.
+
+For Codex-style, Claude Code, Cursor, Kiro, scripts, or other polling CLI
+agents, use pass-through. One folder or one container should map to one
+registered Gateway agent:
 
 ```bash
-ax gateway local connect codex-pass-through --json
-ax gateway local inbox --agent codex-pass-through --json
-ax gateway local inbox --agent codex-pass-through --wait 120 --json
-ax gateway local send --agent codex-pass-through "@night_owl Please review the Gateway changes." --json
+ax gateway local init mac_frontend --workdir /path/to/frontend-workspace --json
+ax gateway local connect --workdir /path/to/frontend-workspace --json
+ax gateway local inbox --workdir /path/to/frontend-workspace --json
+ax gateway local inbox --workdir /path/to/frontend-workspace --wait 120 --json
+ax gateway local send --workdir /path/to/frontend-workspace "@review_agent Please review the Gateway changes." --json
 ```
 
 If `local connect` returns `pending`, approve the fingerprint in the Gateway
-drawer. After approval, `local inbox --agent ...` and `local send --agent ...`
-auto-connect through the registered pass-through identity; no raw user token or
-manual session environment variable is required.
+drawer. After approval, `local inbox --workdir ...` and `local send --workdir ...`
+auto-connect through the registered pass-through identity in that directory; no
+raw user token or manual session environment variable is required.
+
+Use local, environment-specific names for pass-through shell workspaces so they
+do not collide with canonical server/listener agents. Good examples are
+`mac_frontend`, `mac_backend`, `mac_mcp`, or `laptop_gateway_docs`. Avoid reusing
+server agent handles such as `frontend_sentinel` unless this local binding is
+intentionally being attached to that same registry identity. Once a directory is
+registered, the fingerprinted origin is authoritative: passing `--agent` with a
+different name is rejected instead of creating a second row from the same folder.
+To change the human-readable name, remove/re-register for now; the long-term
+registry model treats names as mutable display handles that change by approval,
+not as primary keys.
+
+Copy-paste template for an agent working in its current folder:
+
+```bash
+# Pick a local name that describes this folder/container.
+AGENT_NAME=mac_frontend
+
+# Run from the repo or workspace the agent is operating in.
+ax gateway local init "$AGENT_NAME" --workdir "$PWD" --json
+ax gateway local connect --workdir "$PWD" --json
+
+# If the response is pending, ask the user to approve the row in Gateway:
+# http://127.0.0.1:8765
+
+# After approval, the agent can use its mailbox and send as itself.
+ax gateway local inbox --workdir "$PWD" --json
+ax gateway local send --workdir "$PWD" "@review_agent Hello from $AGENT_NAME." --json
+```
 
 The intended day-to-day shape is:
 
@@ -76,7 +150,21 @@ The intended day-to-day shape is:
 user starts Gateway -> Gateway owns agent credentials -> agents use CLI through their Gateway identity
 ```
 
-## Direct CLI And Profiles
+If Gateway is not connected yet, start there:
+
+```bash
+ax gateway start
+ax gateway login
+```
+
+Today, Gateway-backed pass-through inbox/send uses the connected aX service.
+The local registry and approval flow are local, but real network messaging,
+mailbox counts, tasks, contexts, and activity mirroring require Gateway to be
+signed in. A minimal offline local-message router is spec'd as the next T0 mode;
+until that lands, the correct hint is to sign into Gateway, not to set
+`AX_TOKEN` in an agent shell.
+
+## Advanced: Direct CLI And Profiles
 
 Direct `axctl`/`ax` commands still exist for setup, scripting, and advanced
 agent profiles. They are not the preferred way to run local agents now that
@@ -105,7 +193,7 @@ Handoff point:
 3. The user starts Gateway and connects agents from the dashboard or
    `ax gateway agents add ...`.
 4. Managed runtimes receive Gateway-owned agent credentials.
-5. Pass-through agents run `ax gateway local connect/send/inbox --agent ...`.
+5. Pass-through agents run `ax gateway local connect/send/inbox --workdir ...`.
 
 The mesh credential chain is:
 
@@ -164,6 +252,9 @@ Open <http://127.0.0.1:8765>. The UI shows the connected agent roster, runtime
 type, mailbox counts, last activity, and a drawer for details, testing, moves,
 approval, and lifecycle actions. `ax gateway ui` can serve the same dashboard
 from a foreground shell when you do not want the background daemon helper.
+
+For a presenter-ready walkthrough, see the
+[Gateway demo script](docs/gateway-demo-script.md).
 
 Screenshots in this README should come from the local dashboard itself. A short
 recording of adding an agent, sending a message, and seeing activity stream
@@ -265,12 +356,17 @@ space, and agent row.
 Use this for Codex-style or human-driven agents that can poll when available:
 
 ```bash
-ax gateway agents add codex-pass-through --template pass_through
-ax gateway local connect codex-pass-through --json
-ax gateway local inbox --agent codex-pass-through --json
-ax gateway local inbox --agent codex-pass-through --wait 120 --json
-ax gateway local send --agent codex-pass-through "@night_owl Please review the current Gateway PR." --json
+ax gateway local init mac_frontend --workdir /path/to/frontend-workspace --json
+ax gateway local connect --workdir /path/to/frontend-workspace --json
+ax gateway local inbox --workdir /path/to/frontend-workspace --json
+ax gateway local inbox --workdir /path/to/frontend-workspace --wait 120 --json
+ax gateway local send --workdir /path/to/frontend-workspace "@review_agent Please review the current Gateway PR." --json
 ```
+
+After the repo-local `.ax/config.toml` exists, prefer the `--workdir` form or
+run from that directory and omit identity flags. Avoid `--agent` in normal
+agent instructions; Gateway should resolve the registry row from the local
+config and fingerprint.
 
 ### Space Binding
 
@@ -300,9 +396,12 @@ default flow.
 - [GATEWAY-IDENTITY-SPACE-001](specs/GATEWAY-IDENTITY-SPACE-001/spec.md)
   defines identity, space binding, and visibility rules.
 
-## Claude Code Channel — Connect from Anywhere
+## Claude Code Channel — Live Claude Code Sessions
 
-**The first multi-agent channel for Claude Code.** Send a message from your phone, Claude Code receives it in real-time, delegates work to specialist agents, and reports back.
+**One of the best-tested live paths.** Use this when the agent is a real Claude
+Code session that should receive aX mentions in real time through
+`ax-channel`. Gateway owns the registration, agent-bound credential, space, and
+fingerprint; Claude Code owns the interactive session.
 
 ```
 Phone / Mobile                    Claude Code Session
@@ -324,28 +423,41 @@ This is not a chat bridge. Every other channel (Telegram, Discord, iMessage) con
 
 ![aX Channel Flow](channel/channel-flow.svg)
 
-**Works with any MCP client** — real-time push for Claude Code, polling via `get_messages` tool for Cursor, Gemini CLI, and others.
+Gateway pass-through is the mailbox path for agents that poll. Claude Code
+Channel is the live path for Claude Code sessions:
 
 ```bash
-# Bootstrap with CLI first. The user PAT stays in the trusted terminal.
-axctl login
-axctl token mint your_agent --audience both --expires 30 \
-  --save-to /home/ax-agent/agents/your_agent \
-  --profile your-agent \
-  --no-print-token
-axctl profile verify your-agent
+# 1. Bootstrap Gateway once in a trusted terminal.
+ax gateway login --url https://paxai.app
+ax gateway start --host 127.0.0.1 --port 8765
 
-# Then run the channel through the generated agent profile/config.
-# For a fixed channel session, make the MCP server command explicit:
-# eval "$(axctl profile env your-agent)" && exec axctl channel --agent your_agent --space-id <space-uuid>
+# 2. Register the Claude Code channel identity through Gateway.
+ax gateway agents add claude_max \
+  --template claude_code_channel \
+  --workdir /path/to/claude-code-workspace
 
-# Run
+# 3. Let the channel setup read Gateway's registry row.
+# No user PAT is written into .mcp.json.
+ax channel setup claude_max \
+  --workdir /path/to/claude-code-workspace
+
+# 4. Launch Claude Code with the generated MCP config.
+cd /path/to/claude-code-workspace
+claude --strict-mcp-config \
+  --mcp-config .mcp.json \
+  --dangerously-load-development-channels server:ax-channel
+```
+
+If the workspace already has `.mcp.json` and the channel env was written, the
+short launch form is:
+
+```bash
 claude --dangerously-load-development-channels server:ax-channel
 ```
 
-CLI and channel are paired: `axctl` handles bootstrap, profiles, token minting,
-messages, tasks, and context; `ax-channel` is the live delivery layer that wakes
-Claude Code on mentions. The channel publishes best-effort `agent_processing`
+The important boundary is that Gateway mints and stores the agent-bound token;
+the channel reads that token file through the generated env file. Do not put a
+user PAT into `.mcp.json`. The channel publishes best-effort `agent_processing`
 signals (`working` on delivery, `completed` after `reply`) so the Activity
 Stream can show that the Claude Code session is active. See
 [channel/README.md](channel/README.md) for full setup guide.

@@ -22,6 +22,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -360,6 +361,12 @@ def _template_operator_defaults(template_id: str | None, runtime_type: object) -
             "activation": "persistent",
             "reply_mode": "interactive",
             "telemetry_level": "rich",
+        },
+        "claude_code_channel": {
+            "placement": "attached",
+            "activation": "attach_only",
+            "reply_mode": "interactive",
+            "telemetry_level": "basic",
         },
         "inbox": {
             "placement": "mailbox",
@@ -919,7 +926,7 @@ def _derive_liveness(snapshot: dict[str, Any], *, raw_state: str, last_seen_age:
     return "offline", False
 
 
-def _derive_work_state(snapshot: dict[str, Any], *, liveness: str) -> str:
+def _derive_work_state(snapshot: dict[str, Any], *, liveness: str, profile: dict[str, str] | None = None) -> str:
     attestation_state = _normalized_optional_controlled(
         snapshot.get("attestation_state"), _CONTROLLED_ATTESTATION_STATES
     )
@@ -941,9 +948,11 @@ def _derive_work_state(snapshot: dict[str, Any], *, liveness: str) -> str:
         return "blocked"
     status = str(snapshot.get("current_status") or "").strip().lower()
     backlog_depth = int(snapshot.get("backlog_depth") or 0)
+    profile = profile or {}
+    queue_state_applies = profile.get("placement") == "mailbox" or profile.get("activation") == "queue_worker"
     if status in _WORKING_STATUSES:
         return "working"
-    if status == "queued" or backlog_depth > 0:
+    if queue_state_applies and (status == "queued" or backlog_depth > 0):
         return "queued"
     if status in _BLOCKED_STATUSES:
         return "blocked"
@@ -1970,20 +1979,89 @@ def _find_approval_for_signature(registry: dict[str, Any], candidate_signature: 
         approval
         for approval in registry.get("approvals", [])
         if str(approval.get("candidate_signature") or "") == candidate_signature
+        and _approval_status(approval) != "archived"
     ]
     if not matches:
         return None
     return sorted(matches, key=lambda item: str(item.get("requested_at") or ""))[-1]
 
 
-def list_gateway_approvals(*, status: str | None = None) -> list[dict[str, Any]]:
+def _approval_is_stale(registry: dict[str, Any], approval: dict[str, Any]) -> bool:
+    if _approval_status(approval) != "pending":
+        return False
+
+    asset_id = str(approval.get("asset_id") or "").strip()
+    install_id = str(approval.get("install_id") or "").strip()
+    signature = str(approval.get("candidate_signature") or "").strip()
+    if not asset_id and not install_id:
+        return True
+
+    matching_entries = [
+        entry
+        for entry in registry.get("agents", [])
+        if (asset_id and str(entry.get("asset_id") or entry.get("agent_id") or "") == asset_id)
+        or (install_id and str(entry.get("install_id") or "") == install_id)
+    ]
+    if not matching_entries:
+        return True
+
+    gateway_id = _gateway_id_from_registry(registry)
+    for entry in matching_entries:
+        candidate = _binding_candidate_for_entry(entry, registry)
+        if signature and str(candidate.get("candidate_signature") or "") != signature:
+            continue
+        binding = find_binding(registry, install_id=str(entry.get("install_id") or ""))
+        if not binding:
+            return False
+        if str(binding.get("gateway_id") or "") != gateway_id:
+            return False
+        if str(binding.get("asset_id") or "") != str(candidate.get("asset_id") or ""):
+            return False
+        if str(binding.get("approved_state") or "approved").lower() == "rejected":
+            return False
+        if str(binding.get("path") or "") != str(candidate.get("path") or ""):
+            return False
+        if str(binding.get("launch_spec_hash") or "") != str(candidate.get("launch_spec_hash") or ""):
+            return False
+        return True
+
+    return True
+
+
+def archive_stale_gateway_approvals(*, decided_by: str | None = None) -> dict[str, Any]:
     registry = load_gateway_registry()
     _ensure_registry_lists(registry)
-    normalized_status = _normalized_optional_controlled(status, {"pending", "approved", "rejected"})
+    archived: list[dict[str, Any]] = []
+    for approval in registry.get("approvals", []):
+        if not _approval_is_stale(registry, approval):
+            continue
+        approval["status"] = "archived"
+        approval["decision"] = "archive"
+        approval["decided_by"] = decided_by or "local_gateway_operator"
+        approval["decided_at"] = _now_iso()
+        approval["archived_reason"] = "Approval no longer matches a current managed agent binding."
+        archived.append(dict(approval))
+    if archived:
+        save_gateway_registry(registry)
+    return {
+        "archived": archived,
+        "archived_count": len(archived),
+        "remaining_pending": len(
+            [item for item in registry.get("approvals", []) if _approval_status(item) == "pending"]
+        ),
+    }
+
+
+def list_gateway_approvals(*, status: str | None = None, include_archived: bool = False) -> list[dict[str, Any]]:
+    registry = load_gateway_registry()
+    _ensure_registry_lists(registry)
+    normalized_status = _normalized_optional_controlled(status, {"pending", "approved", "rejected", "archived"})
     approvals: list[dict[str, Any]] = []
     for approval in registry.get("approvals", []):
         row = dict(approval)
         row["status"] = _approval_status(row)
+        if row["status"] == "archived" and not include_archived and normalized_status != "archived":
+            continue
         if normalized_status and row["status"] != normalized_status:
             continue
         approvals.append(row)
@@ -2412,7 +2490,7 @@ def annotate_runtime_health(
     elif liveness == "offline" and state not in {"stopped", "error"}:
         state = "stopped"
 
-    work_state = _derive_work_state(enriched, liveness=liveness)
+    work_state = _derive_work_state(enriched, liveness=liveness, profile=profile)
     mode = _derive_mode(profile)
     presence = _derive_presence(mode=mode, liveness=liveness, work_state=work_state)
     reply = _derive_reply(profile["reply_mode"])
@@ -2479,8 +2557,13 @@ def annotate_runtime_health(
     enriched["active_space_source"] = _normalized_optional_controlled(
         enriched.get("active_space_source"), _CONTROLLED_ACTIVE_SPACE_SOURCES
     )
-    enriched["queue_capable"] = profile["placement"] == "mailbox"
-    enriched["queue_depth"] = int(enriched.get("backlog_depth") or 0)
+    queue_capable = profile["placement"] == "mailbox"
+    enriched["queue_capable"] = queue_capable
+    enriched["queue_depth"] = int(enriched.get("backlog_depth") or 0) if queue_capable else 0
+    if not queue_capable and str(enriched.get("current_status") or "").strip().lower() == "queued":
+        enriched["current_status"] = "idle"
+        if str(enriched.get("current_activity") or "").strip().lower().startswith("queued in gateway"):
+            enriched["current_activity"] = None
     enriched.setdefault("last_successful_doctor_at", None)
     enriched.setdefault("last_doctor_result", None)
     return enriched
@@ -2655,10 +2738,26 @@ def _default_registry() -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any], *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    tmp.chmod(mode)
-    tmp.replace(path)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            json.dump(payload, tmp, indent=2, sort_keys=True)
+            tmp.write("\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        tmp_path.chmod(mode)
+        tmp_path.replace(path)
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
     path.chmod(mode)
 
 
@@ -3541,14 +3640,16 @@ def _sentinel_model(entry: dict[str, Any], runtime_name: str) -> str | None:
 
 
 def _build_sentinel_claude_cmd(entry: dict[str, Any], session_id: str | None) -> list[str]:
+    add_dir = str(entry.get("add_dir") or entry.get("workdir") or os.getcwd())
     cmd = [
         "claude",
         "-p",
         "--output-format",
         "stream-json",
+        "--verbose",
         "--dangerously-skip-permissions",
         "--add-dir",
-        str(entry.get("add_dir") or "/home/ax-agent/shared/repos"),
+        add_dir,
     ]
     if session_id:
         cmd.extend(["--resume", session_id])
@@ -5170,6 +5271,29 @@ class GatewayDaemon:
             return
         if hermes_status.get("resolved_path"):
             entry["hermes_repo_path"] = str(hermes_status["resolved_path"])
+        profile = infer_operator_profile(entry)
+        if profile["placement"] == "attached" and profile["activation"] == "attach_only":
+            if runtime is not None:
+                runtime.stop()
+                self._runtimes.pop(name, None)
+            last_seen_age = _age_seconds(entry.get("last_seen_at"))
+            attached_state = "running" if last_seen_age is not None and last_seen_age <= RUNTIME_STALE_AFTER_SECONDS else "stale"
+            entry.update(
+                {
+                    "effective_state": attached_state if desired_state == "running" else "stopped",
+                    "runtime_instance_id": None,
+                    "backlog_depth": 0,
+                    "current_tool": None,
+                    "current_tool_call_id": None,
+                }
+            )
+            if str(entry.get("last_error") or "") == f"Unsupported runtime_type: {entry.get('runtime_type')}":
+                entry["last_error"] = None
+            if str(entry.get("current_status") or "").strip().lower() in {"queued", "error"}:
+                entry["current_status"] = None
+                if str(entry.get("current_activity") or "").strip().lower().startswith("queued in gateway"):
+                    entry["current_activity"] = None
+            return
         allowed_to_run = (
             desired_state == "running"
             and attestation_state in {None, "verified"}

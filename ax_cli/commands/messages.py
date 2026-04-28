@@ -10,12 +10,104 @@ from typing import Optional
 import httpx
 import typer
 
-from ..config import get_client, resolve_agent_name, resolve_space_id
+from ..config import get_client, resolve_agent_name, resolve_gateway_config, resolve_space_id
 from ..context_keys import build_upload_context_key
 from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
+from .gateway import _approval_required_guidance, _local_process_fingerprint
 from .watch import _iter_sse
 
 app = typer.Typer(name="messages", help="Message operations", no_args_is_help=True)
+
+
+def _gateway_local_connect(
+    *,
+    gateway_url: str,
+    agent_name: str | None,
+    registry_ref: str | None,
+    workdir: str | None,
+    space_id: str | None,
+) -> dict:
+    display_name = str(agent_name or registry_ref or "").strip()
+    if not display_name:
+        raise typer.BadParameter("Gateway config requires [agent].agent_name or [agent].registry_ref.")
+    body: dict = {"fingerprint": _local_process_fingerprint(agent_name=display_name, cwd=workdir)}
+    if agent_name:
+        body["agent_name"] = agent_name
+    if registry_ref:
+        body["registry_ref"] = registry_ref
+    if space_id:
+        body["space_id"] = space_id
+    try:
+        response = httpx.post(f"{gateway_url.rstrip('/')}/local/connect", json=body, timeout=10.0)
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway local connect failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway local connect failed: {exc}") from exc
+
+
+def _gateway_local_send(
+    *,
+    gateway_cfg: dict,
+    content: str,
+    space_id: str | None,
+    parent_id: str | None,
+) -> dict:
+    gateway_url = str(gateway_cfg.get("url") or "http://127.0.0.1:8765")
+    connect_payload = _gateway_local_connect(
+        gateway_url=gateway_url,
+        agent_name=gateway_cfg.get("agent_name"),
+        registry_ref=gateway_cfg.get("registry_ref"),
+        workdir=gateway_cfg.get("workdir"),
+        space_id=space_id,
+    )
+    session_token = str(connect_payload.get("session_token") or "").strip()
+    if not session_token:
+        status = str(connect_payload.get("status") or "pending")
+        if status == "pending":
+            raise typer.BadParameter(
+                _approval_required_guidance(
+                    connect_payload=connect_payload,
+                    gateway_url=gateway_url,
+                    agent_name=gateway_cfg.get("agent_name"),
+                    workdir=gateway_cfg.get("workdir"),
+                    action="send this message",
+                )
+            )
+        raise typer.BadParameter(f"Gateway local session is {status}; approve the agent before sending.")
+    body = {"content": content, "space_id": space_id, "parent_id": parent_id}
+    try:
+        response = httpx.post(
+            f"{gateway_url.rstrip('/')}/local/send",
+            json=body,
+            headers={"X-Gateway-Session": session_token},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway local send failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway local send failed: {exc}") from exc
+    payload["connect"] = {
+        "status": connect_payload.get("status"),
+        "registry_ref": connect_payload.get("registry_ref"),
+        "agent": (connect_payload.get("agent") or {}).get("name")
+        if isinstance(connect_payload.get("agent"), dict)
+        else None,
+    }
+    return payload
 
 
 def _print_wait_status(remaining: int, last_remaining: int | None, wait_label: str = "reply") -> int:
@@ -568,6 +660,47 @@ def send(
         typer.echo("Error: use either --ask-ax or --to, not both.", err=True)
         raise typer.Exit(1)
 
+    final_content = content
+    if ask_ax:
+        mention = _target_mention("aX")
+        if not _starts_with_mention(content, mention):
+            final_content = f"{mention} {content}"
+    elif to:
+        mention = _target_mention(to)
+        if not _starts_with_mention(content, mention):
+            final_content = f"{mention} {content}"
+
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        if act_as:
+            typer.echo("Error: --act-as is not supported with Gateway-native local identity.", err=True)
+            raise typer.Exit(1)
+        if files:
+            typer.echo("Error: --file is not supported with Gateway-native local identity yet.", err=True)
+            raise typer.Exit(1)
+        if channel != "main":
+            typer.echo("Error: custom --channel is not supported with Gateway-native local identity yet.", err=True)
+            raise typer.Exit(1)
+        data = _gateway_local_send(
+            gateway_cfg=gateway_cfg,
+            content=final_content,
+            space_id=space_id,
+            parent_id=parent,
+        )
+        msg = data.get("message", data)
+        msg_id = msg.get("id") or msg.get("message_id") or data.get("id")
+        if as_json:
+            print_json(data)
+        else:
+            sent_line = f"[green]Sent through Gateway.[/green] id={msg_id}"
+            sender = _sender_label(msg)
+            if sender:
+                sent_line += f" as {sender}"
+            console.print(sent_line)
+            if wait:
+                console.print("[dim]Gateway-native send accepted; reply waiting for this path is not wired yet.[/dim]")
+        return
+
     client = get_client()
     sid = resolve_space_id(client, explicit=space_id)
 
@@ -678,18 +811,6 @@ def send(
             )
         )
         console.print(f"  [dim]Uploaded: {attachments[-1]['filename']}[/dim]")
-
-    # Route helpers prepend a visible mention while keeping POST /messages as
-    # the single transport contract.
-    final_content = content
-    if ask_ax:
-        mention = _target_mention("aX")
-        if not _starts_with_mention(content, mention):
-            final_content = f"{mention} {content}"
-    elif to:
-        mention = _target_mention(to)
-        if not _starts_with_mention(content, mention):
-            final_content = f"{mention} {content}"
 
     processing_watcher = None
     if wait and to:

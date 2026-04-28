@@ -15,6 +15,7 @@ from ax_cli.config import (
     resolve_agent_id,
     resolve_agent_name,
     resolve_base_url,
+    resolve_gateway_config,
     resolve_space_id,
     resolve_token,
     resolve_user_base_url,
@@ -119,6 +120,23 @@ class TestLoadConfig:
         cfg = _load_config()
         assert cfg["agent_id"] == "local-agent"  # local wins
         assert cfg["base_url"] == "https://global.example.com"  # global preserved
+
+    def test_gateway_config_does_not_adopt_local_space_id(self, tmp_path, monkeypatch):
+        local_ax = tmp_path / ".ax"
+        local_ax.mkdir()
+        (local_ax / "config.toml").write_text(
+            'space_id = "legacy-local-space"\n'
+            '[gateway]\n'
+            'mode = "local"\n'
+            'url = "http://127.0.0.1:8765"\n'
+            '[agent]\n'
+            'agent_name = "backend_sentinel"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        gateway = resolve_gateway_config()
+        assert gateway["agent_name"] == "backend_sentinel"
+        assert "space_id" not in gateway
 
     def test_ax_config_file_overrides_local_runtime_config(self, tmp_path, monkeypatch):
         local_ax = tmp_path / ".ax"
@@ -560,6 +578,15 @@ class TestResolveToken:
         write_config(token="config-token")
         monkeypatch.chdir(tmp_path)
         assert resolve_token() == "config-token"
+
+    def test_falls_back_to_config_token_file(self, tmp_path, monkeypatch):
+        token_file = tmp_path / ".ax" / "agent.token"
+        token_file.parent.mkdir()
+        token_file.write_text("file-config-token")
+        (tmp_path / ".ax" / "config.toml").write_text(f'token_file = "{token_file}"\n')
+        monkeypatch.chdir(tmp_path)
+
+        assert resolve_token() == "file-config-token"
 
     def test_returns_none_when_not_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

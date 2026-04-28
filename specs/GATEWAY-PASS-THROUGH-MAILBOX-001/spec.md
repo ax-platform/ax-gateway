@@ -86,6 +86,19 @@ Agents may request a pass-through identity in two ways:
 2. By registry reference: connect to a row number or stable id prefix such as
    `#4`, `install-pass`, or `codex-pass-through`.
 
+For local shell workspaces, names should be machine/workspace-specific by
+default, such as `mac_frontend`, `mac_backend`, `mac_mcp`, or
+`jacob_codex_ax_cli`. Reusing a hosted/listener name such as
+`frontend_sentinel` is allowed only when the operator intentionally wants this
+local mailbox binding attached to that same registry identity.
+
+The fingerprinted origin is the primary registry lookup. If a local origin is
+already bound to `mac_frontend`, then `ax gateway local connect --agent
+frontend_sentinel --workdir <same-folder>` must fail with an identity mismatch
+instead of creating a second pass-through row. Agents should omit `--agent` once
+`.ax/config.toml` exists and let Gateway resolve identity from the approved
+config/fingerprint.
+
 Registry references are valid when the referenced identity can accept a
 `polling_mailbox` binding. A pass-through-only row accepts it directly. A live
 listener such as Night Owl may accept it as an additional approved binding on
@@ -136,6 +149,78 @@ For longer-running work, the agent may start a background polling task that uses
 the same approved identity and periodically checks `gateway local inbox`. This
 background task is an agent convenience only; Gateway still treats the identity
 as pass-through/polling and must not display it as continuously online.
+
+## Doorbell watcher model
+
+The preferred product framing for pass-through is:
+
+> Pass-through is a doorbell, not a listener.
+
+A pass-through agent is not continuously awake, but it may run a lightweight
+local mailbox watcher that rings the host when new work arrives. This lets a
+Codex-style agent keep an approved Gateway identity without pretending to hold a
+live SSE receive session.
+
+Doorbell watcher requirements:
+
+- The watcher uses the same approved pass-through identity and trust signature
+  as normal `gateway local send` / `gateway local inbox` commands.
+- The watcher should connect once, cache a short-lived Gateway local session
+  token, and reuse that token while valid. It must not rewrite registry state on
+  every poll.
+- If the session token expires, reconnect goes through the normal fingerprint
+  check. A changed fingerprint creates a pending approval or blocks.
+- Polling defaults to mark-read semantics. Checking the inbox should clear the
+  mailbox badge unless the caller explicitly uses `--no-mark-read`.
+- The watcher must filter self-authored messages so an agent does not wake up
+  because of its own outbound sends.
+- The watcher must filter by routing target, reply target, or watched
+  conversation. It must not wake an agent for unrelated space traffic returned
+  by a broad status query.
+- The watcher should coalesce bursts and provide a compact notification summary
+  rather than spawning one host wake per message.
+- The watcher may hand the notification to the host runtime when supported
+  (Codex automation, desktop notification, task reminder, or a resumable
+  background-terminal event). If the host cannot be woken automatically, the
+  watcher still records the mailbox event and exposes it on the next agent turn.
+- The UI should describe this state honestly as `Inbox watcher running` or
+  `Doorbell active`, not `Active listener`.
+
+Suggested CLI shape:
+
+```bash
+ax gateway local inbox watch --agent codex-pass-through --json
+ax gateway local inbox watch --agent codex-pass-through --notify codex
+```
+
+The existing bounded command remains useful when an agent is blocked waiting
+for a reply:
+
+```bash
+ax gateway local inbox --agent codex-pass-through --wait 120 --json
+```
+
+`--wait` must be a true new-mail wait. It must not return immediately just
+because historical messages are visible to the agent in aX. The wait predicate
+is one of:
+
+- local pending mailbox depth increased after the wait started;
+- an unread message newer than the caller's cursor arrived;
+- a message matching the watched routing target or watched conversation arrived
+  after the wait started.
+
+The command should carry or derive a cursor such as `after_message_id`,
+`after_created_at`, or `last_seen_checkpoint`. If no new matching message
+arrives before timeout, it returns an empty result with a timeout status. This
+contract is what lets host runtimes such as Claude Code, Codex background
+terminals, or Codex App Server treat the command as a doorbell trigger instead
+of a history fetch.
+
+Implementation note: the watcher must be boring and durable. Registry and
+session files must be written atomically with a lock file or equivalent
+single-writer guard. A long-running watcher and an interactive `send/connect`
+command may run at the same time; they must not corrupt `registry.json`,
+duplicate JSON payloads, or lose approval state.
 
 ## Fingerprint contract
 
@@ -421,8 +506,12 @@ Remaining work to make the spec complete:
 
 - add `ax gateway local register` and automatic local identity resolution for
   normal `ax send/messages/tasks/context` commands;
-- add a documented background mailbox monitor helper for pass-through agents
-  that want lightweight notifications while they work;
+- add `ax gateway local inbox watch` as the documented doorbell watcher for
+  pass-through agents that want lightweight notifications while they work;
+- make local registry/session writes atomic under concurrent watcher + send +
+  connect usage;
+- add host notification integrations where available, starting with Codex
+  background terminal / automation wake-up hooks;
 - promote host OS verification from partial/best-effort to explicit pass/fail
   states in the API payload;
 - add a visible "verification partial" warning in the drawer;
@@ -464,4 +553,21 @@ SESSION="$(ax gateway local connect codex-pass-through --json | jq -r .session_t
 AX_GATEWAY_SESSION="$SESSION" ax gateway local send "authorship smoke" --json \
   | jq '.message.message | {sender_type,display_name,sender_id}'
 # expect: sender_type=agent, display_name=codex-pass-through
+
+# 7. Doorbell watcher wakes only on inbound pass-through mail
+ax gateway local inbox watch --agent codex-pass-through --json
+# send from aX in madtank's Workspace: @codex-pass-through wake-up smoke
+# expect: watcher reports one inbound message and clears unread count
+# expect: watcher ignores codex-pass-through's own outbound messages
+# expect: unrelated @orion / @night_owl messages do not wake codex-pass-through
+
+# 8. --wait is a true new-mail long poll, not a history fetch
+ax gateway local inbox --agent codex-pass-through --wait 30 --json
+# with no new messages: blocks until timeout and returns empty/timeout
+# with a new @codex-pass-through message: returns that new message only
+
+# 9. Doorbell watcher does not corrupt local registry state
+# Run watcher, send, and reconnect concurrently.
+python -m json.tool ~/.ax/gateway/registry.json >/dev/null
+# expect: valid JSON, no duplicated root payloads, approval rows preserved
 ```

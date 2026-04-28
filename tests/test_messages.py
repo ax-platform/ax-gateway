@@ -97,6 +97,131 @@ def test_send_file_stores_context_and_includes_context_key(monkeypatch, tmp_path
     assert attachment["size_bytes"] == sample.stat().st_size
 
 
+def test_send_uses_gateway_native_identity_without_space_override(monkeypatch):
+    posts = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    def fake_post(url, *, json=None, headers=None, timeout=None):
+        posts.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+        if url.endswith("/local/connect"):
+            return FakeResponse({"session_token": "gw-session", "status": "approved", "agent": {"name": "mac-backend"}})
+        if url.endswith("/local/send"):
+            assert headers == {"X-Gateway-Session": "gw-session"}
+            return FakeResponse(
+                {
+                    "agent": "mac-backend",
+                    "message": {
+                        "id": "msg-1",
+                        "display_name": "mac-backend",
+                        "sender_type": "agent",
+                    },
+                }
+            )
+        raise AssertionError(url)
+
+    monkeypatch.setattr(
+        "ax_cli.commands.messages.resolve_gateway_config",
+        lambda: {"url": "http://127.0.0.1:8765", "agent_name": "mac-backend"},
+    )
+    monkeypatch.setattr("ax_cli.commands.messages._local_process_fingerprint", lambda **kwargs: {"fingerprint": "fp"})
+    monkeypatch.setattr("ax_cli.commands.messages.httpx.post", fake_post)
+    monkeypatch.setattr("ax_cli.commands.messages.get_client", lambda: (_ for _ in ()).throw(AssertionError("direct client")))
+
+    result = runner.invoke(app, ["send", "hello from backend", "--no-wait", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert posts[0]["json"] == {"fingerprint": {"fingerprint": "fp"}, "agent_name": "mac-backend"}
+    assert posts[1]["json"] == {"content": "hello from backend", "space_id": None, "parent_id": None}
+    payload = json.loads(result.output)
+    assert payload["message"]["id"] == "msg-1"
+
+
+def test_send_gateway_native_identity_uses_explicit_space_only(monkeypatch):
+    sends = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    def fake_post(url, *, json=None, headers=None, timeout=None):
+        if url.endswith("/local/connect"):
+            sends.append(("connect", json))
+            return FakeResponse({"session_token": "gw-session", "status": "approved"})
+        if url.endswith("/local/send"):
+            sends.append(("send", json))
+            return FakeResponse({"message": {"id": "msg-2"}})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(
+        "ax_cli.commands.messages.resolve_gateway_config",
+        lambda: {"url": "http://127.0.0.1:8765", "agent_name": "mac-backend"},
+    )
+    monkeypatch.setattr("ax_cli.commands.messages._local_process_fingerprint", lambda **kwargs: {"fingerprint": "fp"})
+    monkeypatch.setattr("ax_cli.commands.messages.httpx.post", fake_post)
+
+    result = runner.invoke(app, ["send", "hello", "--space-id", "space-db-override", "--no-wait", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert sends[0][1]["space_id"] == "space-db-override"
+    assert sends[1][1]["space_id"] == "space-db-override"
+
+
+def test_send_gateway_native_identity_pending_approval_guides_agent(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "status": "pending",
+                "approval_id": "approval-123",
+                "agent": {
+                    "name": "backend_sentinel",
+                    "workdir": "/Users/jacob/claude_home/ax-backend-extract",
+                    "active_space_name": "madtank's Workspace",
+                },
+                "approval": {
+                    "approval_kind": "new_binding",
+                    "risk": "medium",
+                },
+            }
+
+    monkeypatch.setattr(
+        "ax_cli.commands.messages.resolve_gateway_config",
+        lambda: {
+            "url": "http://127.0.0.1:8765",
+            "agent_name": "backend_sentinel",
+            "workdir": "/Users/jacob/claude_home/ax-backend-extract",
+        },
+    )
+    monkeypatch.setattr("ax_cli.commands.messages._local_process_fingerprint", lambda **kwargs: {"fingerprint": "fp"})
+    monkeypatch.setattr("ax_cli.commands.messages.httpx.post", lambda *args, **kwargs: FakeResponse())
+
+    result = runner.invoke(app, ["send", "hello from backend", "--no-wait"])
+
+    assert result.exit_code != 0
+    assert "Gateway approval required for @backend_sentinel" in result.output
+    assert "open http://127.0.0.1:8765" in result.output.lower()
+    assert "approval_id=approval-123" in result.output
+    assert "workdir=/Users/jacob/claude_home/ax-backend-extract" in result.output
+    assert "Do not fall back to a direct PAT" in result.output
+
+
 def test_messages_list_shows_short_ids_but_json_keeps_full_ids(monkeypatch):
     message_id = "12345678-90ab-cdef-1234-567890abcdef"
     calls = {}

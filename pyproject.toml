@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "axctl"
 version = "0.6.0"
-description = "aX Platform CLI — agent communication, tasks, and management"
+description = "aX Gateway — local agent registry, runtime supervision, and CLI tools"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -32,8 +32,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://paxai.app"
-Repository = "https://github.com/ax-platform/ax-cli"
-Documentation = "https://github.com/ax-platform/ax-cli#readme"
+Repository = "https://github.com/ax-platform/ax-gateway"
+Documentation = "https://github.com/ax-platform/ax-gateway#readme"
 
 [project.scripts]
 axctl = "ax_cli.main:main"

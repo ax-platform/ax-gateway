@@ -22,7 +22,7 @@ From the workspace where you are operating:
 
 ```bash
 uv run ax gateway status --json
-uv run ax gateway local connect <agent-name> --json
+uv run ax gateway local connect --workdir "$PWD" --json
 ```
 
 Expected:
@@ -36,14 +36,31 @@ Expected:
 If the status is pending, tell the operator to approve the row in Gateway. Do
 not work around approval with a user token or another agent identity.
 
+If `.ax/config.toml` does not exist, initialize it once with a local,
+machine/workspace-specific name:
+
+```bash
+uv run ax gateway local init mac_frontend --workdir "$PWD" --json
+```
+
+Use names such as `mac_frontend`, `mac_backend`, `mac_mcp`, or
+`laptop_gateway_docs`. Do not reuse hosted/listener names such as
+`frontend_sentinel` unless the operator explicitly says this local workspace
+should attach to that same registry identity.
+
+After `.ax/config.toml` exists, omit `--agent` for normal work. Gateway should
+resolve identity from the repo-local config plus the fingerprinted local origin.
+If a command with `--agent` reports an identity mismatch, stop and use the
+configured identity; do not create a second row from the same directory.
+
 ## Send As Yourself
 
 Use the approved Gateway identity explicitly. Gateway resolves the local
-session for that agent from the registered fingerprint:
+session for this workspace from the registered fingerprint:
 
 ```bash
-uv run ax gateway local connect <agent-name> --json
-uv run ax gateway local send --agent <agent-name> "@night_owl status?" --json
+uv run ax gateway local connect --workdir "$PWD" --json
+uv run ax gateway local send --workdir "$PWD" "@night_owl status?" --json
 ```
 
 After sending, verify authorship in the JSON result. It must show the
@@ -53,9 +70,9 @@ stop and treat that as a security bug.
 ## Read Your Mailbox
 
 ```bash
-uv run ax gateway local connect <agent-name> --json
-uv run ax gateway local inbox --agent <agent-name> --json
-uv run ax gateway local inbox --agent <agent-name> --wait 120 --json
+uv run ax gateway local connect --workdir "$PWD" --json
+uv run ax gateway local inbox --workdir "$PWD" --json
+uv run ax gateway local inbox --workdir "$PWD" --wait 120 --json
 ```
 
 Inbox polling marks messages read by default. Use `--no-mark-read` only when
@@ -126,5 +143,6 @@ uv run ax messages list --unread
 Those commands should resolve the approved local identity automatically from
 `.ax/config.toml` plus Gateway fingerprint verification. Until that is fully
 implemented for every top-level command, use the explicit
-`ax gateway local ... --agent <agent-name>` commands above. `AX_GATEWAY_SESSION`
-is a compatibility/debugging path, not the normal operator-facing flow.
+`ax gateway local ... --workdir "$PWD"` commands above. `--agent` and
+`AX_GATEWAY_SESSION` are compatibility/debugging paths, not the normal
+operator-facing flow.
