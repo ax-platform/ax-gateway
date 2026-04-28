@@ -4075,6 +4075,66 @@ def test_gateway_agents_test_blocks_attached_session_until_connected(monkeypatch
     assert "test_gateway_agents_test_block0/roger" in result.output.replace("\n", "")
 
 
+def test_gateway_agents_attach_writes_channel_config_and_command(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
+    workdir = tmp_path / "roger"
+    token_file = tmp_path / "roger.token"
+    token_file.write_text("axp_a_agent.secret\n")
+    registry = gateway_core.load_gateway_registry()
+    registry["agents"] = [
+        {
+            "name": "roger",
+            "agent_id": "agent-roger",
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "claude_code_channel",
+            "template_id": "claude_code_channel",
+            "workdir": str(workdir),
+            "desired_state": "stopped",
+            "effective_state": "stale",
+            "transport": "gateway",
+            "credential_source": "gateway",
+            "token_file": str(token_file),
+            "attestation_state": "verified",
+            "approval_state": "approved",
+            "identity_status": "verified",
+            "environment_status": "environment_allowed",
+            "space_status": "active_allowed",
+        }
+    ]
+    gateway_core.save_gateway_registry(registry)
+
+    def fake_write_channel_setup(*, agent_name, workdir, **kwargs):
+        return {
+            "agent": agent_name,
+            "space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "mode": "local",
+            "mcp_path": str(workdir / ".mcp.json"),
+            "env_path": str(tmp_path / "roger.env"),
+            "cli_config_path": str(workdir / ".ax" / "config.toml"),
+            "cli_readme_path": str(workdir / ".ax" / "README.md"),
+            "server_name": "ax-channel",
+            "launch_command": f"claude --strict-mcp-config --mcp-config {workdir / '.mcp.json'} "
+            "--dangerously-load-development-channels server:ax-channel",
+        }
+
+    from ax_cli.commands import channel as channel_mod
+
+    monkeypatch.setattr(channel_mod, "write_channel_setup", fake_write_channel_setup)
+
+    result = runner.invoke(app, ["gateway", "agents", "attach", "roger", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["agent"] == "roger"
+    assert payload["attach_command"].startswith(f"cd {workdir}")
+    assert "--dangerously-load-development-channels server:ax-channel" in payload["attach_command"]
+    updated = gateway_core.find_agent_entry(gateway_core.load_gateway_registry(), "roger")
+    assert updated["desired_state"] == "running"
+
+
 def test_gateway_local_send_auto_connects_with_agent(monkeypatch):
     calls = []
 

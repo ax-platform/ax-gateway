@@ -175,6 +175,16 @@ uses the generated per-agent env file referenced by `.mcp.json`.
     )
 
 
+def _default_local_channel_command() -> str:
+    """Prefer the sibling axctl script for editable/dev installs."""
+    launcher = Path(sys.argv[0]).expanduser()
+    if launcher.name in {"ax", "axctl"}:
+        sibling = launcher.with_name("axctl")
+        if sibling.exists():
+            return str(sibling)
+    return "axctl"
+
+
 def _touch_gateway_channel_entry(
     agent_name: str,
     *,
@@ -231,7 +241,7 @@ def _channel_mcp_server_config(
     if mode == "local":
         return {
             "type": "stdio",
-            "command": "axctl",
+            "command": _default_local_channel_command(),
             "args": args,
             "env": {"AX_CHANNEL_ENV_FILE": str(env_path)},
         }
@@ -254,6 +264,90 @@ def _channel_mcp_server_config(
             "axctl",
             *args,
         ],
+    }
+
+
+def write_channel_setup(
+    *,
+    agent_name: str,
+    workdir: Path,
+    space_id: str | None = None,
+    base_url: str | None = None,
+    token_file: Optional[Path] = None,
+    agent_id: str | None = None,
+    server_name: str = "ax-channel",
+    env_path: Optional[Path] = None,
+    mode: str = "local",
+    container_image: str | None = None,
+    debug: bool = False,
+) -> dict[str, Any]:
+    """Write Claude Code MCP + Gateway CLI config and return launch details."""
+    agent_name = agent_name.strip()
+    if not agent_name:
+        raise typer.BadParameter("Agent name is required.")
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in {"local", "docker"}:
+        raise typer.BadParameter("--mode must be local or docker.")
+
+    defaults = _gateway_agent_channel_defaults(agent_name)
+    resolved_space_id = str(space_id or defaults.get("AX_SPACE_ID") or "").strip()
+    if not resolved_space_id:
+        raise typer.BadParameter("--space-id is required when the agent is not present in the Gateway registry.")
+    resolved_base_url = str(base_url or defaults.get("AX_BASE_URL") or "https://paxai.app").strip()
+    resolved_token_file = token_file or (
+        Path(defaults["AX_TOKEN_FILE"]).expanduser() if defaults.get("AX_TOKEN_FILE") else None
+    )
+    if not resolved_token_file:
+        raise typer.BadParameter("--token-file is required when the agent is not present in the Gateway registry.")
+    resolved_agent_id = str(agent_id or defaults.get("AX_AGENT_ID") or "").strip()
+
+    target_workdir = workdir.expanduser().resolve()
+    mcp_path = target_workdir / ".mcp.json"
+    resolved_env_path = (
+        env_path.expanduser() if env_path else Path.home() / ".claude" / "channels" / "ax-channel" / f"{agent_name}.env"
+    )
+    env_values = {
+        "AX_TOKEN_FILE": str(resolved_token_file.expanduser()),
+        "AX_BASE_URL": resolved_base_url,
+        "AX_AGENT_NAME": agent_name,
+        "AX_AGENT_ID": resolved_agent_id,
+        "AX_SPACE_ID": resolved_space_id,
+    }
+    server_config = _channel_mcp_server_config(
+        agent_name=agent_name,
+        space_id=resolved_space_id,
+        env_path=resolved_env_path,
+        mode=normalized_mode,
+        container_image=container_image,
+        debug=debug,
+    )
+    _write_channel_env(resolved_env_path, env_values)
+    _write_mcp_server_config(mcp_path, server_name, server_config)
+    cli_config_path = target_workdir / ".ax" / "config.toml"
+    _write_gateway_cli_config(
+        cli_config_path,
+        agent_name=agent_name,
+        base_url="http://127.0.0.1:8765",
+        workdir=target_workdir,
+    )
+    cli_readme_path = target_workdir / ".ax" / "README.md"
+    _write_channel_workspace_readme(cli_readme_path, agent_name=agent_name, workdir=target_workdir)
+
+    launch_command = (
+        f"claude --strict-mcp-config --mcp-config {mcp_path} "
+        f"--dangerously-load-development-channels server:{server_name}"
+    )
+    return {
+        "agent": agent_name,
+        "space_id": resolved_space_id,
+        "base_url": resolved_base_url,
+        "mode": normalized_mode,
+        "mcp_path": str(mcp_path),
+        "env_path": str(resolved_env_path),
+        "cli_config_path": str(cli_config_path),
+        "cli_readme_path": str(cli_readme_path),
+        "server_name": server_name,
+        "launch_command": launch_command,
     }
 
 
@@ -1006,82 +1100,28 @@ def setup_channel(
     as_json: bool = JSON_OPTION,
 ):
     """Write Claude Code MCP config and per-agent env paths for ax-channel."""
-    agent_name = agent.strip()
-    if not agent_name:
-        raise typer.BadParameter("Agent name is required.")
-    normalized_mode = mode.strip().lower()
-    if normalized_mode not in {"local", "docker"}:
-        raise typer.BadParameter("--mode must be local or docker.")
-
-    defaults = _gateway_agent_channel_defaults(agent_name)
-    resolved_space_id = str(space_id or defaults.get("AX_SPACE_ID") or "").strip()
-    if not resolved_space_id:
-        raise typer.BadParameter("--space-id is required when the agent is not present in the Gateway registry.")
-    resolved_base_url = str(base_url or defaults.get("AX_BASE_URL") or "https://paxai.app").strip()
-    resolved_token_file = token_file or (
-        Path(defaults["AX_TOKEN_FILE"]).expanduser() if defaults.get("AX_TOKEN_FILE") else None
-    )
-    if not resolved_token_file:
-        raise typer.BadParameter("--token-file is required when the agent is not present in the Gateway registry.")
-    resolved_agent_id = str(agent_id or defaults.get("AX_AGENT_ID") or "").strip()
-
-    target_workdir = workdir.expanduser().resolve()
-    mcp_path = target_workdir / ".mcp.json"
-    resolved_env_path = (
-        env_path.expanduser() if env_path else Path.home() / ".claude" / "channels" / "ax-channel" / f"{agent_name}.env"
-    )
-    env_values = {
-        "AX_TOKEN_FILE": str(resolved_token_file.expanduser()),
-        "AX_BASE_URL": resolved_base_url,
-        "AX_AGENT_NAME": agent_name,
-        "AX_AGENT_ID": resolved_agent_id,
-        "AX_SPACE_ID": resolved_space_id,
-    }
-    server_config = _channel_mcp_server_config(
-        agent_name=agent_name,
-        space_id=resolved_space_id,
-        env_path=resolved_env_path,
-        mode=normalized_mode,
+    payload = write_channel_setup(
+        agent_name=agent,
+        workdir=workdir,
+        space_id=space_id,
+        base_url=base_url,
+        token_file=token_file,
+        agent_id=agent_id,
+        server_name=server_name,
+        env_path=env_path,
+        mode=mode,
         container_image=container_image,
         debug=debug,
     )
-    _write_channel_env(resolved_env_path, env_values)
-    _write_mcp_server_config(mcp_path, server_name, server_config)
-    cli_config_path = target_workdir / ".ax" / "config.toml"
-    _write_gateway_cli_config(
-        cli_config_path,
-        agent_name=agent_name,
-        base_url="http://127.0.0.1:8765",
-        workdir=target_workdir,
-    )
-    cli_readme_path = target_workdir / ".ax" / "README.md"
-    _write_channel_workspace_readme(cli_readme_path, agent_name=agent_name, workdir=target_workdir)
-
-    launch_command = (
-        f"claude --strict-mcp-config --mcp-config {mcp_path} "
-        f"--dangerously-load-development-channels server:{server_name}"
-    )
-    payload = {
-        "agent": agent_name,
-        "space_id": resolved_space_id,
-        "base_url": resolved_base_url,
-        "mode": normalized_mode,
-        "mcp_path": str(mcp_path),
-        "env_path": str(resolved_env_path),
-        "cli_config_path": str(cli_config_path),
-        "cli_readme_path": str(cli_readme_path),
-        "server_name": server_name,
-        "launch_command": launch_command,
-    }
     if as_json:
         print_json(payload)
         return
-    console.print(f"[green]Claude Code channel config written[/green] for @{agent_name}")
-    console.print(f"  cli   = {cli_config_path}")
-    console.print(f"  mcp   = {mcp_path}")
-    console.print(f"  env   = {resolved_env_path}")
-    console.print(f"  mode  = {normalized_mode}")
-    console.print("  run   = " + launch_command)
+    console.print(f"[green]Claude Code channel config written[/green] for @{payload['agent']}")
+    console.print(f"  cli   = {payload['cli_config_path']}")
+    console.print(f"  mcp   = {payload['mcp_path']}")
+    console.print(f"  env   = {payload['env_path']}")
+    console.print(f"  mode  = {payload['mode']}")
+    console.print("  run   = " + payload["launch_command"])
 
 
 @app.callback(invoke_without_command=True)
