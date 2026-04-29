@@ -174,6 +174,7 @@ def test_check_unknown_agent_returns_nonzero(monkeypatch):
 def test_get_agent_presence_resolves_name_to_id():
     """The client method itself: name → id lookup via list_agents, then GET state/presence."""
     import httpx
+
     from ax_cli.client import AxClient
 
     list_called = {"n": 0}
@@ -218,6 +219,7 @@ def test_get_agent_presence_resolves_name_to_id():
 def test_get_agent_presence_uses_uuid_directly():
     """If name_or_id is already a UUID, skip the list lookup."""
     import httpx
+
     from ax_cli.client import AxClient
 
     list_called = {"n": 0}
