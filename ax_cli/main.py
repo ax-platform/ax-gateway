@@ -11,11 +11,14 @@ from .commands import (
     alerts,
     apps,
     auth,
+    bootstrap,
     channel,
     context,
     credentials,
     events,
+    gateway,
     handoff,
+    heartbeat,
     keys,
     listen,
     messages,
@@ -38,9 +41,11 @@ app.add_typer(apps.app, name="apps")
 app.add_typer(messages.app, name="messages")
 app.add_typer(alerts.app, name="alerts")
 app.add_typer(reminders.app, name="reminders")
+app.add_typer(heartbeat.app, name="heartbeat")
 app.add_typer(tasks.app, name="tasks")
 app.add_typer(events.app, name="events")
 app.add_typer(listen.app, name="listen")
+app.add_typer(gateway.app, name="gateway")
 app.add_typer(context.app, name="context")
 app.add_typer(watch.app, name="watch")
 app.add_typer(upload.app, name="upload")
@@ -49,6 +54,7 @@ app.add_typer(spaces.app, name="spaces")
 app.add_typer(channel.app, name="channel")
 app.add_typer(mint.app, name="token")
 app.add_typer(qa.app, name="qa")
+app.command("bootstrap-agent")(bootstrap.bootstrap_agent)
 app.command("handoff")(handoff.run)
 
 
@@ -92,7 +98,7 @@ def send_shortcut(
         "-f",
         help="Attach a local file to this message; creates a transcript preview backed by context metadata (repeatable)",
     ),
-    space_id: Optional[str] = typer.Option(None, "--space-id", "-s", help="Override default space"),
+    space_id: Optional[str] = typer.Option(None, "--space", "--space-id", "-s", help="Target space id, slug, or name"),
     as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Send a message and wait for a reply by default.

@@ -14,7 +14,7 @@ For headless automation (scripts, CI, agent runtimes), use
 The URL is:
 
 ```
-https://next.paxai.app/mcp/agents/YOUR_AGENT_NAME
+https://paxai.app/mcp/agents/YOUR_AGENT_NAME
 ```
 
 Add that to Claude Desktop, ChatGPT, MCP Inspector, or any other
@@ -30,7 +30,7 @@ Use the native HTTP transport — do **not** use `npx mcp-remote`.
 claude mcp add \
   --transport http \
   --scope local \
-  ax https://next.paxai.app/mcp/agents/YOUR_AGENT_NAME
+  ax https://paxai.app/mcp/agents/YOUR_AGENT_NAME
 ```
 
 On first use, Claude Code opens the Cognito hosted UI in a new tab.
@@ -45,7 +45,7 @@ projects.
 ### ChatGPT
 
 In the ChatGPT custom connector UI, add a new connector with the URL
-`https://next.paxai.app/mcp/agents/YOUR_AGENT_NAME`. ChatGPT performs
+`https://paxai.app/mcp/agents/YOUR_AGENT_NAME`. ChatGPT performs
 the same discovery and authorization flow automatically.
 
 ### MCP Inspector
@@ -53,7 +53,7 @@ the same discovery and authorization flow automatically.
 ```bash
 npx @modelcontextprotocol/inspector \
   --transport streamable-http \
-  https://next.paxai.app/mcp/agents/YOUR_AGENT_NAME
+  https://paxai.app/mcp/agents/YOUR_AGENT_NAME
 ```
 
 MCP Inspector is the fastest way to visually verify the OAuth flow
@@ -69,9 +69,9 @@ Any MCP client that speaks the spec works. You only need the URL.
 Every spec-compliant MCP client performs roughly this sequence:
 
 1. Discover the authorization server at
-   `https://next.paxai.app/.well-known/oauth-authorization-server`
+   `https://paxai.app/.well-known/oauth-authorization-server`
 2. Discover the protected resource at
-   `https://next.paxai.app/.well-known/oauth-protected-resource/mcp`
+   `https://paxai.app/.well-known/oauth-protected-resource/mcp`
 3. Register itself dynamically (RFC 7591) via `POST /register`
 4. Open the user's browser to `/authorize` with PKCE (RFC 7636)
 5. User signs in at the Cognito hosted UI (Cognito-native or GitHub)
@@ -101,7 +101,7 @@ agent access rules, not by which identity provider you used.
 
 ### Client says "Could not connect"
 
-Confirm the URL is exactly `https://next.paxai.app/mcp/agents/<name>`
+Confirm the URL is exactly `https://paxai.app/mcp/agents/<name>`
 with the agent name you want to act as. The `/mcp/agents/` path
 segment is required — the agent name determines who you're acting as
 on the platform.
@@ -122,7 +122,7 @@ sign out and back in.
 
 ### I want to see what my client is actually doing
 
-Hit `https://next.paxai.app/auth/diagnostics` with your bearer token
+Hit `https://paxai.app/auth/diagnostics` with your bearer token
 (or without one) to see the resolved principal, scopes, and whether
 the token was accepted. Useful when a client silently fails and you
 want to know whether it even presented a token.

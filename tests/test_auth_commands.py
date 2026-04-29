@@ -33,11 +33,11 @@ def test_login_calls_user_login(monkeypatch):
             "--token",
             "axp_u_test.token",
             "--url",
-            "https://next.paxai.app",
+            "https://paxai.app",
             "--env",
             "next",
             "--agent",
-            "peer-agent",
+            "anvil",
             "--space-id",
             "space-123",
         ],
@@ -46,8 +46,8 @@ def test_login_calls_user_login(monkeypatch):
     assert result.exit_code == 0
     assert called == {
         "token": "axp_u_test.token",
-        "base_url": "https://next.paxai.app",
-        "agent": "peer-agent",
+        "base_url": "https://paxai.app",
+        "agent": "anvil",
         "space_id": "space-123",
         "env_name": "next",
     }
@@ -75,7 +75,7 @@ def test_login_defaults_to_next_without_space_requirement(monkeypatch):
     assert result.exit_code == 0
     assert called == {
         "token": "axp_u_test.token",
-        "base_url": "https://next.paxai.app",
+        "base_url": "https://paxai.app",
         "agent": None,
         "space_id": None,
         "env_name": None,
@@ -125,8 +125,8 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
     write_config(
         token="axp_a_old.secret",
         base_url="https://old.example.com",
-        agent_name="demo-agent",
-        agent_id="agent-demo-agent",
+        agent_name="orion",
+        agent_id="agent-orion",
         space_id="old-space",
     )
 
@@ -136,7 +136,7 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
             self.token = token
 
         def get_token(self, token_class, *, scope, force_refresh):
-            assert self.base_url == "https://next.paxai.app"
+            assert self.base_url == "https://paxai.app"
             assert self.token == "axp_u_new.secret"
             assert token_class == "user_access"
             assert scope == "messages tasks context agents spaces search"
@@ -149,7 +149,7 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
             self.token = token
 
         def whoami(self):
-            return {"username": "alex", "email": "alex@example.com"}
+            return {"username": "madtank", "email": "madtank@example.com"}
 
         def list_spaces(self):
             return {"spaces": [{"id": "space-current", "name": "Team Hub", "is_current": True}]}
@@ -167,14 +167,14 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
     assert local_cfg == {
         "token": "axp_a_old.secret",
         "base_url": "https://old.example.com",
-        "agent_name": "demo-agent",
-        "agent_id": "agent-demo-agent",
+        "agent_name": "orion",
+        "agent_id": "agent-orion",
         "space_id": "old-space",
     }
     user_cfg = tomllib.loads((config_dir.parent / "_global_config" / "user.toml").read_text())
     assert user_cfg == {
         "token": "axp_u_new.secret",
-        "base_url": "https://next.paxai.app",
+        "base_url": "https://paxai.app",
         "principal_type": "user",
         "space_id": "space-current",
     }
@@ -182,7 +182,7 @@ def test_user_login_does_not_modify_local_agent_config(monkeypatch, write_config
 
 def test_user_login_env_stores_named_login_and_marks_active(monkeypatch, write_config, config_dir):
     """Admins can keep separate user bootstrap tokens for dev/next/prod."""
-    write_config(token="axp_a_old.secret", base_url="https://old.example.com", agent_name="demo-agent")
+    write_config(token="axp_a_old.secret", base_url="https://old.example.com", agent_name="orion")
 
     class FakeTokenExchanger:
         def __init__(self, base_url, token):
@@ -200,7 +200,7 @@ def test_user_login_env_stores_named_login_and_marks_active(monkeypatch, write_c
             self.token = token
 
         def whoami(self):
-            return {"username": "alex", "email": "alex@example.com"}
+            return {"username": "madtank", "email": "madtank@example.com"}
 
         def list_spaces(self):
             return {"spaces": []}
@@ -232,6 +232,7 @@ def test_auth_doctor_json_outputs_diagnostics(monkeypatch):
             "ok": True,
             "selected_env": env_name,
             "selected_profile": None,
+            "runtime_config": "/tmp/codex/.ax/config.toml",
             "effective": {
                 "auth_source": "user_login:dev",
                 "token_kind": "user_pat",
@@ -267,3 +268,56 @@ def test_auth_doctor_json_outputs_diagnostics(monkeypatch):
     assert payload["details"] == []
     assert payload["effective"]["auth_source"] == "user_login:dev"
     assert payload["effective"]["space_id"] == "space-1"
+
+
+def test_auth_whoami_reports_runtime_config(monkeypatch, tmp_path):
+    runtime_config = tmp_path / "runtime-config.toml"
+    runtime_config.write_text("")
+    monkeypatch.setenv("AX_CONFIG_FILE", str(runtime_config))
+
+    class FakeClient:
+        def whoami(self):
+            return {
+                "id": "user-1",
+                "bound_agent": {
+                    "default_space_id": "space-1",
+                },
+            }
+
+    monkeypatch.setattr(auth, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(auth, "resolve_agent_name", lambda *, client: "codex")
+    monkeypatch.setattr(auth, "_local_config_dir", lambda: None)
+
+    result = runner.invoke(app, ["auth", "whoami", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["runtime_config"] == str(runtime_config)
+    assert payload["resolved_agent"] == "codex"
+
+
+def test_auth_exchange_without_token_points_agents_to_gateway(monkeypatch, config_dir):
+    monkeypatch.delenv("AX_TOKEN", raising=False)
+    monkeypatch.delenv("AX_TOKEN_FILE", raising=False)
+
+    result = runner.invoke(app, ["auth", "exchange"])
+
+    assert result.exit_code == 1
+    assert "No token configured" in result.output
+    assert "ax gateway local" in result.output
+    assert "ax gateway login" in result.output
+    assert "auth token set" not in result.output
+    assert "AX_TOKEN" not in result.output
+
+
+def test_auth_token_show_without_token_points_agents_to_gateway(monkeypatch, config_dir):
+    monkeypatch.delenv("AX_TOKEN", raising=False)
+    monkeypatch.delenv("AX_TOKEN_FILE", raising=False)
+
+    result = runner.invoke(app, ["auth", "token", "show"])
+
+    assert result.exit_code == 1
+    assert "Gateway-managed agents" in result.output
+    assert "ax gateway local" in result.output
+    assert "ax gateway login" in result.output
+    assert "AX_TOKEN" not in result.output

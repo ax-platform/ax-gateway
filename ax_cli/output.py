@@ -8,6 +8,9 @@ from rich.console import Console
 from rich.table import Table
 
 console = Console()
+# Dedicated stderr console for status/log lines that mustn't pollute stdout
+# (e.g. when the caller parses --json output or pipes the command).
+err_console = Console(stderr=True)
 
 JSON_OPTION = typer.Option(False, "--json", help="Output as JSON")
 SPACE_OPTION = typer.Option(None, "--space-id", help="Override default space")

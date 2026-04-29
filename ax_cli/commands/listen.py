@@ -75,6 +75,14 @@ def _message_sender_identity(data: dict) -> tuple[str, str]:
     )
 
 
+def _message_sender_type(data: dict) -> str:
+    """Return the author type from an SSE payload when available."""
+    author = data.get("author")
+    if isinstance(author, dict):
+        return str(author.get("type") or "")
+    return str(data.get("sender_type") or "")
+
+
 def _is_self_authored(data: dict, agent_name: str, agent_id: str | None) -> bool:
     """Return True when an SSE payload was authored by this listener's agent."""
     sender, sender_id = _message_sender_identity(data)
@@ -124,11 +132,6 @@ def _should_respond(
     if _is_self_authored(data, agent_name, agent_id):
         return False
 
-    parent_id = str(data.get("parent_id") or "")
-    conversation_id = str(data.get("conversation_id") or "")
-    if reply_anchor_ids and (parent_id in reply_anchor_ids or conversation_id in reply_anchor_ids):
-        return True
-
     # Primary path: trust the backend's authoritative mentions list.
     # An empty list is MEANINGFUL — it means "no active mentions for
     # this message," which covers the kill-switch filter case where
@@ -137,15 +140,29 @@ def _should_respond(
     mentions = data.get("mentions")
     if mentions is not None and isinstance(mentions, list):
         agent_name_lower = agent_name.lower()
+        sender_type = _message_sender_type(data).lower()
         for m in mentions:
             handle = ""
+            source = ""
             if isinstance(m, str):
                 handle = m
             elif isinstance(m, dict):
                 handle = m.get("agent_name") or m.get("handle") or m.get("name") or ""
+                source = str(m.get("source") or "")
+            if sender_type == "agent" and source in {"thread_parent", "reply_target"}:
+                continue
             if handle.lower().lstrip("@").strip() == agent_name_lower:
                 return True
+        parent_id = str(data.get("parent_id") or "")
+        conversation_id = str(data.get("conversation_id") or "")
+        if reply_anchor_ids and (parent_id in reply_anchor_ids or conversation_id in reply_anchor_ids):
+            return _message_sender_type(data).lower() != "agent"
         return False
+
+    parent_id = str(data.get("parent_id") or "")
+    conversation_id = str(data.get("conversation_id") or "")
+    if reply_anchor_ids and (parent_id in reply_anchor_ids or conversation_id in reply_anchor_ids):
+        return _message_sender_type(data).lower() != "agent"
 
     # Fallback: `mentions` field absent entirely (legacy / non-standard
     # event shape). Use content regex so we don't silently stop reacting

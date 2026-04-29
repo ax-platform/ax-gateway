@@ -40,7 +40,7 @@ The user should run this command and paste the user PAT directly into the hidden
 prompt. Do not send the PAT through chat, tasks, context, or agent messages.
 
 ```bash
-axdev login --url https://next.paxai.app
+axdev login --url https://paxai.app
 ```
 
 Expected:
@@ -50,9 +50,9 @@ Paste your aX token. Input is hidden.
 Token:
 Token captured: axp_u_********
 
-Connecting to https://next.paxai.app...
+Connecting to https://paxai.app...
 Token verified. Exchange successful.
-Identity: alex (...)
+Identity: madtank (...)
 
 Saved user login: .../config/user.toml
 ```
@@ -62,12 +62,12 @@ Saved user login: .../config/user.toml
 The setup agent may run this after the user login is complete.
 
 ```bash
-axdev token mint demo-agent-e2e \
+axdev token mint orion-e2e \
   --create \
   --audience both \
   --expires 30 \
-  --save-to "$AX_E2E_ROOT/agents/demo-agent-e2e" \
-  --profile demo-e2e \
+  --save-to "$AX_E2E_ROOT/agents/orion-e2e" \
+  --profile prod-orion-e2e \
   --no-print-token
 ```
 
@@ -75,21 +75,21 @@ Expected:
 
 - token file is created with mode `0600`
 - `.ax/config.toml` is created under the agent directory
-- profile `demo-e2e` is created
+- profile `prod-orion-e2e` is created
 - raw `axp_a_...` token is not printed
 
 ## Verify Agent Runtime
 
 ```bash
-axdev profile verify demo-e2e
-eval "$(axdev profile env demo-e2e)"
+axdev profile verify prod-orion-e2e
+eval "$(axdev profile env prod-orion-e2e)"
 axdev auth whoami --json
 ```
 
 Expected:
 
 - `whoami` uses an agent-bound profile
-- `bound_agent.agent_name` or resolved agent metadata points at `demo-agent-e2e`
+- `bound_agent.agent_name` or resolved agent metadata points at `orion-e2e`
 - runtime commands use the agent PAT/JWT, not the user PAT
 
 ## Cleanup

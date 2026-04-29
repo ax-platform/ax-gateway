@@ -10,12 +10,163 @@ from typing import Optional
 import httpx
 import typer
 
-from ..config import get_client, resolve_agent_name, resolve_space_id
+from ..config import get_client, resolve_agent_name, resolve_gateway_config, resolve_space_id
 from ..context_keys import build_upload_context_key
 from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
+from .gateway import _approval_required_guidance, _local_process_fingerprint
 from .watch import _iter_sse
 
 app = typer.Typer(name="messages", help="Message operations", no_args_is_help=True)
+SPACE_OPTION = typer.Option(None, "--space", "--space-id", "-s", help="Target space id, slug, or name")
+
+
+def _gateway_local_connect(
+    *,
+    gateway_url: str,
+    agent_name: str | None,
+    registry_ref: str | None,
+    workdir: str | None,
+    space_id: str | None,
+) -> dict:
+    display_name = str(agent_name or registry_ref or "").strip()
+    if not display_name:
+        raise typer.BadParameter("Gateway config requires [agent].agent_name or [agent].registry_ref.")
+    body: dict = {"fingerprint": _local_process_fingerprint(agent_name=display_name, cwd=workdir)}
+    if agent_name:
+        body["agent_name"] = agent_name
+    if registry_ref:
+        body["registry_ref"] = registry_ref
+    if space_id:
+        body["space_id"] = space_id
+    try:
+        response = httpx.post(f"{gateway_url.rstrip('/')}/local/connect", json=body, timeout=10.0)
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway local connect failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway local connect failed: {exc}") from exc
+
+
+def _gateway_local_send(
+    *,
+    gateway_cfg: dict,
+    content: str,
+    space_id: str | None,
+    parent_id: str | None,
+) -> dict:
+    gateway_url = str(gateway_cfg.get("url") or "http://127.0.0.1:8765")
+    connect_payload = _gateway_local_connect(
+        gateway_url=gateway_url,
+        agent_name=gateway_cfg.get("agent_name"),
+        registry_ref=gateway_cfg.get("registry_ref"),
+        workdir=gateway_cfg.get("workdir"),
+        space_id=space_id,
+    )
+    session_token = str(connect_payload.get("session_token") or "").strip()
+    if not session_token:
+        status = str(connect_payload.get("status") or "pending")
+        if status == "pending":
+            raise typer.BadParameter(
+                _approval_required_guidance(
+                    connect_payload=connect_payload,
+                    gateway_url=gateway_url,
+                    agent_name=gateway_cfg.get("agent_name"),
+                    workdir=gateway_cfg.get("workdir"),
+                    action="send this message",
+                )
+            )
+        raise typer.BadParameter(f"Gateway local session is {status}; approve the agent before sending.")
+    body = {"content": content, "space_id": space_id, "parent_id": parent_id}
+    try:
+        response = httpx.post(
+            f"{gateway_url.rstrip('/')}/local/send",
+            json=body,
+            headers={"X-Gateway-Session": session_token},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway local send failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway local send failed: {exc}") from exc
+    payload["connect"] = {
+        "status": connect_payload.get("status"),
+        "registry_ref": connect_payload.get("registry_ref"),
+        "agent": (connect_payload.get("agent") or {}).get("name")
+        if isinstance(connect_payload.get("agent"), dict)
+        else None,
+    }
+    return payload
+
+
+def _gateway_local_call(
+    *,
+    gateway_cfg: dict,
+    method: str,
+    args: dict | None = None,
+    space_id: str | None = None,
+    timeout: float = 30.0,
+):
+    """POST /local/proxy through Gateway as the workdir-bound managed agent.
+
+    Returns the raw `result` field from the proxy response (the same value the
+    direct AxClient method would have returned). Connect failures surface as
+    typer.BadParameter so the CLI exits with a clean error.
+    """
+    gateway_url = str(gateway_cfg.get("url") or "http://127.0.0.1:8765")
+    connect_payload = _gateway_local_connect(
+        gateway_url=gateway_url,
+        agent_name=gateway_cfg.get("agent_name"),
+        registry_ref=gateway_cfg.get("registry_ref"),
+        workdir=gateway_cfg.get("workdir"),
+        space_id=space_id,
+    )
+    session_token = str(connect_payload.get("session_token") or "").strip()
+    if not session_token:
+        status = str(connect_payload.get("status") or "pending")
+        if status == "pending":
+            raise typer.BadParameter(
+                _approval_required_guidance(
+                    connect_payload=connect_payload,
+                    gateway_url=gateway_url,
+                    agent_name=gateway_cfg.get("agent_name"),
+                    workdir=gateway_cfg.get("workdir"),
+                    action=f"call {method}",
+                )
+            )
+        raise typer.BadParameter(f"Gateway local session is {status}; approve the agent before calling {method}.")
+    body = {"method": method, "args": dict(args or {})}
+    try:
+        response = httpx.post(
+            f"{gateway_url.rstrip('/')}/local/proxy",
+            json=body,
+            headers={"X-Gateway-Session": session_token},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway proxy {method} failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway proxy {method} failed: {exc}") from exc
+    return payload.get("result", payload)
 
 
 def _print_wait_status(remaining: int, last_remaining: int | None, wait_label: str = "reply") -> int:
@@ -34,12 +185,65 @@ def _processing_status_from_event(message_id: str, event_type: str | None, data:
     status = str(data.get("status") or "").strip()
     if not status:
         return None
-    return {
+    event = {
         "message_id": event_message_id,
         "status": status,
         "agent_id": data.get("agent_id"),
         "agent_name": data.get("agent_name"),
     }
+    for field in (
+        "activity",
+        "tool_name",
+        "progress",
+        "detail",
+        "reason",
+        "error_message",
+        "retry_after_seconds",
+        "parent_message_id",
+    ):
+        if data.get(field) is not None:
+            event[field] = data.get(field)
+    return event
+
+
+def _processing_status_text(status_event: dict, *, wait_label: str = "reply") -> str:
+    """Render tooling-side delivery/progress in human-friendly language."""
+    status = str(status_event.get("status") or "").strip().lower()
+    agent_name = str(status_event.get("agent_name") or wait_label).strip().lstrip("@")
+    target = f"@{agent_name}" if agent_name else wait_label
+    activity = str(status_event.get("activity") or "").strip()
+    tool_name = str(status_event.get("tool_name") or "").strip()
+
+    if status == "accepted":
+        base = f"tooling: {target} acknowledged the message"
+    elif status in {"started", "claimed", "forwarded"}:
+        base = f"tooling: {target} picked up the message"
+    elif status in {"queued", "queued locally"}:
+        base = f"tooling: {target} queued the message"
+    elif status in {"working", "processing"}:
+        base = f"tooling: {target} is working"
+    elif status == "thinking":
+        base = f"tooling: {target} is thinking"
+    elif status in {"tool_use", "tool_call"}:
+        base = f"tooling: {target} is using tools"
+    elif status == "tool_complete":
+        base = f"tooling: {target} finished a tool step"
+    elif status == "streaming":
+        base = f"tooling: {target} is streaming a reply"
+    elif status == "completed":
+        base = f"tooling: {target} finished processing"
+    elif status in {"no_reply", "declined", "skipped", "not_responding"}:
+        base = f"tooling: {target} chose not to respond"
+    elif status == "error":
+        base = f"tooling: {target} hit an error"
+    else:
+        base = f"tooling: {target} status={status}"
+
+    if activity:
+        return f"{base} — {activity}"
+    if tool_name:
+        return f"{base} — {tool_name}"
+    return base
 
 
 class _ProcessingStatusWatcher:
@@ -52,6 +256,8 @@ class _ProcessingStatusWatcher:
         self.message_id: str | None = None
         self.events: list[dict] = []
         self._queue: queue.Queue[dict] = queue.Queue()
+        self._pending: list[dict] = []
+        self._lock = threading.Lock()
         self._ready = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -64,7 +270,12 @@ class _ProcessingStatusWatcher:
         return self._ready.wait(timeout)
 
     def set_message_id(self, message_id: str) -> None:
-        self.message_id = message_id
+        with self._lock:
+            self.message_id = message_id
+            queued = [event for event in self._pending if event.get("message_id") == message_id]
+            self._pending = [event for event in self._pending if event.get("message_id") != message_id]
+        for event in queued:
+            self._queue.put(event)
 
     def close(self) -> None:
         self._stop.set()
@@ -79,6 +290,17 @@ class _ProcessingStatusWatcher:
             self.events.append(item)
             drained.append(item)
 
+    def _accept_status_event(self, status_event: dict) -> None:
+        with self._lock:
+            message_id = self.message_id
+            if not message_id:
+                self._pending.append(status_event)
+                if len(self._pending) > 100:
+                    self._pending = self._pending[-100:]
+                return
+        if status_event.get("message_id") == message_id:
+            self._queue.put(status_event)
+
     def _run(self) -> None:
         while not self._stop.is_set() and time.time() < self.deadline:
             try:
@@ -90,12 +312,14 @@ class _ProcessingStatusWatcher:
                     for event_type, data in _iter_sse(response):
                         if self._stop.is_set() or time.time() >= self.deadline:
                             return
-                        message_id = self.message_id
-                        if not message_id:
+                        if event_type != "agent_processing" or not isinstance(data, dict):
                             continue
-                        status = _processing_status_from_event(message_id, event_type, data)
+                        event_message_id = str(data.get("message_id") or data.get("source_message_id") or "")
+                        if not event_message_id:
+                            continue
+                        status = _processing_status_from_event(event_message_id, event_type, data)
                         if status:
-                            self._queue.put(status)
+                            self._accept_status_event(status)
             except httpx.ReadTimeout:
                 continue
             except (httpx.HTTPError, RuntimeError, AttributeError):
@@ -146,7 +370,7 @@ def _wait_for_reply_polling(
 ) -> dict | None:
     """Poll for a reply as a fallback when SSE is unavailable."""
     last_remaining = None
-    announced_processing: set[tuple[str | None, str]] = set()
+    announced_processing: set[tuple[str | None, str, str, str]] = set()
 
     while time.time() < deadline:
         remaining = int(deadline - time.time())
@@ -155,10 +379,15 @@ def _wait_for_reply_polling(
             for status_event in processing_watcher.drain():
                 status = str(status_event.get("status") or "")
                 agent_name = status_event.get("agent_name") or wait_label
-                key = (status_event.get("agent_id"), status)
+                key = (
+                    status_event.get("agent_id"),
+                    status,
+                    str(status_event.get("activity") or ""),
+                    str(status_event.get("tool_name") or ""),
+                )
                 if status and key not in announced_processing:
                     console.print(" " * 60, end="\r")
-                    console.print(f"  [cyan]@{str(agent_name).lstrip('@')} is {status}[/cyan]")
+                    console.print(f"  [cyan]{_processing_status_text(status_event, wait_label=agent_name)}[/cyan]")
                     announced_processing.add(key)
 
         try:
@@ -243,6 +472,150 @@ def _starts_with_mention(content: str, mention: str) -> bool:
     return content.lstrip().lower().startswith(mention.lower())
 
 
+def _sender_label(message: dict) -> str | None:
+    display_name = str(message.get("display_name") or "").strip()
+    sender_type = str(message.get("sender_type") or "").strip()
+    if display_name:
+        if sender_type == "agent":
+            return f"@{display_name.lstrip('@')}"
+        return display_name
+    if sender_type:
+        return sender_type
+    return None
+
+
+def _extract_delivery_context(data: dict | None) -> dict | None:
+    """Pull AVAIL-CONTRACT-001 ``delivery_context`` out of a send response.
+
+    Looks in three places per the spec — top-level, metadata, and nested
+    message.metadata — so the CLI doesn't care which envelope wrapping the
+    backend uses. Returns the dict or ``None`` if not present.
+    """
+    if not isinstance(data, dict):
+        return None
+    direct = data.get("delivery_context")
+    if isinstance(direct, dict):
+        return direct
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        nested = metadata.get("delivery_context")
+        if isinstance(nested, dict):
+            return nested
+    msg = data.get("message")
+    if isinstance(msg, dict):
+        msg_meta = msg.get("metadata")
+        if isinstance(msg_meta, dict):
+            inner = msg_meta.get("delivery_context")
+            if isinstance(inner, dict):
+                return inner
+    return None
+
+
+_DELIVERY_PATH_LABEL = {
+    "live_session": "delivered live",
+    "warm_wake": "warming target",
+    "inbox_queue": "queued",
+    "blocked_unroutable": "blocked (unroutable)",
+    "failed_no_route": "failed (no route)",
+}
+
+_EXPECTED_RESPONSE_LABEL = {
+    "immediate": "Immediate",
+    "warming": "Warming",
+    "dispatch_delayed": "Dispatch",
+    "queued": "Queued",
+    "unlikely": "Unlikely",
+    "unavailable": "Unavailable",
+    "unknown": "Unknown",
+}
+
+
+def _delivery_context_chip(ctx: dict) -> str | None:
+    """Format delivery_context as a one-line chip for human output.
+
+    Returns ``None`` when the context is empty / has no useful fields.
+    Renders disagreement signal when ``delivery_path`` doesn't match the
+    ``expected_response_at_send`` prediction (per the spec's "predicted
+    warming, actually live" debugging gold).
+    """
+    if not isinstance(ctx, dict):
+        return None
+    delivery_path = str(ctx.get("delivery_path") or "").strip()
+    expected = str(ctx.get("expected_response_at_send") or "").strip()
+    warning = str(ctx.get("warning") or "").strip()
+
+    if not delivery_path and not expected and not warning:
+        return None
+
+    parts: list[str] = []
+    if delivery_path:
+        label = _DELIVERY_PATH_LABEL.get(delivery_path, delivery_path)
+        parts.append(label)
+
+    # Disagreement signal: predicted X, actually Y
+    if delivery_path and expected and not _delivery_matches_expectation(delivery_path, expected):
+        expected_label = _EXPECTED_RESPONSE_LABEL.get(expected, expected)
+        parts.append(f"predicted {expected_label}, actually {_DELIVERY_PATH_LABEL.get(delivery_path, delivery_path)}")
+    elif expected and not delivery_path:
+        # No actual path yet (offline send?), show the prediction alone
+        parts.append(_EXPECTED_RESPONSE_LABEL.get(expected, expected))
+
+    if warning:
+        parts.append(f"warning: {warning}")
+
+    return " · ".join(parts) if parts else None
+
+
+def _delivery_matches_expectation(delivery_path: str, expected: str) -> bool:
+    """Whether the actual delivery_path agrees with expected_response_at_send.
+
+    Mapping per AVAIL-CONTRACT-001 §"Pre-send / Post-send UX":
+    - immediate ↔ live_session
+    - warming ↔ warm_wake
+    - dispatch_delayed ↔ warm_wake (cloud-agent dispatch is also a "warm wake" path)
+    - queued ↔ inbox_queue
+    - unlikely / unavailable ↔ blocked_unroutable / failed_no_route
+    """
+    pairs = {
+        "immediate": {"live_session"},
+        "warming": {"warm_wake"},
+        "dispatch_delayed": {"warm_wake"},
+        "queued": {"inbox_queue"},
+        "unlikely": {"blocked_unroutable", "failed_no_route", "live_session"},
+        "unavailable": {"blocked_unroutable", "failed_no_route"},
+        "unknown": {"live_session", "warm_wake", "inbox_queue", "blocked_unroutable", "failed_no_route"},
+    }
+    return delivery_path in pairs.get(expected, set())
+
+
+def _gateway_reply_note(message: dict) -> str | None:
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("control_plane") != "gateway":
+        return None
+    gateway = metadata.get("gateway")
+    if not isinstance(gateway, dict):
+        return None
+
+    parts = ["via Gateway"]
+    gateway_id = str(gateway.get("gateway_id") or "").strip()
+    if gateway_id:
+        parts[0] = f"{parts[0]} {gateway_id[:8]}"
+
+    agent_name = str(gateway.get("agent_name") or "").strip()
+    if agent_name:
+        parts.append(f"agent=@{agent_name.lstrip('@')}")
+
+    runtime_type = str(gateway.get("runtime_type") or "").strip()
+    if runtime_type:
+        parts.append(f"runtime={runtime_type}")
+
+    transport = str(gateway.get("transport") or "").strip()
+    if transport:
+        parts.append(f"transport={transport}")
+
+    return " · ".join(parts)
+
+
 def _attachment_ref(
     *,
     attachment_id: str,
@@ -324,7 +697,7 @@ def send(
     ),
     channel: str = typer.Option("main", "--channel", help="Channel name"),
     parent: Optional[str] = typer.Option(None, "--parent", "--reply-to", "-r", help="Parent message ID (thread reply)"),
-    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
+    space_id: Optional[str] = SPACE_OPTION,
     as_json: bool = JSON_OPTION,
 ):
     """Send a message and wait for a reply by default.
@@ -345,6 +718,47 @@ def send(
     if ask_ax and to:
         typer.echo("Error: use either --ask-ax or --to, not both.", err=True)
         raise typer.Exit(1)
+
+    final_content = content
+    if ask_ax:
+        mention = _target_mention("aX")
+        if not _starts_with_mention(content, mention):
+            final_content = f"{mention} {content}"
+    elif to:
+        mention = _target_mention(to)
+        if not _starts_with_mention(content, mention):
+            final_content = f"{mention} {content}"
+
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        if act_as:
+            typer.echo("Error: --act-as is not supported with Gateway-native local identity.", err=True)
+            raise typer.Exit(1)
+        if files:
+            typer.echo("Error: --file is not supported with Gateway-native local identity yet.", err=True)
+            raise typer.Exit(1)
+        if channel != "main":
+            typer.echo("Error: custom --channel is not supported with Gateway-native local identity yet.", err=True)
+            raise typer.Exit(1)
+        data = _gateway_local_send(
+            gateway_cfg=gateway_cfg,
+            content=final_content,
+            space_id=space_id,
+            parent_id=parent,
+        )
+        msg = data.get("message", data)
+        msg_id = msg.get("id") or msg.get("message_id") or data.get("id")
+        if as_json:
+            print_json(data)
+        else:
+            sent_line = f"[green]Sent through Gateway.[/green] id={msg_id}"
+            sender = _sender_label(msg)
+            if sender:
+                sent_line += f" as {sender}"
+            console.print(sent_line)
+            if wait:
+                console.print("[dim]Gateway-native send accepted; reply waiting for this path is not wired yet.[/dim]")
+        return
 
     client = get_client()
     sid = resolve_space_id(client, explicit=space_id)
@@ -457,18 +871,6 @@ def send(
         )
         console.print(f"  [dim]Uploaded: {attachments[-1]['filename']}[/dim]")
 
-    # Route helpers prepend a visible mention while keeping POST /messages as
-    # the single transport contract.
-    final_content = content
-    if ask_ax:
-        mention = _target_mention("aX")
-        if not _starts_with_mention(content, mention):
-            final_content = f"{mention} {content}"
-    elif to:
-        mention = _target_mention(to)
-        if not _starts_with_mention(content, mention):
-            final_content = f"{mention} {content}"
-
     processing_watcher = None
     if wait and to:
         processing_watcher = _ProcessingStatusWatcher(client, space_id=sid, timeout=timeout + 5)
@@ -492,16 +894,30 @@ def send(
     if processing_watcher and msg_id:
         processing_watcher.set_message_id(str(msg_id))
 
+    delivery_chip = _delivery_context_chip(_extract_delivery_context(data) or {})
+
     if not wait or not msg_id:
         if processing_watcher:
             processing_watcher.close()
         if as_json:
             print_json(data)
         else:
-            console.print(f"[green]Sent.[/green] id={msg_id}")
+            sent_line = f"[green]Sent.[/green] id={msg_id}"
+            sender = _sender_label(msg)
+            if sender:
+                sent_line += f" as {sender}"
+            console.print(sent_line)
+            if delivery_chip:
+                console.print(f"[dim]{delivery_chip}[/dim]")
         return
 
-    console.print(f"[green]Sent.[/green] id={msg_id}")
+    sent_line = f"[green]Sent.[/green] id={msg_id}"
+    sender = _sender_label(msg)
+    if sender:
+        sent_line += f" as {sender}"
+    console.print(sent_line)
+    if delivery_chip:
+        console.print(f"[dim]{delivery_chip}[/dim]")
     wait_label = _target_mention("aX") if ask_ax else (_target_mention(to) if to else "reply")
     reply = _wait_for_reply(
         client,
@@ -519,6 +935,9 @@ def send(
             print_json({"sent": data, "reply": reply, "processing_statuses": processing_statuses})
         else:
             console.print(f"\n[bold cyan]aX:[/bold cyan] {reply.get('content', '')}")
+            gateway_note = _gateway_reply_note(reply)
+            if gateway_note:
+                console.print(f"[dim]{gateway_note}[/dim]")
     else:
         if as_json:
             print_json(
@@ -546,21 +965,30 @@ def list_messages(
     channel: str = typer.Option("main", "--channel", help="Channel name"),
     unread: bool = typer.Option(False, "--unread", help="Show only unread messages for the current user"),
     mark_read: bool = typer.Option(False, "--mark-read", help="Mark returned unread messages as read"),
-    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
+    space_id: Optional[str] = SPACE_OPTION,
     as_json: bool = JSON_OPTION,
 ):
     """List recent messages."""
-    client = get_client()
-    sid = resolve_space_id(client, explicit=space_id)
-    try:
-        kwargs = {"limit": limit, "channel": channel, "space_id": sid}
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        args: dict = {"limit": limit, "channel": channel, "space_id": space_id}
         if unread:
-            kwargs["unread_only"] = True
+            args["unread_only"] = True
         if mark_read:
-            kwargs["mark_read"] = True
-        data = client.list_messages(**kwargs)
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
+            args["mark_read"] = True
+        data = _gateway_local_call(gateway_cfg=gateway_cfg, method="list_messages", args=args, space_id=space_id)
+    else:
+        client = get_client()
+        sid = resolve_space_id(client, explicit=space_id)
+        try:
+            kwargs = {"limit": limit, "channel": channel, "space_id": sid}
+            if unread:
+                kwargs["unread_only"] = True
+            if mark_read:
+                kwargs["mark_read"] = True
+            data = client.list_messages(**kwargs)
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
     messages = _message_items(data)
     if as_json:
         print_json(messages)
@@ -619,11 +1047,19 @@ def get(
     as_json: bool = JSON_OPTION,
 ):
     """Get a single message."""
-    client = get_client()
-    try:
-        data = client.get_message(_resolve_message_id(client, message_id))
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="get_message",
+            args={"message_id": message_id},
+        )
+    else:
+        client = get_client()
+        try:
+            data = client.get_message(_resolve_message_id(client, message_id))
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
     if as_json:
         print_json(data)
     else:
@@ -673,11 +1109,19 @@ def search(
     as_json: bool = JSON_OPTION,
 ):
     """Search messages."""
-    client = get_client()
-    try:
-        data = client.search_messages(query, limit=limit)
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="search_messages",
+            args={"query": query, "limit": limit},
+        )
+    else:
+        client = get_client()
+        try:
+            data = client.search_messages(query, limit=limit)
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
     results = data if isinstance(data, list) else data.get("results", data.get("messages", []))
     if as_json:
         print_json(results)

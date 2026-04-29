@@ -13,6 +13,7 @@ import re
 import tomllib  # stdlib 3.11+
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import UUID
 
 import typer
 
@@ -400,6 +401,9 @@ def diagnose_auth_config(*, env_name: str | None = None, explicit_space_id: str 
     selected_user_env = normalized_env or _resolve_user_env()
     user_cfg = _load_user_config(selected_user_env)
     user_path = _user_config_path(selected_user_env)
+    explicit_cfg_env = os.environ.get("AX_CONFIG_FILE")
+    explicit_cfg_path = Path(explicit_cfg_env).expanduser() if explicit_cfg_env else None
+    explicit_cfg = _load_runtime_config_file(explicit_cfg_env)
 
     local_dir = _local_config_dir()
     local_path = (local_dir / "config.toml") if local_dir else None
@@ -533,6 +537,32 @@ def diagnose_auth_config(*, env_name: str | None = None, explicit_space_id: str 
                     effective["principal_type"] = "agent"
                     field_sources["principal_type"] = "local_config"
 
+    if explicit_cfg_path:
+        sources.append(
+            _source_record(
+                "runtime_config",
+                path=explicit_cfg_path,
+                exists=explicit_cfg_path.exists(),
+                used=bool(explicit_cfg),
+                keys=list(explicit_cfg.keys()) if explicit_cfg else None,
+            )
+        )
+        if explicit_cfg:
+            runtime_source = f"runtime_config:{explicit_cfg_path}"
+            apply_cfg(explicit_cfg, runtime_source)
+            if "principal_type" not in explicit_cfg and _has_agent_identity(explicit_cfg):
+                effective["principal_type"] = "agent"
+                field_sources["principal_type"] = runtime_source
+    else:
+        sources.append(
+            _source_record(
+                "runtime_config",
+                path=None,
+                exists=False,
+                used=False,
+            )
+        )
+
     used_env_keys: list[str] = []
     if not normalized_env:
         env_overrides = {
@@ -591,6 +621,7 @@ def diagnose_auth_config(*, env_name: str | None = None, explicit_space_id: str 
         "ok": not problems,
         "selected_env": normalized_env or selected_user_env,
         "selected_profile": selected_profile_name,
+        "runtime_config": str(explicit_cfg_path) if explicit_cfg_path else None,
         "effective": {
             "auth_source": field_sources.get("token"),
             "token_kind": token_kind,
@@ -699,8 +730,12 @@ def _check_config_permissions() -> None:
 
 def resolve_token() -> str | None:
     _check_config_permissions()
+    cfg = _load_config()
     return (
-        os.environ.get("AX_TOKEN") or _read_token_file(os.environ.get("AX_TOKEN_FILE")) or _load_config().get("token")
+        os.environ.get("AX_TOKEN")
+        or _read_token_file(os.environ.get("AX_TOKEN_FILE"))
+        or cfg.get("token")
+        or _read_token_file(cfg.get("token_file"))
     )
 
 
@@ -721,6 +756,59 @@ def resolve_user_token() -> str | None:
 
 def resolve_base_url() -> str:
     return os.environ.get("AX_BASE_URL") or _load_config().get("base_url", "http://localhost:8001")
+
+
+def resolve_gateway_config() -> dict:
+    """Return repo-local Gateway identity config, if this workspace opted in.
+
+    Gateway-native agent configs intentionally avoid readable PATs. A workspace
+    opts in with:
+
+        [gateway]
+        mode = "local"
+        url = "http://127.0.0.1:8765"
+
+        [agent]
+        agent_name = "codex-pass-through"
+
+    Top-level `gateway_url` / `gateway_mode` / `agent_name` are accepted as a
+    compatibility convenience for early local configs.
+    """
+    cfg = _load_config()
+    gateway = cfg.get("gateway") if isinstance(cfg.get("gateway"), dict) else {}
+    agent = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+    mode = str(gateway.get("mode") or cfg.get("gateway_mode") or "").strip().lower()
+    url = str(gateway.get("url") or cfg.get("gateway_url") or "").strip()
+    base_url = str(gateway.get("base_url") or cfg.get("gateway_base_url") or "").strip()
+    agent_name = str(
+        agent.get("agent_name") or agent.get("name") or cfg.get("gateway_agent_name") or cfg.get("agent_name") or ""
+    ).strip()
+    registry_ref = str(
+        agent.get("registry_ref") or agent.get("registry") or cfg.get("gateway_registry_ref") or ""
+    ).strip()
+    workdir = str(agent.get("workdir") or gateway.get("workdir") or cfg.get("gateway_workdir") or "").strip()
+    space_id = str(gateway.get("space_id") or cfg.get("gateway_space_id") or "").strip()
+    enabled = (
+        mode in {"local", "pass_through", "gateway"}
+        or bool(gateway)
+        or bool(url)
+        or bool(registry_ref)
+        or bool(cfg.get("gateway_agent_name"))
+    )
+    if not enabled:
+        return {}
+    result = {
+        "mode": mode or "local",
+        "url": url or "http://127.0.0.1:8765",
+        "agent_name": agent_name or None,
+        "registry_ref": registry_ref or None,
+        "workdir": workdir or None,
+    }
+    if base_url:
+        result["base_url"] = base_url
+    if space_id:
+        result["space_id"] = space_id
+    return result
 
 
 def resolve_user_base_url() -> str:
@@ -773,36 +861,114 @@ def resolve_agent_name(*, explicit: str | None = None, client: AxClient | None =
     return None
 
 
-def resolve_space_id(client: AxClient, *, explicit: str | None = None) -> str:
-    """Resolve space: explicit > env > config > bound agent default > auto-detect."""
-    if explicit:
-        return explicit
-    env = os.environ.get("AX_SPACE_ID")
-    if env:
-        return env
-    cfg = _load_config().get("space_id")
-    if cfg:
-        return cfg
+def _space_items(result: object) -> list[dict]:
+    if isinstance(result, list):
+        return [item for item in result if isinstance(item, dict)]
+    if not isinstance(result, dict):
+        return []
+    for key in ("spaces", "items", "results"):
+        items = result.get(key)
+        if isinstance(items, list):
+            return [item for item in items if isinstance(item, dict)]
+    return []
 
-    # Try server-side resolution via bound agent context
+
+def _space_lookup_key(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = re.sub(r"[\s_]+", "-", normalized)
+    return re.sub(r"-+", "-", normalized).strip("-")
+
+
+def _is_uuid_like(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _resolve_bound_agent_space(client: AxClient) -> str | None:
     try:
         me = client.whoami()
-        bound = me.get("bound_agent")
-        if bound and bound.get("default_space_id"):
-            return bound["default_space_id"]
     except Exception:
-        pass
+        return None
+    bound = me.get("bound_agent") if isinstance(me, dict) else None
+    if isinstance(bound, dict) and bound.get("default_space_id"):
+        return str(bound["default_space_id"])
+    return None
+
+
+def _resolve_space_ref(client: AxClient, ref: str, *, source: str) -> str:
+    value = ref.strip()
+    if not value:
+        typer.echo(f"Error: Empty {source} space value. Use a space id, slug, or name.", err=True)
+        raise typer.Exit(1)
+    if _is_uuid_like(value):
+        return value
+
+    spaces = _space_items(client.list_spaces())
+    needle = _space_lookup_key(value)
+    matches = []
+    for space in spaces:
+        values = (
+            space.get("id"),
+            space.get("space_id"),
+            space.get("slug"),
+            space.get("name"),
+        )
+        if any(_space_lookup_key(candidate) == needle for candidate in values if candidate):
+            matches.append(space)
+
+    if not matches:
+        typer.echo(
+            f"Error: No visible space matched '{ref}'. Use a space slug/name or run `axctl spaces list`.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        candidates = ", ".join(
+            str(space.get("slug") or space.get("name") or space.get("id") or space.get("space_id"))
+            for space in matches[:5]
+        )
+        typer.echo(
+            f"Error: Space '{ref}' matched multiple spaces ({candidates}). Use the space UUID.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    space_id = matches[0].get("id") or matches[0].get("space_id")
+    if not space_id:
+        typer.echo(f"Error: Matched space '{ref}' did not include an id.", err=True)
+        raise typer.Exit(1)
+    return str(space_id)
+
+
+def resolve_space_id(client: AxClient, *, explicit: str | None = None) -> str:
+    """Resolve space: explicit > env > bound agent default > saved config > auto-detect."""
+    if explicit:
+        return _resolve_space_ref(client, explicit, source="explicit")
+    env = os.environ.get("AX_SPACE") or os.environ.get("AX_SPACE_ID")
+    if env:
+        return _resolve_space_ref(client, env, source="environment")
+
+    bound_space = _resolve_bound_agent_space(client)
+    if bound_space:
+        return bound_space
+
+    cfg = _load_config().get("space_id")
+    if cfg:
+        return _resolve_space_ref(client, str(cfg), source="config")
 
     # Fallback: auto-detect from user's spaces
     spaces = client.list_spaces()
-    space_list = spaces if isinstance(spaces, list) else spaces.get("spaces", [])
+    space_list = _space_items(spaces)
     if len(space_list) == 1:
         return str(space_list[0].get("id", space_list[0].get("space_id")))
     if len(space_list) == 0:
         typer.echo("Error: No spaces found for this user.", err=True)
         raise typer.Exit(1)
     typer.echo(
-        "Error: Multiple spaces found. Use --space-id or set AX_SPACE_ID.",
+        "Error: Multiple spaces found. Use --space/--space-id or set AX_SPACE_ID.",
         err=True,
     )
     raise typer.Exit(1)
@@ -835,7 +1001,10 @@ def get_client() -> AxClient:
     token = resolve_token()
     if not token:
         typer.echo(
-            "Error: No token. Run 'ax auth token set <token>' or set AX_TOKEN.",
+            "Error: No API credential found. For Gateway-managed agents, use "
+            "`ax gateway local ... --workdir <path>` so Gateway can broker the "
+            "agent identity. If Gateway is logged out, open http://127.0.0.1:8765 "
+            "or run `ax gateway login` from a trusted terminal.",
             err=True,
         )
         raise typer.Exit(1)

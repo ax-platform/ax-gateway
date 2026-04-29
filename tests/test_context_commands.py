@@ -14,7 +14,7 @@ def test_context_download_uses_base_url_and_auth_headers(monkeypatch, tmp_path):
     calls = {}
 
     class FakeClient:
-        base_url = "https://next.paxai.app"
+        base_url = "https://paxai.app"
 
         def get_context(self, key, *, space_id=None):
             assert key == "image.png"
@@ -68,8 +68,8 @@ def test_context_download_uses_base_url_and_auth_headers(monkeypatch, tmp_path):
     assert "Downloaded:" in result.output
     assert "[green]" not in result.output
     assert output.read_bytes() == b"png-bytes"
-    assert calls["url"] == "https://next.paxai.app/api/v1/uploads/files/image.png"
-    assert calls["params"] == {"space_id": "space-1"}
+    assert calls["url"] == "https://paxai.app/api/v1/uploads/files/image.png"
+    assert calls["params"] is None
     assert calls["headers"] == {
         "Authorization": "Bearer exchanged.jwt",
         "X-AX-FP": "fp",
@@ -77,11 +77,62 @@ def test_context_download_uses_base_url_and_auth_headers(monkeypatch, tmp_path):
     assert calls["follow_redirects"] is True
 
 
+def test_context_download_rejects_html_shell_for_binary_payload(monkeypatch, tmp_path):
+    class FakeClient:
+        base_url = "https://paxai.app"
+
+        def get_context(self, key, *, space_id=None):
+            assert key == "image.png"
+            return {
+                "value": {
+                    "type": "file_upload",
+                    "filename": "image.png",
+                    "content_type": "image/png",
+                    "url": "/api/v1/uploads/files/image.png",
+                }
+            }
+
+        def _auth_headers(self):
+            return {"Authorization": "Bearer exchanged.jwt"}
+
+    class FakeResponse:
+        headers = {"content-type": "text/html; charset=utf-8"}
+        content = b"<!DOCTYPE html><html><body>app shell</body></html>"
+
+        def raise_for_status(self):
+            return None
+
+    class FakeHttpClient:
+        def __init__(self, *, headers, timeout, follow_redirects):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def get(self, url, params=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(context, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(context, "resolve_space_id", lambda client, explicit=None: "space-1")
+    monkeypatch.setattr(context.httpx, "Client", FakeHttpClient)
+
+    output = tmp_path / "downloaded.png"
+    result = runner.invoke(app, ["context", "download", "image.png", "--output", str(output)])
+
+    assert result.exit_code == 1
+    assert "returned text/html instead" in result.output
+    assert "app shell" in result.output
+    assert not output.exists()
+
+
 def test_context_load_fetches_to_preview_cache(monkeypatch, tmp_path):
     calls = {}
 
     class FakeClient:
-        base_url = "https://next.paxai.app"
+        base_url = "https://paxai.app"
 
         def get_context(self, key, *, space_id=None):
             assert key == "upload-key"
@@ -142,15 +193,15 @@ def test_context_load_fetches_to_preview_cache(monkeypatch, tmp_path):
     preview_files = list(tmp_path.glob("*/image.png"))
     assert len(preview_files) == 1
     assert preview_files[0].read_bytes() == b"png-bytes"
-    assert calls["url"] == "https://next.paxai.app/api/v1/uploads/files/image.png"
-    assert calls["params"] == {"space_id": "space-1"}
+    assert calls["url"] == "https://paxai.app/api/v1/uploads/files/image.png"
+    assert calls["params"] is None
     assert calls["headers"] == {"Authorization": "Bearer exchanged.jwt"}
     assert '"text_like": false' in result.output
 
 
 def test_context_load_can_include_text_content(monkeypatch, tmp_path):
     class FakeClient:
-        base_url = "https://next.paxai.app"
+        base_url = "https://paxai.app"
 
         def get_context(self, key, *, space_id=None):
             return {

@@ -422,7 +422,7 @@ def send(
 
     Examples:
 
-        ax alerts send "dev ALB regressed on /auth/me" --target @demo-agent --severity critical
+        ax alerts send "dev ALB regressed on /auth/me" --target @orion --severity critical
         ax alerts send "review needed" --kind reminder --source-task dfef4c92 --remind-at 2026-04-16T17:00Z
     """
     severity_n = _normalize_severity(severity)

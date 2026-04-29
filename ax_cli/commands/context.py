@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 import httpx
 import typer
 
-from ..config import get_client, resolve_space_id
+from ..config import get_client, resolve_gateway_config, resolve_space_id
 from ..context_keys import build_upload_context_key
 from ..output import JSON_OPTION, handle_error, mention_prefix, print_json, print_kv, print_table
 
@@ -110,6 +110,39 @@ def _context_file_payload(data: dict, key: str) -> dict:
     }
 
 
+def _looks_like_html(content: bytes) -> bool:
+    prefix = content[:512].lstrip().lower()
+    return prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
+
+
+def _validate_context_file_response(payload: dict, response: httpx.Response, download_url: str) -> None:
+    expected_content_type = str(payload.get("content_type") or "").split(";", 1)[0].strip().lower()
+    if _is_text_like(payload):
+        return
+
+    headers = getattr(response, "headers", {}) or {}
+    actual_content_type = str(headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    content = getattr(response, "content", b"") or b""
+    suspicious_text_response = (
+        actual_content_type.startswith("text/")
+        or actual_content_type in TEXT_CONTENT_TYPES
+        or actual_content_type == "application/json"
+        or _looks_like_html(content)
+    )
+    if not suspicious_text_response:
+        return
+
+    preview = content[:160].decode("utf-8", errors="replace").strip().replace("\n", " ")
+    filename = payload.get("filename") or "context artifact"
+    expected_label = expected_content_type or "binary file"
+    actual_label = actual_content_type or "unknown content-type"
+    raise ValueError(
+        f"Expected {filename} to download as {expected_label}, but {download_url} returned "
+        f"{actual_label} instead. This usually means the upload URL resolved to an app shell "
+        f"or error page instead of file bytes. Response preview: {preview}"
+    )
+
+
 def _fetch_context_file(client, sid: str | None, payload: dict) -> bytes:
     url = payload.get("url", "")
     if not url:
@@ -118,8 +151,12 @@ def _fetch_context_file(client, sid: str | None, payload: dict) -> bytes:
     download_url = urljoin(f"{client.base_url}/", url)
     headers = {k: v for k, v in client._auth_headers().items() if k != "Content-Type"}
     with httpx.Client(headers=headers, timeout=60.0, follow_redirects=True) as http:
-        response = http.get(download_url, params={"space_id": sid} if sid else None)
+        # Upload downloads are authorized against the attachment's owning
+        # space. Passing the caller's current space can turn a valid download
+        # into a 404 after the user switches spaces.
+        response = http.get(download_url)
         response.raise_for_status()
+        _validate_context_file_response(payload, response, download_url)
         return response.content
 
 
@@ -402,6 +439,54 @@ def fetch_url(
         print_kv(context_value)
 
 
+@app.command("promote")
+def promote_ctx(
+    key: str = typer.Argument(..., help="Context key already in ephemeral storage"),
+    artifact_type: str = typer.Option(
+        "RESEARCH",
+        "--artifact-type",
+        "-t",
+        help="Artifact type: RESEARCH (default), CODE, DESIGN, REPORT, etc. (passed through to backend)",
+    ),
+    agent_id: Optional[str] = typer.Option(
+        None,
+        "--agent-id",
+        help="Attribute the promoted artifact to a specific agent (default: user attribution)",
+    ),
+    space_id: Optional[str] = typer.Option(None, "--space-id", help="Override default space"),
+    as_json: bool = JSON_OPTION,
+):
+    """Promote an existing ephemeral context entry to the permanent intelligence vault.
+
+    Closes the ``upload ephemeral, decide later it should be permanent`` gap.
+    Without this command, the only path to vault was ``--vault`` at upload time;
+    re-uploading creates a duplicate and loses any context-graph references.
+
+    The key must already exist in ephemeral context (Redis). Promotion calls
+    ``POST /api/v1/spaces/{space_id}/intelligence/promote`` which copies the
+    entry into durable Postgres-backed vault storage.
+
+        ax context promote q1-report
+        ax context promote design-doc --artifact-type DESIGN
+        ax context promote shared-state --agent-id 6acc502d-...
+
+    Forward-compat: when backend extends the artifact_type enum or adds
+    additional promote options, --artifact-type passes through unchanged.
+    """
+    client = get_client()
+    sid = resolve_space_id(client, explicit=space_id)
+    try:
+        result = client.promote_context(sid, key, artifact_type=artifact_type, agent_id=agent_id)
+    except httpx.HTTPStatusError as exc:
+        handle_error(exc)
+
+    if as_json:
+        print_json(result)
+        return
+
+    typer.echo(f"Promoted: {key} → vault (artifact_type={artifact_type})")
+
+
 @app.command("set")
 def set_ctx(
     key: str = typer.Argument(..., help="Context key"),
@@ -434,6 +519,22 @@ def get_ctx(
     as_json: bool = JSON_OPTION,
 ):
     """Get a context value by key."""
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
+
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="get_context",
+            args={"key": key, "space_id": space_id},
+            space_id=space_id,
+        )
+        if as_json:
+            print_json(data)
+        else:
+            print_kv(data)
+        return
+
     client = get_client()
     sid = _optional_space_id(client, space_id)
     try:
@@ -453,12 +554,23 @@ def list_ctx(
     as_json: bool = JSON_OPTION,
 ):
     """List context entries."""
-    client = get_client()
-    sid = _optional_space_id(client, space_id)
-    try:
-        data = client.list_context(prefix=prefix, space_id=sid)
-    except httpx.HTTPStatusError as exc:
-        handle_error(exc)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
+
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="list_context",
+            args={"prefix": prefix, "space_id": space_id},
+            space_id=space_id,
+        )
+    else:
+        client = get_client()
+        sid = _optional_space_id(client, space_id)
+        try:
+            data = client.list_context(prefix=prefix, space_id=sid)
+        except httpx.HTTPStatusError as exc:
+            handle_error(exc)
     # API returns dict of {key: {value, ttl, ...}} — normalize to list of rows
     if isinstance(data, list):
         items = data

@@ -56,7 +56,7 @@ if (!configPath) {
 }
 
 const config = parseFlatToml(readFileSync(expandHome(configPath), "utf-8"));
-const baseUrl = process.env.AX_BASE_URL || config.base_url || "https://next.paxai.app";
+const baseUrl = process.env.AX_BASE_URL || config.base_url || "https://paxai.app";
 const agentName = process.env.AX_AGENT_NAME || config.agent_name;
 const agentId = process.env.AX_AGENT_ID || config.agent_id;
 const spaceId = process.env.AX_SPACE_ID || config.space_id;

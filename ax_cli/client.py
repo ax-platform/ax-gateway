@@ -327,12 +327,25 @@ class AxClient:
             headers["X-Agent-Id"] = agent_id
         return headers
 
+    def _is_html_response(self, r: httpx.Response) -> bool:
+        content_type = r.headers.get("content-type", "")
+        return "text/html" in content_type or r.text.lstrip().startswith("<!")
+
     def _parse_json(self, r: httpx.Response) -> dict | list[dict]:
         """Parse JSON response, raising a clear error if HTML is returned."""
-        content_type = r.headers.get("content-type", "")
-        if "text/html" in content_type or r.text.lstrip().startswith("<!"):
+        if self._is_html_response(r):
+            path = r.request.url.path if r.request else str(r.url)
+            method = r.request.method.upper() if r.request else ""
+            if method == "POST" and path == "/api/v1/agents":
+                detail = (
+                    "Agent create returned HTML instead of JSON. The hosted API must return a JSON 4xx "
+                    "with an explicit reason such as quota, rate limit, name conflict, or feature flag; "
+                    "the CLI cannot safely infer the denied create reason from the SPA shell."
+                )
+            else:
+                detail = f"Expected JSON but got HTML from {r.url} — the frontend may be catching this API route"
             raise httpx.HTTPStatusError(
-                f"Expected JSON but got HTML from {r.url} — the frontend may be catching this API route",
+                detail,
                 request=r.request,
                 response=r,
             )
@@ -345,8 +358,7 @@ class AxClient:
         while older/local mounts expose /agents/manage/*. Fall back only for
         route-shape misses; authz/authn failures must remain visible.
         """
-        content_type = r.headers.get("content-type", "")
-        if "text/html" in content_type or r.text.lstrip().startswith("<!"):
+        if self._is_html_response(r):
             return True
         return r.status_code in {404, 405}
 
@@ -402,6 +414,36 @@ class AxClient:
 
     # --- Messages ---
 
+    def send_heartbeat(
+        self,
+        *,
+        agent_id: str | None = None,
+        status: str | None = None,
+        note: str | None = None,
+        cadence_seconds: int | None = None,
+    ) -> dict:
+        """POST /api/v1/agents/heartbeat — refresh agent presence in Redis.
+
+        Backend currently treats this as a presence ping (no body required).
+        ``status`` / ``note`` / ``cadence_seconds`` are forward-compatible —
+        sent in the body so backend can adopt them when the richer heartbeat
+        protocol lands. Backend extras are ignored gracefully.
+        """
+        body: dict = {}
+        if status is not None:
+            body["status"] = status
+        if note is not None:
+            body["note"] = note
+        if cadence_seconds is not None:
+            body["cadence_seconds"] = cadence_seconds
+        r = self._http.post(
+            "/api/v1/agents/heartbeat",
+            json=body,
+            headers=self._with_agent(agent_id),
+        )
+        r.raise_for_status()
+        return self._parse_json(r)
+
     def send_message(
         self,
         space_id: str,
@@ -436,6 +478,14 @@ class AxClient:
         *,
         agent_name: str | None = None,
         space_id: str | None = None,
+        activity: str | None = None,
+        tool_name: str | None = None,
+        progress: dict | None = None,
+        detail: dict | None = None,
+        reason: str | None = None,
+        error_message: str | None = None,
+        retry_after_seconds: int | None = None,
+        parent_message_id: str | None = None,
     ) -> dict:
         """POST /api/v1/agents/processing-status.
 
@@ -446,10 +496,77 @@ class AxClient:
         body: dict = {"message_id": message_id, "status": status}
         if agent_name:
             body["agent_name"] = agent_name
+        optional_fields = {
+            "activity": activity,
+            "tool_name": tool_name,
+            "progress": progress,
+            "detail": detail,
+            "reason": reason,
+            "error_message": error_message,
+            "retry_after_seconds": retry_after_seconds,
+            "parent_message_id": parent_message_id,
+        }
+        for key, value in optional_fields.items():
+            if value is not None:
+                body[key] = value
         headers = self._with_agent(self.agent_id)
         if space_id:
             headers["X-Space-Id"] = space_id
         r = self._http.post("/api/v1/agents/processing-status", json=body, headers=headers)
+        r.raise_for_status()
+        return self._parse_json(r)
+
+    def record_tool_call(
+        self,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        space_id: str | None = None,
+        tool_action: str | None = None,
+        resource_uri: str | None = None,
+        arguments_hash: str | None = None,
+        kind: str | None = None,
+        arguments: dict | None = None,
+        initial_data: dict | None = None,
+        status: str = "success",
+        duration_ms: int | None = None,
+        agent_name: str | None = None,
+        agent_id: str | None = None,
+        message_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> dict:
+        """POST /api/v1/tool-calls.
+
+        Records a tool-call audit event from an authenticated agent runtime.
+        The backend stores it durably and fans out progress/tool-call SSE so
+        the operator UI can show richer in-flight activity.
+        """
+        body: dict = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "status": status,
+        }
+        optional_fields = {
+            "space_id": space_id,
+            "tool_action": tool_action,
+            "resource_uri": resource_uri,
+            "arguments_hash": arguments_hash,
+            "kind": kind,
+            "arguments": arguments,
+            "initial_data": initial_data,
+            "duration_ms": duration_ms,
+            "agent_name": agent_name,
+            "agent_id": agent_id,
+            "message_id": message_id,
+            "correlation_id": correlation_id,
+        }
+        for key, value in optional_fields.items():
+            if value is not None:
+                body[key] = value
+        headers = self._with_agent(agent_id)
+        if space_id:
+            headers["X-Space-Id"] = space_id
+        r = self._http.post("/api/v1/tool-calls", json=body, headers=headers)
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -560,9 +677,99 @@ class AxClient:
             body["description"] = description
         if assignee_id:
             body["assignee_id"] = assignee_id
-        r = self._http.post("/api/v1/tasks", json=body, headers=self._with_agent(agent_id))
+        headers = self._with_agent(agent_id)
+        r = self._http.post("/api/v1/tasks", json=body, headers=headers)
+        if r.status_code < 400 and self._is_html_response(r):
+            # Hosted frontend deployments may catch POST /api/v1/tasks and
+            # return the app shell. Fall back to the frontend write endpoint,
+            # but only when the current session is already scoped to the
+            # requested space: /api/tasks ignores explicit space_id.
+            self._verify_session_space_for_task_fallback(space_id)
+            legacy_r = self._http.post(
+                "/api/tasks",
+                json={
+                    "title": title,
+                    "description": description,
+                    "priority": priority,
+                    "requirements": {},
+                },
+                headers=headers,
+            )
+            legacy_r.raise_for_status()
+            data = self._parse_json(legacy_r)
+            self._verify_created_task_space(data, space_id)
+            return data
+
         r.raise_for_status()
-        return self._parse_json(r)
+        data = self._parse_json(r)
+        self._verify_created_task_space(data, space_id)
+        return data
+
+    def _task_from_create_response(self, data: object) -> dict:
+        if isinstance(data, dict) and isinstance(data.get("task"), dict):
+            return data["task"]
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    def _whoami_space_id(self, data: dict) -> str | None:
+        for key in ("resolved_space_id", "space_id"):
+            value = data.get(key)
+            if value:
+                return str(value)
+
+        bound_agent = data.get("bound_agent")
+        if isinstance(bound_agent, dict):
+            for key in ("default_space_id", "space_id"):
+                value = bound_agent.get(key)
+                if value:
+                    return str(value)
+        return None
+
+    def _verify_session_space_for_task_fallback(self, expected_space_id: str) -> None:
+        try:
+            data = self.whoami()
+        except httpx.HTTPStatusError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                "Hosted task create route returned HTML and axctl could not verify the active session space "
+                "before using the fallback write route."
+            ) from exc
+
+        actual_space_id = self._whoami_space_id(data)
+        if actual_space_id != str(expected_space_id):
+            raise RuntimeError(
+                "Hosted task create route returned HTML, and the fallback write route uses the credential's "
+                "active space instead of --space-id. Refusing to create the task because the active session "
+                f"space is {actual_space_id or 'unknown'}, not requested space {expected_space_id}."
+            )
+
+    def _verify_created_task_space(self, data: object, expected_space_id: str) -> None:
+        task = self._task_from_create_response(data)
+        actual_space_id = task.get("space_id")
+        if actual_space_id:
+            if str(actual_space_id) != str(expected_space_id):
+                raise RuntimeError(
+                    f"Task was created in the wrong space: expected {expected_space_id}, got {actual_space_id}."
+                )
+            return
+
+        task_id = task.get("id")
+        if not task_id:
+            raise RuntimeError(
+                "Task create response did not include an id or space_id, so axctl cannot prove the target space."
+            )
+
+        listed = self.list_tasks(limit=100, space_id=expected_space_id)
+        tasks = listed if isinstance(listed, list) else listed.get("tasks", [])
+        if any(str(item.get("id")) == str(task_id) for item in tasks if isinstance(item, dict)):
+            return
+
+        raise RuntimeError(
+            "Task create response did not include space_id and the new task was not visible in "
+            f"requested space {expected_space_id}. It may have landed in the credential's default space."
+        )
 
     def list_tasks(
         self,
@@ -603,6 +810,136 @@ class AxClient:
     def get_agents_presence(self) -> dict:
         """GET /api/v1/agents/presence — bulk presence for all agents."""
         r = self._http.get("/api/v1/agents/presence")
+        r.raise_for_status()
+        return self._parse_json(r)
+
+    def list_agents_availability(
+        self,
+        *,
+        space_id: str | None = None,
+        connection_path: str | None = None,
+        badge_state: str | None = None,
+        filter_: str | None = None,
+    ) -> dict | list:
+        """GET /api/v1/agents/availability — bulk resolved DTO list.
+
+        Per AVAIL-CONTRACT-001 spec: optimized for picker/widget rendering.
+        Each row is the resolved ``agent_state`` envelope. Optional query
+        filters: ``connection_path=gateway_managed|mcp_only|...``,
+        ``badge_state=live|routable_delayed|...``, ``filter=available_now|
+        gateway_connected|cloud_agent|disabled|recently_active``.
+        """
+        params: dict[str, str] = {}
+        if space_id:
+            params["space_id"] = space_id
+        if connection_path:
+            params["connection_path"] = connection_path
+        if badge_state:
+            params["badge_state"] = badge_state
+        if filter_:
+            params["filter"] = filter_
+        r = self._http.get("/api/v1/agents/availability", params=params or None)
+        r.raise_for_status()
+        return self._parse_json(r)
+
+    def get_agent_placement(self, agent_id_or_name: str) -> dict:
+        """GET agent record + extract placement-relevant fields.
+
+        No dedicated GET /placement endpoint today (per backend's
+        agents_unified.py). Reads the agent record and surfaces
+        ``space_id`` / ``pinned`` / ``allowed_spaces`` (when present)
+        in a stable shape, plus passes through any ``placement`` /
+        ``placement_state`` sub-objects backend emits later.
+        """
+        # Resolve UUID directly; otherwise look up via /manage/{name}
+        if len(agent_id_or_name) == 36 and agent_id_or_name.count("-") == 4:
+            agent = self.get_agent(agent_id_or_name)
+        else:
+            agent = self.get_agent(agent_id_or_name)
+        record = agent.get("agent", agent) if isinstance(agent, dict) else {}
+        return {
+            "agent_id": record.get("id"),
+            "name": record.get("name"),
+            "space_id": record.get("space_id"),
+            "pinned": record.get("pinned"),
+            "allowed_spaces": record.get("allowed_spaces"),
+            "placement": record.get("placement"),  # forward-compat — backend may emit later
+            "placement_state": record.get("placement_state"),
+            "_record": record,  # full record for diagnostics
+        }
+
+    def set_agent_placement(self, agent_id_or_name: str, *, space_id: str, pinned: bool = False) -> dict:
+        """POST /api/v1/agents/{id}/placement — set default space + pinned.
+
+        Per ax-backend agents_unified.py, body is ``{space_id, pinned}``.
+        Future-compat: when backend implements the full
+        ``GATEWAY-PLACEMENT-POLICY-001`` machinery (policy_kind /
+        allowed_spaces / placement_state envelope), this method's
+        signature can extend; the existing call site stays compatible.
+        """
+        body = {"space_id": space_id, "pinned": pinned}
+        r = self._http.post(
+            f"/api/v1/agents/{agent_id_or_name}/placement",
+            json=body,
+        )
+        r.raise_for_status()
+        return self._parse_json(r)
+
+    def get_agent_presence(self, agent_id_or_name: str, *, space_id: str | None = None) -> dict:
+        """GET single-agent availability record.
+
+        Tries the AVAIL-CONTRACT-001 ``/state`` endpoint first (returns an
+        envelope ``{agent_state, raw_presence, control}``). Falls back to
+        the legacy ``/presence`` endpoint (basic flat shape) on 404.
+
+        Returns a flat dict — when ``/state`` succeeds, the ``agent_state``
+        sub-object is unwrapped so callers see the resolved DTO directly,
+        with envelope siblings (``raw_presence``, ``control``) preserved
+        alongside for diagnostic access.
+
+        Accepts either an agent UUID directly (single round trip) or a name
+        which is resolved via the agents list first.
+        """
+        identifier = agent_id_or_name
+        # Resolve name → id if we got a name (the /state endpoint accepts both,
+        # but the /presence fallback only takes UUIDs).
+        if not (len(identifier) == 36 and identifier.count("-") == 4):
+            agents = self.list_agents()
+            items = agents if isinstance(agents, list) else agents.get("agents", [])
+            match = None
+            for a in items:
+                if isinstance(a, dict) and a.get("name") == agent_id_or_name:
+                    match = a
+                    break
+            if not match:
+                raise RuntimeError(f"agent not found: {agent_id_or_name}")
+            agent_id = match.get("id") or match.get("agent_id")
+            if not agent_id:
+                raise RuntimeError(f"agent has no id field: {agent_id_or_name}")
+            identifier = agent_id
+
+        params = {"space_id": space_id} if space_id else None
+
+        # Try /state first (AVAIL-CONTRACT-001). If 404, fall back to /presence.
+        try:
+            r = self._http.get(f"/api/v1/agents/{identifier}/state", params=params)
+            r.raise_for_status()
+            envelope = self._parse_json(r)
+            # Unwrap the envelope so the resolved DTO is at the top level.
+            if isinstance(envelope, dict) and "agent_state" in envelope:
+                resolved = dict(envelope.get("agent_state") or {})
+                # Preserve envelope siblings under reserved keys for diagnostics.
+                if "raw_presence" in envelope:
+                    resolved["_raw_presence"] = envelope["raw_presence"]
+                if "control" in envelope:
+                    resolved["_control"] = envelope["control"]
+                return resolved
+            return envelope
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            # /state not available yet — fall back to /presence.
+        r = self._http.get(f"/api/v1/agents/{identifier}/presence", params=params)
         r.raise_for_status()
         return self._parse_json(r)
 
@@ -713,12 +1050,37 @@ class AxClient:
 
     # --- Keys (PAT management) ---
 
-    def create_key(self, name: str, *, allowed_agent_ids: list[str] | None = None) -> dict:
+    def create_key(
+        self,
+        name: str,
+        *,
+        allowed_agent_ids: list[str] | None = None,
+        bound_agent_id: str | None = None,
+        audience: str | None = None,
+        scopes: list[str] | None = None,
+        space_id: str | None = None,
+    ) -> dict:
+        """POST /api/v1/keys — mint a user PAT, optionally bound to an agent.
+
+        When ``bound_agent_id`` is set, the resulting PAT inherits the agent's
+        allowed-spaces policy and can only be used to send as that agent. This
+        is the prod-friendly alternative to ``/credentials/agent-pat`` when the
+        latter isn't routed (see axctl-friction-2026-04-17 §3).
+        """
         body: dict = {"name": name}
         if allowed_agent_ids:
             body["agent_scope"] = "agents"
             body["allowed_agent_ids"] = allowed_agent_ids
-        r = self._http.post("/api/v1/keys", json=body)
+        if bound_agent_id:
+            body["bound_agent_id"] = bound_agent_id
+        if audience:
+            body["audience"] = audience
+        if scopes:
+            body["scopes"] = scopes
+        headers = dict(self._base_headers)
+        if space_id:
+            headers["X-Space-Id"] = space_id
+        r = self._http.post("/api/v1/keys", json=body, headers=headers)
         r.raise_for_status()
         return self._parse_json(r)
 

@@ -4,9 +4,14 @@ import asyncio
 import json
 import os
 
+from typer.testing import CliRunner
+
+from ax_cli import gateway as gateway_core
 from ax_cli.commands import channel as channel_mod
 from ax_cli.commands.channel import ChannelBridge, MentionEvent, _load_channel_env
 from ax_cli.commands.listen import _is_self_authored, _remember_reply_anchor, _should_respond
+
+runner = CliRunner()
 
 
 class FakeClient:
@@ -53,8 +58,9 @@ class CaptureBridge(ChannelBridge):
 class FakeSseResponse:
     status_code = 200
 
-    def __init__(self, payload):
+    def __init__(self, payload, *, event_type: str = "message"):
         self.payload = payload
+        self.event_type = event_type
 
     def __enter__(self):
         return self
@@ -63,9 +69,30 @@ class FakeSseResponse:
         return False
 
     def iter_lines(self):
-        yield "event: message"
+        yield f"event: {self.event_type}"
         yield f"data: {json.dumps(self.payload)}"
         yield ""
+
+
+class FakeMultiEventSseResponse:
+    """SSE response that yields a scripted sequence of (event_type, payload) events."""
+
+    status_code = 200
+
+    def __init__(self, events: list[tuple[str, dict]]):
+        self.events = events
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def iter_lines(self):
+        for event_type, payload in self.events:
+            yield f"event: {event_type}"
+            yield f"data: {json.dumps(payload)}"
+            yield ""
 
 
 def test_channel_rejects_user_pat_for_agent_reply():
@@ -98,7 +125,17 @@ def test_channel_sends_with_agent_bound_pat():
         )
     )
 
-    assert client.sent == [{"space_id": "space-123", "content": "hello", "parent_id": "incoming-123"}]
+    assert client.sent == [
+        {
+            "space_id": "space-123",
+            "content": "hello",
+            "parent_id": "incoming-123",
+            "metadata": {
+                "top_level_ingress": False,
+                "routing": {"mode": "reply_target", "source": "channel_reply"},
+            },
+        }
+    ]
     assert client.processing_statuses == [
         {
             "message_id": "incoming-123",
@@ -110,6 +147,21 @@ def test_channel_sends_with_agent_bound_pat():
     result = bridge.writes[0]["result"]
     assert result["content"][0]["text"] == "sent reply to incoming-123 (msg-123)"
     assert "msg-123" in bridge._reply_anchor_ids
+
+
+def test_channel_reply_preserves_explicit_mentions_for_routing():
+    client = FakeClient("axp_a_AgentKey.Secret")
+    bridge = CaptureBridge(client)
+    bridge._last_message_id = "incoming-123"
+
+    asyncio.run(
+        bridge.handle_tool_call(
+            1,
+            {"name": "reply", "arguments": {"text": "@nemotron can you check this with @peer-agent?"}},
+        )
+    )
+
+    assert client.sent[0]["metadata"]["mentions"] == ["nemotron"]
 
 
 def test_channel_can_publish_working_status_on_delivery():
@@ -170,6 +222,334 @@ def test_channel_processes_idle_event_before_jwt_reconnect(monkeypatch):
     assert delivered[0].prompt == "please check this"
 
 
+def _run_sse_loop_with_events(
+    events: list[tuple[str, dict]],
+    *,
+    stop_after_delivery: int = 1,
+    monkeypatch=None,
+):
+    """Drive `_sse_loop` against a scripted SSE event list and capture deliveries."""
+
+    class ScriptedClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.connect_calls = 0
+            self.get_message_calls: list[str] = []
+
+        def connect_sse(self, *, space_id):
+            self.connect_calls += 1
+            return FakeMultiEventSseResponse(events)
+
+        def get_message(self, message_id):
+            self.get_message_calls.append(message_id)
+            return {"message": {"metadata": {}}}
+
+    client = ScriptedClient()
+    bridge = CaptureBridge(client)
+    delivered: list[MentionEvent] = []
+    deliveries_needed = stop_after_delivery
+
+    def capture_delivery(event):
+        delivered.append(event)
+        if len(delivered) >= deliveries_needed:
+            bridge.shutdown.set()
+
+    bridge.enqueue_from_thread = capture_delivery
+
+    # Make reconnect path inert so the bridge processes all scripted events in
+    # one pass and only stops when shutdown is set (either by delivery capture
+    # or because the scripted stream is exhausted).
+    if monkeypatch is not None:
+        monkeypatch.setattr(channel_mod.time, "monotonic", lambda: 0.0)
+
+    # Run the loop; it exits when the scripted iter_lines generator completes
+    # and ConnectionError propagates, or when shutdown is set inside capture.
+    # We wrap in a bounded number of connect_sse calls to avoid infinite loop
+    # if the test script doesn't produce deliveries.
+    original_connect = client.connect_sse
+
+    def limited_connect(*args, **kwargs):
+        if client.connect_calls >= 2:
+            bridge.shutdown.set()
+            raise ConnectionError("test: exhausted scripted connects")
+        return original_connect(*args, **kwargs)
+
+    client.connect_sse = limited_connect  # type: ignore[assignment]
+
+    channel_mod._sse_loop(bridge)
+    return bridge, client, delivered
+
+
+def test_channel_skips_streaming_reply_non_final(monkeypatch):
+    """Placeholder/progress chunks marked non-final must not wake the session."""
+
+    events = [
+        (
+            "message",
+            {
+                "id": "stream-1",
+                "content": "Working…",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+                "metadata": {
+                    "streaming_reply": {"enabled": True, "final": False, "runtime": "hermes_sdk"},
+                },
+            },
+        ),
+    ]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert delivered == []
+
+
+def test_channel_skips_working_progress_message(monkeypatch):
+    """Defensive regex catches progress payloads even without streaming metadata."""
+
+    events = [
+        (
+            "message",
+            {
+                "id": "progress-1",
+                "content": "@peer-agent Working…",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+        (
+            "message",
+            {
+                "id": "progress-2",
+                "content": "Received",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+        (
+            "message",
+            {
+                "id": "progress-3",
+                "content": "@peer-agent Thinking...",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+        (
+            "message",
+            {
+                "id": "progress-4",
+                "content": "@peer-agent No response after 5m - session may need attention.",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+    ]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert delivered == []
+
+
+def test_channel_delivers_prompts_that_merely_start_with_progress_words(monkeypatch):
+    """A legitimate prompt like '@peer-agent Working-state cleanup proposal' must land.
+
+    The fallback progress regex must be anchored — otherwise user messages that
+    happen to start with Working/Processing/Thinking/Received would be dropped
+    silently. Regression for PR #70 review (2026-04-18).
+    """
+
+    events = [
+        (
+            "message",
+            {
+                "id": "real-prompt-1",
+                "content": "@peer-agent Working-state cleanup proposal",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+    ]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert len(delivered) == 1
+    assert "Working-state cleanup proposal" in delivered[0].prompt
+
+
+def test_channel_delivers_processing_webhook_errors_prompt(monkeypatch):
+    """`Processing webhook errors` is a real user prompt, not a progress marker."""
+
+    events = [
+        (
+            "message",
+            {
+                "id": "real-prompt-2",
+                "content": "@peer-agent Processing webhook errors in the dispatch queue",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+    ]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert len(delivered) == 1
+    assert "Processing webhook errors" in delivered[0].prompt
+
+
+def test_channel_delivers_thinking_through_issue_prompt(monkeypatch):
+    """`Thinking through this API issue` must be delivered, not suppressed."""
+
+    events = [
+        (
+            "message",
+            {
+                "id": "real-prompt-3",
+                "content": "@peer-agent Thinking through this API issue",
+                "author": {"id": "user-1", "name": "alex", "type": "user"},
+                "mentions": ["peer-agent"],
+            },
+        ),
+    ]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert len(delivered) == 1
+    assert "Thinking through this API issue" in delivered[0].prompt
+
+
+def test_channel_delivers_message_updated_final(monkeypatch):
+    """When hermes streams a final payload via message_updated we deliver it."""
+
+    placeholder = {
+        "id": "hermes-1",
+        "content": "Working…",
+        "author": {"id": "agent-2", "name": "frontend_sentinel", "type": "agent"},
+        "mentions": ["peer-agent"],
+        "metadata": {
+            "streaming_reply": {"enabled": True, "final": False, "runtime": "hermes_sdk"},
+        },
+    }
+    final_update = {
+        "id": "hermes-1",
+        "content": "@peer-agent here is the real reply",
+        "author": {"id": "agent-2", "name": "frontend_sentinel", "type": "agent"},
+        "mentions": ["peer-agent"],
+        "metadata": {
+            "streaming_reply": {"enabled": True, "final": True, "runtime": "hermes_sdk"},
+        },
+    }
+    events = [("message", placeholder), ("message_updated", final_update)]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert [e.message_id for e in delivered] == ["hermes-1"]
+    assert delivered[0].prompt == "here is the real reply"
+
+
+def test_channel_skips_message_updated_for_already_delivered(monkeypatch):
+    """Once a final payload is delivered, subsequent updates for that id do not re-wake."""
+
+    payload = {
+        "id": "msg-dup",
+        "content": "@peer-agent please review",
+        "author": {"id": "user-1", "name": "alex", "type": "user"},
+        "mentions": ["peer-agent"],
+    }
+    events = [("message", payload), ("message_updated", payload)]
+    _, _, delivered = _run_sse_loop_with_events(events, monkeypatch=monkeypatch)
+    assert [e.message_id for e in delivered] == ["msg-dup"]
+
+
+def test_channel_materializes_shared_task_metadata_for_agent_prompt(monkeypatch):
+    class FakeSseClient(FakeClient):
+        def connect_sse(self, *, space_id):
+            assert space_id == "space-123"
+            return FakeSseResponse(
+                {
+                    "id": "incoming-share",
+                    "content": "@peer-agent can you see what I shared?",
+                    "author": {"id": "user-123", "name": "alex", "type": "user"},
+                    "mentions": ["peer-agent"],
+                    "metadata": {
+                        "forward": {
+                            "intent": "share",
+                            "resource_type": "task",
+                            "resource_id": "task-123",
+                            "task_id": "task-123",
+                            "source_message_id": "source-msg-123",
+                            "source_card_id": "task-signal:task-123",
+                            "title": "Fix Share delivery context",
+                            "summary": "The recipient should know this is a task.",
+                        }
+                    },
+                }
+            )
+
+        def get_message(self, message_id):
+            raise AssertionError("SSE metadata was already complete")
+
+    client = FakeSseClient()
+    bridge = CaptureBridge(client)
+    delivered: list[MentionEvent] = []
+
+    def capture_delivery(event):
+        delivered.append(event)
+        bridge.shutdown.set()
+
+    bridge.enqueue_from_thread = capture_delivery
+    monkeypatch.setattr(channel_mod.time, "monotonic", lambda: 0)
+
+    channel_mod._sse_loop(bridge)
+
+    assert [event.message_id for event in delivered] == ["incoming-share"]
+    assert "can you see what I shared?" in delivered[0].prompt
+    assert "Shared object:" in delivered[0].prompt
+    assert "- resource_type: task" in delivered[0].prompt
+    assert "- task_id: task-123" in delivered[0].prompt
+    assert "axctl tasks get task-123 --space-id space-123 --json" in delivered[0].prompt
+    assert delivered[0].metadata["forward"]["resource_type"] == "task"
+
+
+def test_channel_fetches_attachment_metadata_and_adds_inspection_hint(monkeypatch):
+    class FakeSseClient(FakeClient):
+        def connect_sse(self, *, space_id):
+            assert space_id == "space-123"
+            return FakeSseResponse(
+                {
+                    "id": "incoming-image",
+                    "content": "@peer-agent please inspect this image",
+                    "author": {"id": "user-123", "name": "alex", "type": "user"},
+                    "mentions": ["peer-agent"],
+                    "metadata": {},
+                }
+            )
+
+        def get_message(self, message_id):
+            assert message_id == "incoming-image"
+            attachment = {
+                "id": "att-123",
+                "filename": "image.png",
+                "content_type": "image/png",
+                "context_key": "upload:image.png:att-123",
+            }
+            return {"message": {"metadata": {"accepted_attachments": [attachment]}}}
+
+    client = FakeSseClient()
+    bridge = CaptureBridge(client)
+    delivered: list[MentionEvent] = []
+
+    def capture_delivery(event):
+        delivered.append(event)
+        bridge.shutdown.set()
+
+    bridge.enqueue_from_thread = capture_delivery
+    monkeypatch.setattr(channel_mod.time, "monotonic", lambda: 0)
+
+    channel_mod._sse_loop(bridge)
+
+    assert [event.message_id for event in delivered] == ["incoming-image"]
+    assert "Attachments:" in delivered[0].prompt
+    assert "image.png (image/png, id=att-123, context_key=upload:image.png:att-123)" in delivered[0].prompt
+    assert "axctl context get 'upload:image.png:att-123' --space-id space-123 --json" in delivered[0].prompt
+    assert delivered[0].attachments == [
+        {
+            "id": "att-123",
+            "filename": "image.png",
+            "content_type": "image/png",
+            "context_key": "upload:image.png:att-123",
+        }
+    ]
+
+
 def test_channel_processing_status_can_be_disabled():
     client = FakeClient("axp_a_AgentKey.Secret")
     bridge = CaptureBridge(client, processing_status=False)
@@ -217,6 +597,8 @@ def test_channel_get_messages_returns_pending_mentions():
             raw_content="@peer-agent please check this",
             created_at="2026-04-15T23:00:00Z",
             space_id="space-123",
+            attachments=[{"id": "att-1", "filename": "notes.md"}],
+            metadata={"forward": {"resource_type": "context"}},
         )
     )
 
@@ -225,6 +607,8 @@ def test_channel_get_messages_returns_pending_mentions():
     result = bridge.writes[0]["result"]
     assert "incoming-123" in result["content"][0]["text"]
     assert "please check this" in result["content"][0]["text"]
+    assert "notes.md" in result["content"][0]["text"]
+    assert "resource_type" in result["content"][0]["text"]
     assert bridge._pending_mentions == []
 
 
@@ -243,6 +627,7 @@ def test_channel_notification_metadata_matches_claude_channel_contract():
                 raw_content="@peer-agent please check this",
                 created_at=None,
                 space_id="space-123",
+                metadata={"forward": {"resource_type": "task", "task_id": "task-123"}},
             )
         )
         task = asyncio.create_task(bridge.emit_mentions())
@@ -265,14 +650,13 @@ def test_channel_notification_metadata_matches_claude_channel_contract():
     assert "raw_content" not in meta
     assert "conversation_id" not in meta
     assert "parent_id" not in meta
+    assert meta["forward"] == {"resource_type": "task", "task_id": "task-123"}
 
 
 def test_channel_env_file_sets_missing_runtime_env(monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "AX_CONFIG_FILE=/tmp/agent/.ax/config.toml\n"
-        "AX_SPACE_ID=space-123\n"
-        "AX_AGENT_NAME=ignored-agent\n"
+        "AX_CONFIG_FILE=/tmp/agent/.ax/config.toml\nAX_SPACE_ID=space-123\nAX_AGENT_NAME=ignored-agent\n"
     )
     monkeypatch.setenv("AX_AGENT_NAME", "existing-agent")
 
@@ -289,7 +673,7 @@ def test_listener_treats_parent_reply_as_delivery_signal():
         "id": "reply-1",
         "content": "I looked at this",
         "parent_id": "agent-message-1",
-        "author": {"id": "other-agent", "name": "demo-agent", "type": "agent"},
+        "author": {"id": "user-1", "name": "Jacob", "type": "user"},
         "mentions": [],
     }
 
@@ -302,11 +686,50 @@ def test_listener_treats_conversation_reply_as_delivery_signal():
         "id": "reply-1",
         "content": "I looked at this",
         "conversation_id": "agent-message-1",
-        "author": {"id": "other-agent", "name": "demo-agent", "type": "agent"},
+        "author": {"id": "user-1", "name": "Jacob", "type": "user"},
         "mentions": [],
     }
 
     assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is True
+
+
+def test_listener_does_not_auto_reply_to_other_agent_thread_reply_without_mention():
+    anchors = {"agent-message-1"}
+    data = {
+        "id": "reply-1",
+        "content": "I looked at this",
+        "parent_id": "agent-message-1",
+        "author": {"id": "other-agent", "name": "demo-agent", "type": "agent"},
+        "mentions": [],
+    }
+
+    assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is False
+
+
+def test_listener_still_replies_to_other_agent_thread_reply_when_explicitly_mentioned():
+    anchors = {"agent-message-1"}
+    data = {
+        "id": "reply-1",
+        "content": "@peer-agent I looked at this",
+        "parent_id": "agent-message-1",
+        "author": {"id": "other-agent", "name": "demo-agent", "type": "agent"},
+        "mentions": ["peer-agent"],
+    }
+
+    assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is True
+
+
+def test_listener_ignores_thread_parent_mentions_from_other_agents():
+    anchors = {"agent-message-1"}
+    data = {
+        "id": "reply-1",
+        "content": "continuing the thread",
+        "parent_id": "agent-message-1",
+        "sender_type": "agent",
+        "mentions": [{"agent_name": "peer-agent", "source": "thread_parent"}],
+    }
+
+    assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is False
 
 
 def test_listener_tracks_self_authored_messages_without_responding():
@@ -322,3 +745,139 @@ def test_listener_tracks_self_authored_messages_without_responding():
     _remember_reply_anchor(anchors, data["id"])
     assert _should_respond(data, "peer-agent", "agent-123", reply_anchor_ids=anchors) is False
     assert anchors == {"agent-message-1"}
+
+
+def test_channel_setup_writes_per_agent_mcp_and_env(tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("axp_a_agent.secret\n")
+    workdir = tmp_path / "work"
+    env_path = tmp_path / "channel.env"
+
+    result = runner.invoke(
+        channel_mod.app,
+        [
+            "setup",
+            "orion",
+            "--workdir",
+            str(workdir),
+            "--space-id",
+            "space-123",
+            "--token-file",
+            str(token_file),
+            "--base-url",
+            "https://paxai.app",
+            "--env-path",
+            str(env_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["mcp_path"] == str(workdir / ".mcp.json")
+    assert payload["cli_config_path"] == str(workdir / ".ax" / "config.toml")
+    assert payload["cli_readme_path"] == str(workdir / ".ax" / "README.md")
+    assert payload["agent_context_path"] == str(workdir / ".ax" / "AGENT_CONTEXT.md")
+    mcp = json.loads((workdir / ".mcp.json").read_text())
+    server = mcp["mcpServers"]["ax-channel"]
+    assert server["command"] == "axctl"
+    assert server["args"] == ["channel"]
+    assert server["env"]["AX_CHANNEL_ENV_FILE"] == str(env_path)
+    env_text = env_path.read_text()
+    assert 'AX_TOKEN_FILE="' in env_text
+    assert 'AX_BASE_URL="https://paxai.app"' in env_text
+    assert 'AX_AGENT_NAME="orion"' in env_text
+    assert 'AX_SPACE_ID="space-123"' in env_text
+    cli_config = (workdir / ".ax" / "config.toml").read_text()
+    assert 'url = "http://127.0.0.1:8765"' in cli_config
+    assert 'agent_name = "orion"' in cli_config
+    assert f'workdir = "{workdir.resolve()}"' in cli_config
+    cli_readme = (workdir / ".ax" / "README.md").read_text()
+    assert "aX Claude Code Channel" in cli_readme
+    assert "ax gateway local connect --workdir ." in cli_readme
+    agent_context = (workdir / ".ax" / "AGENT_CONTEXT.md").read_text()
+    assert "multi-user, multi-agent network" in agent_context
+    assert "Do not ask the user for a PAT" in agent_context
+    assert (workdir / "AGENTS.md").exists()
+    assert (workdir / "CLAUDE.md").exists()
+
+
+def test_channel_setup_uses_gateway_registry_defaults(monkeypatch, tmp_path):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    token_file = tmp_path / "gateway" / "orion.token"
+    token_file.parent.mkdir(parents=True)
+    token_file.write_text("axp_a_agent.secret\n")
+    gateway_core.save_gateway_registry(
+        {
+            "agents": [
+                {
+                    "name": "orion",
+                    "agent_id": "agent-orion",
+                    "space_id": "space-123",
+                    "base_url": "https://paxai.app",
+                    "token_file": str(token_file),
+                }
+            ]
+        }
+    )
+    workdir = tmp_path / "work"
+    env_path = tmp_path / "orion.env"
+
+    result = runner.invoke(
+        channel_mod.app,
+        [
+            "setup",
+            "orion",
+            "--workdir",
+            str(workdir),
+            "--env-path",
+            str(env_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["agent"] == "orion"
+    assert payload["space_id"] == "space-123"
+    assert payload["base_url"] == "https://paxai.app"
+    mcp = json.loads((workdir / ".mcp.json").read_text())
+    server = mcp["mcpServers"]["ax-channel"]
+    assert server["args"] == ["channel"]
+    env_text = env_path.read_text()
+    assert f'AX_TOKEN_FILE="{token_file}"' in env_text
+    assert 'AX_AGENT_ID="agent-orion"' in env_text
+    cli_config = (workdir / ".ax" / "config.toml").read_text()
+    assert 'agent_name = "orion"' in cli_config
+
+
+def test_channel_setup_can_generate_docker_mcp_command(tmp_path):
+    token_file = tmp_path / "token"
+    token_file.write_text("axp_a_agent.secret\n")
+
+    result = runner.invoke(
+        channel_mod.app,
+        [
+            "setup",
+            "orion",
+            "--workdir",
+            str(tmp_path),
+            "--space-id",
+            "space-123",
+            "--token-file",
+            str(token_file),
+            "--mode",
+            "docker",
+            "--container-image",
+            "ax-channel:demo",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    mcp = json.loads((tmp_path / ".mcp.json").read_text())
+    server = mcp["mcpServers"]["ax-channel"]
+    assert server["command"] == "docker"
+    assert "ax-channel:demo" in server["args"]
+    assert "-i" in server["args"]
+    assert "axctl" in server["args"]

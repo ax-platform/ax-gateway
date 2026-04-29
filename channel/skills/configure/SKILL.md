@@ -29,7 +29,7 @@ Read `~/.claude/channels/ax-channel/.env` and show the user their current config
 
 1. **Config** — `AX_CONFIG_FILE` or `AX_TOKEN_FILE`. Prefer `AX_CONFIG_FILE`
    from `axctl token mint --save-to`.
-2. **API URL** — `AX_BASE_URL` (default: `https://next.paxai.app`)
+2. **API URL** — `AX_BASE_URL` (default: `https://paxai.app`)
 3. **Agent** — `AX_AGENT_NAME` (who the channel listens as)
 4. **Agent ID** — `AX_AGENT_ID` (for reply identity)
 5. **Space** — `AX_SPACE_ID` (which space to bridge)
@@ -61,7 +61,7 @@ Update `AX_SPACE_ID` in `.env`.
 
 ### `url <base_url>` — set API URL
 
-Update `AX_BASE_URL` in `.env`. Default is `https://next.paxai.app`.
+Update `AX_BASE_URL` in `.env`. Default is `https://paxai.app`.
 
 ### `clear` — remove all config
 

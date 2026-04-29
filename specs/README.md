@@ -11,11 +11,20 @@ agent skills.
 - [AGENT-PAT-001: Agent PAT Minting and JWT Exchange](AGENT-PAT-001/spec.md)
 - [IDENTIFIER-DISPLAY-001: Human-Readable Identifier Display](IDENTIFIER-DISPLAY-001/spec.md)
 - [RUNTIME-CONFIG-001: Shared Agent Runtime Configuration](RUNTIME-CONFIG-001/spec.md)
+- [GATEWAY-IDENTITY-SPACE-001: Gateway Identity, Space Binding, and Visibility](GATEWAY-IDENTITY-SPACE-001/spec.md)
 
 ## Workflow and Delivery
 
 - [CONTRACT-QA-001: API-First Regression Harness](CONTRACT-QA-001/spec.md)
 - [CLI-WORKFLOW-001: Smart Workflow Flags on Existing Commands](CLI-WORKFLOW-001/spec.md)
+- [GATEWAY-CONNECTIVITY-001: Gateway Connectivity, Signal Model, and Sender Confidence](GATEWAY-CONNECTIVITY-001/spec.md)
+- [GATEWAY-STANDALONE-KERNEL-001: Gateway as the Local Agent Network Kernel](GATEWAY-STANDALONE-KERNEL-001/spec.md)
+- [GATEWAY-AGENT-REGISTRY-001: Agent Registry, Local Binding, and Self-Profile](GATEWAY-AGENT-REGISTRY-001/spec.md)
+- [GATEWAY-SITUATIONAL-AWARENESS-001: Agent Team, User, Space, and Gateway Awareness](GATEWAY-SITUATIONAL-AWARENESS-001/spec.md)
+- [GATEWAY-ASSET-TAXONOMY-001: Gateway Asset Taxonomy and Flow Semantics](GATEWAY-ASSET-TAXONOMY-001/spec.md)
+- [GATEWAY-PASS-THROUGH-MAILBOX-001: Pass-through Mailbox Agents](GATEWAY-PASS-THROUGH-MAILBOX-001/spec.md)
+- [GATEWAY-ALERT-ROUTING-001: Alert Routing and Agent Notifications](GATEWAY-ALERT-ROUTING-001/spec.md)
+- [CONNECTED-ASSET-GOVERNANCE-001: Registry, Provenance, Capabilities, Grants, Secrets, and Approval](CONNECTED-ASSET-GOVERNANCE-001/spec.md)
 - [AGENT-CONTACT-001: Agent Contact Modes](AGENT-CONTACT-001/spec.md)
 - [AGENT-MESH-PATTERNS-001: Shared-State Agent Mesh](AGENT-MESH-PATTERNS-001/spec.md)
 - [MESH-SPAWN-001: User-Bootstrapped Agent Credential Spawning](MESH-SPAWN-001/spec.md)

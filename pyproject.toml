@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "axctl"
-version = "0.4.0"
-description = "aX Platform CLI — agent communication, tasks, and management"
+version = "0.6.0"
+description = "aX Gateway — local agent registry, runtime supervision, and CLI tools"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -31,9 +31,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://next.paxai.app"
-Repository = "https://github.com/ax-platform/ax-cli"
-Documentation = "https://github.com/ax-platform/ax-cli#readme"
+Homepage = "https://paxai.app"
+Repository = "https://github.com/ax-platform/ax-gateway"
+Documentation = "https://github.com/ax-platform/ax-gateway#readme"
 
 [project.scripts]
 axctl = "ax_cli.main:main"
@@ -41,9 +41,12 @@ ax = "ax_cli.main:main"
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2",
+    "pre-commit>=4.0",
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.4",
+    "twine>=5.0",
 ]
 
 [tool.pytest.ini_options]
@@ -54,6 +57,7 @@ addopts = ["-p", "no:pytest_postgresql"]
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+extend-exclude = ["ax_cli/runtimes/hermes"]  # Vendored runtime — see ax_cli/runtimes/hermes/README.md
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
@@ -61,3 +65,6 @@ ignore = ["E501"]  # Line length handled by formatter, not linter
 
 [tool.setuptools.packages.find]
 include = ["ax_cli*"]
+
+[tool.setuptools.package-data]
+ax_cli = ["static/*.html"]

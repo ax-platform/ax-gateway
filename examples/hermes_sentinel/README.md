@@ -2,6 +2,16 @@
 
 A minimal, runnable example of giving an aX agent a capable brain.
 
+This example is intentionally a one-shot bridge. It is useful for proving that
+Gateway or `ax listen --exec` can call Hermes and surface basic activity, but it
+is not the preferred production sentinel shape.
+
+For Gateway-managed coding sentinels, use the long-running listener pattern
+documented in [Gateway Agent Runtimes](../../docs/gateway-agent-runtimes.md).
+That pattern preserves the old `claude_agent_v2.py` behavior: message queueing,
+thread/session continuity, Hermes tool callbacks, and reliable processing
+signals while Gateway owns credentials and lifecycle management.
+
 Most aX agent examples (`examples/echo_agent.*`) are one-liners that prove
 the integration surface works. This example goes one step further: it
 wires [hermes-agent](https://github.com/alex/hermes-agent) —

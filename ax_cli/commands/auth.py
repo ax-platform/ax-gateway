@@ -1,5 +1,6 @@
 """ax auth — identity and token management."""
 
+import os
 from pathlib import Path
 
 import httpx
@@ -15,6 +16,7 @@ from ..config import (
     diagnose_auth_config,
     get_client,
     resolve_agent_name,
+    resolve_gateway_config,
     resolve_token,
     save_token,
 )
@@ -24,7 +26,7 @@ app = typer.Typer(name="auth", help="Authentication & identity", no_args_is_help
 token_app = typer.Typer(name="token", help="Token management", no_args_is_help=True)
 app.add_typer(token_app, name="token")
 
-DEFAULT_LOGIN_BASE_URL = "https://next.paxai.app"
+DEFAULT_LOGIN_BASE_URL = "https://paxai.app"
 
 
 def _mask_token_prefix(token: str) -> str:
@@ -192,6 +194,8 @@ def doctor(
         console.print(f"  space_id         = {effective.get('space_id')} ({effective.get('space_source')})")
         console.print(f"  agent_name       = {effective.get('agent_name')} ({effective.get('agent_name_source')})")
         console.print(f"  agent_id         = {effective.get('agent_id')} ({effective.get('agent_id_source')})")
+        if data.get("runtime_config"):
+            console.print(f"  runtime_config   = {data['runtime_config']}")
         if data.get("selected_env"):
             console.print(f"  selected_env     = {data['selected_env']}")
         if data.get("selected_profile"):
@@ -208,6 +212,20 @@ def doctor(
 @app.command()
 def whoami(as_json: bool = JSON_OPTION):
     """Show current identity — principal, bound agent, resolved spaces."""
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
+
+        data = _gateway_local_call(gateway_cfg=gateway_cfg, method="whoami")
+        data.setdefault("control_plane", "gateway")
+        data.setdefault("gateway_url", gateway_cfg.get("url"))
+        data.setdefault("local_config", gateway_cfg.get("local_config"))
+        if as_json:
+            print_json(data)
+        else:
+            print_kv(data)
+        return
+
     client = get_client()
     try:
         data = client.whoami()
@@ -235,6 +253,9 @@ def whoami(as_json: bool = JSON_OPTION):
     local = _local_config_dir()
     if local and (local / "config.toml").exists():
         data["local_config"] = str(local / "config.toml")
+    runtime_config = os.environ.get("AX_CONFIG_FILE")
+    if runtime_config:
+        data["runtime_config"] = runtime_config
 
     if as_json:
         print_json(data)
@@ -258,7 +279,7 @@ def init(
 
     \b
         axctl login
-        axctl login --url https://next.paxai.app
+        axctl login --url https://paxai.app
 
     The CLI will:
     1. Verify the token works (exchange it for a JWT)
@@ -508,7 +529,7 @@ def exchange(
     ),
     agent_id: str = typer.Option(None, "--agent", "-a", help="Agent ID (required for agent_access)"),
     audience: str = typer.Option("ax-api", "--audience", help="Target audience: ax-api or ax-mcp"),
-    resource: str = typer.Option(None, "--resource", help="RFC 8707 resource URI (e.g. https://next.paxai.app/mcp)"),
+    resource: str = typer.Option(None, "--resource", help="RFC 8707 resource URI (e.g. https://paxai.app/mcp)"),
     as_json: bool = JSON_OPTION,
 ):
     """Exchange PAT for a short-lived JWT (AUTH-SPEC-001 §9).
@@ -518,7 +539,11 @@ def exchange(
     """
     token = resolve_token()
     if not token:
-        console.print("[red]No token configured.[/red] Use `ax auth init` or `ax auth token set`.")
+        console.print(
+            "[red]No token configured.[/red] For Gateway-managed agents, use "
+            "`ax gateway local ... --workdir <path>` so Gateway can broker the "
+            "agent identity. For user setup, log into Gateway with `ax gateway login`."
+        )
         raise typer.Exit(1)
     if not token.startswith("axp_"):
         console.print("[red]Token is not a PAT (must start with axp_).[/red]")
@@ -570,7 +595,11 @@ def token_set(
     token: str = typer.Argument(..., help="PAT token (axp_u_...)"),
     global_: bool = typer.Option(False, "--global", "-g", help="Save to ~/.ax/ instead of local .ax/"),
 ):
-    """Save token to local .ax/config.toml (default) or ~/.ax/ with --global."""
+    """Advanced: save token to local .ax/config.toml or ~/.ax/.
+
+    Gateway-managed agents should not use this. Use `ax gateway local ...`
+    instead so Gateway owns the token boundary and audit trail.
+    """
     save_token(token, local=not global_)
     if global_:
         config_path = _global_config_dir() / "config.toml"
@@ -585,7 +614,12 @@ def token_show():
     """Show saved token (masked)."""
     token = resolve_token()
     if not token:
-        typer.echo("No token configured.", err=True)
+        typer.echo(
+            "No token configured. Gateway-managed agents should use "
+            "`ax gateway local ... --workdir <path>`; users should log into "
+            "Gateway with `ax gateway login`.",
+            err=True,
+        )
         raise typer.Exit(1)
     if len(token) > 10:
         masked = token[:6] + "..." + token[-4:]
