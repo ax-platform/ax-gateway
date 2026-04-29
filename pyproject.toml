@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "axctl"
-version = "0.6.0"
+version = "0.7.0"
 description = "aX Gateway — local agent registry, runtime supervision, and CLI tools"
 readme = "README.md"
 license = "MIT"

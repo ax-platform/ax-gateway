@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.7.0](https://github.com/ax-platform/ax-gateway/compare/v0.6.0...v0.7.0) (2026-04-29)
+
+
+### Features
+
+* **agents:** ax agents check &lt;name&gt; — AVAIL-CONTRACT v4 forward-compat consumer ([#101](https://github.com/ax-platform/ax-gateway/issues/101)) ([d5988e1](https://github.com/ax-platform/ax-gateway/commit/d5988e15ad6ee8b8e3ad7b887d066cc4ee8e8be9))
+* **agents:** ax agents list --availability — bulk AVAIL-CONTRACT v4 consumer ([#103](https://github.com/ax-platform/ax-gateway/issues/103)) ([486e07d](https://github.com/ax-platform/ax-gateway/commit/486e07d7f642820c1d6b810a7514e385d32f153d))
+* **agents:** ax agents placement get/set — GATEWAY-PLACEMENT-POLICY-001 CLI consumer ([#105](https://github.com/ax-platform/ax-gateway/issues/105)) ([32f0aa3](https://github.com/ax-platform/ax-gateway/commit/32f0aa31fe3c252e204e65a7d1f62027ede1556f))
+* **context:** ax context promote &lt;key&gt; — closes the late-promotion vault gap ([#106](https://github.com/ax-platform/ax-gateway/issues/106)) ([2946497](https://github.com/ax-platform/ax-gateway/commit/2946497dcd5348bd88733788e215d2d6cec12720))
+* **gateway:** listener for agent.placement.changed SSE event (8467ec87) ([#110](https://github.com/ax-platform/ax-gateway/issues/110)) ([015eac3](https://github.com/ax-platform/ax-gateway/commit/015eac3e83fec43b60f7dab19072b6944c127030))
+* **gateway:** runtime install endpoint + CLI — closes AUTOSETUP-001 demo blocker ([#107](https://github.com/ax-platform/ax-gateway/issues/107)) ([e856679](https://github.com/ax-platform/ax-gateway/commit/e856679ebba9041170ea0469b5e031efcbb61b3c))
+* **gateway:** time out stalled runtime messages ([a063da9](https://github.com/ax-platform/ax-gateway/commit/a063da9b9897684166635c7eee944d5561a32b4f))
+* **heartbeat:** HEARTBEAT-001 — local-first agent heartbeat CLI primitive ([#100](https://github.com/ax-platform/ax-gateway/issues/100)) ([181be6c](https://github.com/ax-platform/ax-gateway/commit/181be6cc6bb531612c76c7d109eb34df56579673))
+* **messages:** ax send post-send delivery_context chip — closes AVAIL-CONTRACT v4 send-time UX ([#104](https://github.com/ax-platform/ax-gateway/issues/104)) ([2aa89a7](https://github.com/ax-platform/ax-gateway/commit/2aa89a7c383613dacc33e4e88b00f9dc375740a2))
+* **reminders:** TASK-LOOP-001 — priority queue + HITL draft mode ([#98](https://github.com/ax-platform/ax-gateway/issues/98)) ([3284275](https://github.com/ax-platform/ax-gateway/commit/328427535675b04641ae8453a39221d6efb1a55a))
+* **reminders:** TASK-LOOP-001 v1.1 — offline-first follow-up ([#99](https://github.com/ax-platform/ax-gateway/issues/99)) ([815c2cc](https://github.com/ax-platform/ax-gateway/commit/815c2ccbbb670b1346c452a04041b15d19b039cb))
+* **specs:** pre-staged smoke for placement contract — task 2598129a ([#111](https://github.com/ax-platform/ax-gateway/issues/111)) ([504c11a](https://github.com/ax-platform/ax-gateway/commit/504c11ab91df3aa71b9b3d8f3f42c4a1ace5d13b))
+
+
+### Bug Fixes
+
+* **bootstrap:** ensure-agent semantics — 409 falls back to GET-by-name ([#109](https://github.com/ax-platform/ax-gateway/issues/109)) ([ecc8776](https://github.com/ax-platform/ax-gateway/commit/ecc87762e540f7b98856499531589af47adc0410))
+* **gateway:** surface actionable error when python3-venv is missing ([#108](https://github.com/ax-platform/ax-gateway/issues/108)) ([cfda451](https://github.com/ax-platform/ax-gateway/commit/cfda4513ab941fe795616b10c7f89195391dad6e))
+* **tasks:** resolve target spaces by slug ([#120](https://github.com/ax-platform/ax-gateway/issues/120)) ([aa9239b](https://github.com/ax-platform/ax-gateway/commit/aa9239b9028735f785d268be5cfdc58817e88f01))
+
+
+### Documentation
+
+* **inventory:** CLI-SURFACE-INVENTORY-001 v1 — closes 653cae21 ([#102](https://github.com/ax-platform/ax-gateway/issues/102)) ([22ec3e2](https://github.com/ax-platform/ax-gateway/commit/22ec3e28b88e640ecc77127c0e8344e5bb181e0c))
+* **rfc:** GATEWAY-CONNECTION-MODEL-001 — phased connection model RFC stub ([#94](https://github.com/ax-platform/ax-gateway/issues/94)) ([c13de3f](https://github.com/ax-platform/ax-gateway/commit/c13de3f88e7fbd3608cffb04f583e46ffc1fda60))
+* **spec:** AGENT-AVAILABILITY-CONTRACT-001 — cross-surface presence contract ([#96](https://github.com/ax-platform/ax-gateway/issues/96)) ([3f0d822](https://github.com/ax-platform/ax-gateway/commit/3f0d82269d1f6b0550ee5642dff9a62af64575c1))
+* **spec:** AVAIL-CONTRACT v4 — pair with backend GATEWAY-PRESENCE-DATA-MODEL-001 ([#97](https://github.com/ax-platform/ax-gateway/issues/97)) ([9ebebee](https://github.com/ax-platform/ax-gateway/commit/9ebebee7dffbec50a42f5d235a31fe34263f881f))
+* **spec:** GATEWAY-PLACEMENT-POLICY-001 — outline + bidirectional sync model ([#95](https://github.com/ax-platform/ax-gateway/issues/95)) ([b155ea1](https://github.com/ax-platform/ax-gateway/commit/b155ea16a4875af7bfdf0d6b3249153c7590503d))
+
 ## [0.6.0](https://github.com/ax-platform/ax-cli/compare/v0.5.0...v0.6.0) (2026-04-23)
 
 
