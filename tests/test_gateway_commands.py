@@ -3333,6 +3333,14 @@ def test_gateway_move_updates_routing_for_test_messages(monkeypatch, tmp_path):
         def get_agent(self, identifier):
             return {"agent": {"id": identifier, "name": "mover", "space_id": self.space_id}}
 
+        def list_spaces(self):
+            return {
+                "spaces": [
+                    {"id": "space-1", "name": "Old Space", "slug": "old-space"},
+                    {"id": "space-2", "name": "New Space", "slug": "new-space"},
+                ]
+            }
+
     fake_user_client = FakePlacementClient()
     sent_messages = []
 
@@ -3352,12 +3360,14 @@ def test_gateway_move_updates_routing_for_test_messages(monkeypatch, tmp_path):
     monkeypatch.setattr(gateway_cmd, "_load_gateway_user_client", lambda: fake_user_client)
     monkeypatch.setattr(gateway_cmd, "_load_managed_agent_client", lambda entry: RecordingManagedClient())
 
-    moved = gateway_cmd._move_managed_agent_space("mover", "space-2")
+    moved = gateway_cmd._move_managed_agent_space("mover", "new-space")
 
     assert fake_user_client.calls == [{"identifier": "agent-mover", "space_id": "space-2", "pinned": False}]
     assert moved["space_id"] == "space-2"
+    assert moved["active_space_name"] == "New Space"
     stored = gateway_core.find_agent_entry(gateway_core.load_gateway_registry(), "mover")
     assert stored["space_id"] == "space-2"
+    assert stored["active_space_name"] == "New Space"
 
     tested = gateway_cmd._send_gateway_test_to_managed_agent("mover")
 
@@ -3427,6 +3437,14 @@ def test_gateway_move_waits_for_listener_ready_after_runtime_start(monkeypatch, 
 
         def get_agent(self, identifier):
             return {"agent": {"id": identifier, "name": "mover", "space_id": self.space_id}}
+
+        def list_spaces(self):
+            return {
+                "spaces": [
+                    {"id": "space-1", "name": "Old Space", "slug": "old-space"},
+                    {"id": "space-2", "name": "New Space", "slug": "new-space"},
+                ]
+            }
 
     calls = {"recent": 0}
 

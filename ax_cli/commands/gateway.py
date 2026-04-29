@@ -490,6 +490,112 @@ def _send_local_session_message(*, session_token: str, body: dict) -> dict:
     return {"agent": entry.get("name"), "message": payload, "session": session}
 
 
+def _create_local_session_task(*, session_token: str, body: dict) -> dict:
+    registry = load_gateway_registry()
+    session = verify_local_session_token(registry, session_token)
+    entry = find_agent_entry(registry, str(session.get("agent_name") or ""))
+    if not entry:
+        raise LookupError("Local session agent is no longer registered.")
+    annotated = annotate_runtime_health(entry, registry=registry)
+    if str(annotated.get("approval_state") or "").lower() not in {"not_required", "approved"}:
+        raise ValueError("Local session agent is not approved.")
+    if not str(body.get("space_id") or "").strip():
+        _hydrate_entry_space_from_database(registry, entry)
+    space_id = str(
+        body.get("space_id")
+        or entry.get("active_space_id")
+        or entry.get("space_id")
+        or entry.get("default_space_id")
+        or ""
+    ).strip()
+    title = str(body.get("title") or "").strip()
+    if not space_id:
+        raise ValueError("space_id is required.")
+    if not title:
+        raise ValueError("title is required.")
+
+    client = _load_managed_agent_client(entry)
+    payload = client.create_task(
+        space_id,
+        title,
+        description=str(body.get("description") or "").strip() or None,
+        priority=str(body.get("priority") or "medium").strip() or "medium",
+        assignee_id=str(body.get("assignee_id") or "").strip() or None,
+        agent_id=str(entry.get("agent_id") or "") or None,
+    )
+    task = payload.get("task", payload) if isinstance(payload, dict) else {}
+    record_gateway_activity(
+        "local_task_created",
+        entry=entry,
+        task_id=task.get("id") if isinstance(task, dict) else None,
+        activity_message=title[:240],
+        session_id=session.get("session_id"),
+    )
+    return {"agent": entry.get("name"), "task": task, "session": session}
+
+
+_LOCAL_PROXY_METHODS: dict[str, dict] = {
+    "whoami": {},
+    "list_spaces": {},
+    "list_agents": {"kwargs": ["space_id", "limit"]},
+    "list_agents_availability": {"kwargs": ["space_id", "filter_"]},
+    "list_context": {"kwargs": ["prefix", "space_id"]},
+    "get_context": {"args": ["key"], "kwargs": ["space_id"]},
+    "list_messages": {
+        "kwargs": ["limit", "space_id", "channel", "agent_id", "unread_only", "mark_read"],
+    },
+    "get_message": {"args": ["message_id"]},
+    "search_messages": {"args": ["query"], "kwargs": ["limit", "agent_id"]},
+    "list_tasks": {"kwargs": ["limit", "space_id"]},
+    "get_task": {"args": ["task_id"]},
+    "update_task": {"args": ["task_id"], "kwargs": ["status", "priority"]},
+}
+
+
+def _proxy_local_session_call(*, session_token: str, body: dict) -> dict:
+    method = str(body.get("method") or "").strip()
+    if method not in _LOCAL_PROXY_METHODS:
+        raise ValueError(f"method not on Gateway proxy allowlist: {method!r}")
+    spec = _LOCAL_PROXY_METHODS[method]
+    args_in = body.get("args") if isinstance(body.get("args"), dict) else {}
+
+    registry = load_gateway_registry()
+    session = verify_local_session_token(registry, session_token)
+    entry = find_agent_entry(registry, str(session.get("agent_name") or ""))
+    if not entry:
+        raise LookupError("Local session agent is no longer registered.")
+    annotated = annotate_runtime_health(entry, registry=registry)
+    if str(annotated.get("approval_state") or "").lower() not in {"not_required", "approved"}:
+        raise ValueError("Local session agent is not approved.")
+
+    positional: list = []
+    for arg_name in spec.get("args", []):
+        if arg_name not in args_in or args_in[arg_name] in (None, ""):
+            raise ValueError(f"missing required arg for {method}: {arg_name}")
+        positional.append(args_in[arg_name])
+    keyword: dict = {}
+    for key in spec.get("kwargs", []):
+        if key in args_in and args_in[key] is not None:
+            keyword[key] = args_in[key]
+
+    client = _load_managed_agent_client(entry)
+    method_fn = getattr(client, method, None)
+    if not callable(method_fn):
+        raise ValueError(f"method not implemented on AxClient: {method!r}")
+    result = method_fn(*positional, **keyword)
+    record_gateway_activity(
+        f"local_proxy_{method}",
+        entry=entry,
+        session_id=session.get("session_id"),
+    )
+    return {
+        "agent": entry.get("name"),
+        "method": method,
+        "result": result,
+        "session": session,
+    }
+
+
 def _local_session_inbox(
     *,
     session_token: str,
@@ -2571,7 +2677,9 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     if not name:
         raise ValueError("Managed agent name is required.")
     if not new_space_id:
-        raise ValueError("Target space_id is required.")
+        raise ValueError("Target space is required.")
+    client = _load_gateway_user_client()
+    new_space_id = resolve_space_id(client, explicit=new_space_id)
     registry = load_gateway_registry()
     entry = find_agent_entry(registry, name)
     if not entry:
@@ -2579,11 +2687,10 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     if bool(entry.get("pinned")):
         raise ValueError(f"@{name} is pinned to its current space. Unlock it before moving.")
     if str(entry.get("space_id") or "").strip() == new_space_id:
-        apply_entry_current_space(entry, new_space_id)
+        apply_entry_current_space(entry, new_space_id, space_name=_space_name_for_id(client, new_space_id))
         ensure_gateway_identity_binding(registry, entry, session=load_gateway_session())
         save_gateway_registry(registry)
         return annotate_runtime_health(entry, registry=registry)
-    client = _load_gateway_user_client()
     identifier = str(entry.get("agent_id") or name)
     try:
         client.set_agent_placement(identifier, space_id=new_space_id, pinned=bool(entry.get("pinned")))
@@ -2597,6 +2704,7 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     # Re-read the canonical record from backend — gateway local registry is a view,
     # never the source of truth.
     backend_space_id = new_space_id
+    backend_space_name = _space_name_for_id(client, new_space_id)
     backend_allowed_spaces: list[dict[str, object]] | None = None
     read_back_methods = [
         method
@@ -2617,12 +2725,35 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
             ).strip()
             if canonical:
                 backend_space_id = canonical
+                backend_space_name = _space_name_for_id(client, backend_space_id) or backend_space_name
             allowed = record.get("allowed_spaces")
             if isinstance(allowed, list):
+                try:
+                    space_names_by_id = {
+                        str(item.get("id") or item.get("space_id") or "").strip(): str(
+                            item.get("name") or item.get("space_name") or item.get("slug") or ""
+                        ).strip()
+                        for item in _space_list_from_response(client.list_spaces())
+                        if isinstance(item, dict) and str(item.get("id") or item.get("space_id") or "").strip()
+                    }
+                except Exception:
+                    space_names_by_id = {}
                 backend_allowed_spaces = [
-                    item
+                    {
+                        **item,
+                        "name": str(
+                            item.get("name")
+                            or space_names_by_id.get(str(item.get("space_id") or item.get("id") or "").strip())
+                            or item.get("space_id")
+                            or item.get("id")
+                        ),
+                    }
                     if isinstance(item, dict)
-                    else {"space_id": str(item), "name": str(item), "is_default": str(item) == backend_space_id}
+                    else {
+                        "space_id": str(item),
+                        "name": space_names_by_id.get(str(item)) or str(item),
+                        "is_default": str(item) == backend_space_id,
+                    }
                     for item in allowed
                     if item
                 ]
@@ -2633,7 +2764,7 @@ def _move_managed_agent_space(name: str, new_space_id: str) -> dict:
     previous_space_id = str(entry.get("space_id") or "").strip() or None
     if backend_allowed_spaces is not None:
         entry["allowed_spaces"] = backend_allowed_spaces
-    apply_entry_current_space(entry, backend_space_id)
+    apply_entry_current_space(entry, backend_space_id, space_name=backend_space_name)
     ensure_gateway_identity_binding(registry, entry, session=load_gateway_session())
     # Capture the rebind marker BEFORE writing the registry so the wait below
     # is guaranteed to see only post-move runtime/listener events.
@@ -4421,6 +4552,23 @@ def _build_gateway_ui_handler(*, activity_limit: int, refresh_ms: int):
                     payload = _send_local_session_message(session_token=session_token, body=body)
                     _write_json_response(self, payload, status=HTTPStatus.CREATED)
                     return
+                if parsed.path == "/local/tasks":
+                    session_token = str(self.headers.get("X-Gateway-Session") or "").strip()
+                    payload = _create_local_session_task(session_token=session_token, body=body)
+                    _write_json_response(self, payload, status=HTTPStatus.CREATED)
+                    return
+                if parsed.path == "/local/proxy":
+                    session_token = str(self.headers.get("X-Gateway-Session") or "").strip()
+                    try:
+                        payload = _proxy_local_session_call(session_token=session_token, body=body)
+                    except LookupError as exc:
+                        _write_json_response(self, {"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    except ValueError as exc:
+                        _write_json_response(self, {"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                    _write_json_response(self, payload)
+                    return
                 if parsed.path.endswith("/start") and parsed.path.startswith("/api/agents/"):
                     name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/start")).strip()
                     payload = _set_managed_agent_desired_state(name, "running")
@@ -6194,7 +6342,7 @@ def test_agent(
 @agents_app.command("move")
 def move_agent(
     name: str = typer.Argument(..., help="Managed agent name"),
-    space_id: str = typer.Option(..., "--space-id", "-s", help="Target space id"),
+    space_id: str = typer.Option(..., "--space", "--space-id", "-s", help="Target space slug, name, or id"),
     as_json: bool = JSON_OPTION,
 ):
     """Move a Gateway-managed agent to another allowed space."""

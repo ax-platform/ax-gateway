@@ -778,7 +778,8 @@ def resolve_gateway_config() -> dict:
     gateway = cfg.get("gateway") if isinstance(cfg.get("gateway"), dict) else {}
     agent = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
     mode = str(gateway.get("mode") or cfg.get("gateway_mode") or "").strip().lower()
-    url = str(gateway.get("url") or gateway.get("base_url") or cfg.get("gateway_url") or "").strip()
+    url = str(gateway.get("url") or cfg.get("gateway_url") or "").strip()
+    base_url = str(gateway.get("base_url") or cfg.get("gateway_base_url") or "").strip()
     agent_name = str(
         agent.get("agent_name") or agent.get("name") or cfg.get("gateway_agent_name") or cfg.get("agent_name") or ""
     ).strip()
@@ -786,16 +787,28 @@ def resolve_gateway_config() -> dict:
         agent.get("registry_ref") or agent.get("registry") or cfg.get("gateway_registry_ref") or ""
     ).strip()
     workdir = str(agent.get("workdir") or gateway.get("workdir") or cfg.get("gateway_workdir") or "").strip()
-    enabled = mode in {"local", "pass_through", "gateway"} or bool(url)
+    space_id = str(gateway.get("space_id") or cfg.get("gateway_space_id") or "").strip()
+    enabled = (
+        mode in {"local", "pass_through", "gateway"}
+        or bool(gateway)
+        or bool(url)
+        or bool(registry_ref)
+        or bool(cfg.get("gateway_agent_name"))
+    )
     if not enabled:
         return {}
-    return {
+    result = {
         "mode": mode or "local",
         "url": url or "http://127.0.0.1:8765",
         "agent_name": agent_name or None,
         "registry_ref": registry_ref or None,
         "workdir": workdir or None,
     }
+    if base_url:
+        result["base_url"] = base_url
+    if space_id:
+        result["space_id"] = space_id
+    return result
 
 
 def resolve_user_base_url() -> str:

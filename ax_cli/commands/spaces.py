@@ -5,7 +5,7 @@ from typing import Optional
 import httpx
 import typer
 
-from ..config import get_client, resolve_space_id, save_space_id
+from ..config import get_client, resolve_gateway_config, resolve_space_id, save_space_id
 from ..output import JSON_OPTION, console, handle_error, print_json, print_kv, print_table
 
 app = typer.Typer(name="spaces", help="Space management", no_args_is_help=True)
@@ -63,11 +63,17 @@ def list_spaces(
     as_json: bool = JSON_OPTION,
 ):
     """List all spaces you belong to."""
-    client = get_client()
-    try:
-        spaces = client.list_spaces()
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
+
+        spaces = _gateway_local_call(gateway_cfg=gateway_cfg, method="list_spaces")
+    else:
+        client = get_client()
+        try:
+            spaces = client.list_spaces()
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
     if not isinstance(spaces, list):
         spaces = spaces.get("spaces", spaces.get("items", []))
     if as_json:

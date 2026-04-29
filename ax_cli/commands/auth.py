@@ -16,6 +16,7 @@ from ..config import (
     diagnose_auth_config,
     get_client,
     resolve_agent_name,
+    resolve_gateway_config,
     resolve_token,
     save_token,
 )
@@ -211,6 +212,20 @@ def doctor(
 @app.command()
 def whoami(as_json: bool = JSON_OPTION):
     """Show current identity — principal, bound agent, resolved spaces."""
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
+
+        data = _gateway_local_call(gateway_cfg=gateway_cfg, method="whoami")
+        data.setdefault("control_plane", "gateway")
+        data.setdefault("gateway_url", gateway_cfg.get("url"))
+        data.setdefault("local_config", gateway_cfg.get("local_config"))
+        if as_json:
+            print_json(data)
+        else:
+            print_kv(data)
+        return
+
     client = get_client()
     try:
         data = client.whoami()

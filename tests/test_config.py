@@ -138,6 +138,24 @@ class TestLoadConfig:
         assert gateway["agent_name"] == "backend_sentinel"
         assert "space_id" not in gateway
 
+    def test_gateway_config_keeps_service_base_url_separate_from_local_gateway_url(self, tmp_path, monkeypatch):
+        local_ax = tmp_path / ".ax"
+        local_ax.mkdir()
+        (local_ax / "config.toml").write_text(
+            '[gateway]\n'
+            'base_url = "https://paxai.app"\n'
+            'space_id = "team-space"\n'
+            '[agent]\n'
+            'agent_name = "codex-pass-through"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        gateway = resolve_gateway_config()
+        assert gateway["url"] == "http://127.0.0.1:8765"
+        assert gateway["base_url"] == "https://paxai.app"
+        assert gateway["space_id"] == "team-space"
+        assert gateway["agent_name"] == "codex-pass-through"
+
     def test_ax_config_file_overrides_local_runtime_config(self, tmp_path, monkeypatch):
         local_ax = tmp_path / ".ax"
         local_ax.mkdir()

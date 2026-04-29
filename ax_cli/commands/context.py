@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 import httpx
 import typer
 
-from ..config import get_client, resolve_space_id
+from ..config import get_client, resolve_gateway_config, resolve_space_id
 from ..context_keys import build_upload_context_key
 from ..output import JSON_OPTION, handle_error, mention_prefix, print_json, print_kv, print_table
 
@@ -519,6 +519,22 @@ def get_ctx(
     as_json: bool = JSON_OPTION,
 ):
     """Get a context value by key."""
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
+
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="get_context",
+            args={"key": key, "space_id": space_id},
+            space_id=space_id,
+        )
+        if as_json:
+            print_json(data)
+        else:
+            print_kv(data)
+        return
+
     client = get_client()
     sid = _optional_space_id(client, space_id)
     try:
@@ -538,12 +554,23 @@ def list_ctx(
     as_json: bool = JSON_OPTION,
 ):
     """List context entries."""
-    client = get_client()
-    sid = _optional_space_id(client, space_id)
-    try:
-        data = client.list_context(prefix=prefix, space_id=sid)
-    except httpx.HTTPStatusError as exc:
-        handle_error(exc)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
+
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="list_context",
+            args={"prefix": prefix, "space_id": space_id},
+            space_id=space_id,
+        )
+    else:
+        client = get_client()
+        sid = _optional_space_id(client, space_id)
+        try:
+            data = client.list_context(prefix=prefix, space_id=sid)
+        except httpx.HTTPStatusError as exc:
+            handle_error(exc)
     # API returns dict of {key: {value, ttl, ...}} — normalize to list of rows
     if isinstance(data, list):
         items = data

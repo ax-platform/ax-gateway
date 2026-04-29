@@ -111,6 +111,66 @@ def _gateway_local_send(
     return payload
 
 
+def _gateway_local_call(
+    *,
+    gateway_cfg: dict,
+    method: str,
+    args: dict | None = None,
+    space_id: str | None = None,
+    timeout: float = 30.0,
+):
+    """POST /local/proxy through Gateway as the workdir-bound managed agent.
+
+    Returns the raw `result` field from the proxy response (the same value the
+    direct AxClient method would have returned). Connect failures surface as
+    typer.BadParameter so the CLI exits with a clean error.
+    """
+    gateway_url = str(gateway_cfg.get("url") or "http://127.0.0.1:8765")
+    connect_payload = _gateway_local_connect(
+        gateway_url=gateway_url,
+        agent_name=gateway_cfg.get("agent_name"),
+        registry_ref=gateway_cfg.get("registry_ref"),
+        workdir=gateway_cfg.get("workdir"),
+        space_id=space_id,
+    )
+    session_token = str(connect_payload.get("session_token") or "").strip()
+    if not session_token:
+        status = str(connect_payload.get("status") or "pending")
+        if status == "pending":
+            raise typer.BadParameter(
+                _approval_required_guidance(
+                    connect_payload=connect_payload,
+                    gateway_url=gateway_url,
+                    agent_name=gateway_cfg.get("agent_name"),
+                    workdir=gateway_cfg.get("workdir"),
+                    action=f"call {method}",
+                )
+            )
+        raise typer.BadParameter(
+            f"Gateway local session is {status}; approve the agent before calling {method}."
+        )
+    body = {"method": method, "args": dict(args or {})}
+    try:
+        response = httpx.post(
+            f"{gateway_url.rstrip('/')}/local/proxy",
+            json=body,
+            headers={"X-Gateway-Session": session_token},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("error", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(f"Gateway proxy {method} failed: {detail}") from exc
+    except Exception as exc:
+        raise typer.BadParameter(f"Gateway proxy {method} failed: {exc}") from exc
+    return payload.get("result", payload)
+
+
 def _print_wait_status(remaining: int, last_remaining: int | None, wait_label: str = "reply") -> int:
     if remaining != last_remaining:
         console.print(f"  [dim]waiting for {wait_label}... ({remaining}s remaining)[/dim]", end="\r")
@@ -911,17 +971,28 @@ def list_messages(
     as_json: bool = JSON_OPTION,
 ):
     """List recent messages."""
-    client = get_client()
-    sid = resolve_space_id(client, explicit=space_id)
-    try:
-        kwargs = {"limit": limit, "channel": channel, "space_id": sid}
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        args: dict = {"limit": limit, "channel": channel, "space_id": space_id}
         if unread:
-            kwargs["unread_only"] = True
+            args["unread_only"] = True
         if mark_read:
-            kwargs["mark_read"] = True
-        data = client.list_messages(**kwargs)
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
+            args["mark_read"] = True
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg, method="list_messages", args=args, space_id=space_id
+        )
+    else:
+        client = get_client()
+        sid = resolve_space_id(client, explicit=space_id)
+        try:
+            kwargs = {"limit": limit, "channel": channel, "space_id": sid}
+            if unread:
+                kwargs["unread_only"] = True
+            if mark_read:
+                kwargs["mark_read"] = True
+            data = client.list_messages(**kwargs)
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
     messages = _message_items(data)
     if as_json:
         print_json(messages)
@@ -980,11 +1051,19 @@ def get(
     as_json: bool = JSON_OPTION,
 ):
     """Get a single message."""
-    client = get_client()
-    try:
-        data = client.get_message(_resolve_message_id(client, message_id))
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="get_message",
+            args={"message_id": message_id},
+        )
+    else:
+        client = get_client()
+        try:
+            data = client.get_message(_resolve_message_id(client, message_id))
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
     if as_json:
         print_json(data)
     else:
@@ -1034,11 +1113,19 @@ def search(
     as_json: bool = JSON_OPTION,
 ):
     """Search messages."""
-    client = get_client()
-    try:
-        data = client.search_messages(query, limit=limit)
-    except httpx.HTTPStatusError as e:
-        handle_error(e)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        data = _gateway_local_call(
+            gateway_cfg=gateway_cfg,
+            method="search_messages",
+            args={"query": query, "limit": limit},
+        )
+    else:
+        client = get_client()
+        try:
+            data = client.search_messages(query, limit=limit)
+        except httpx.HTTPStatusError as e:
+            handle_error(e)
     results = data if isinstance(data, list) else data.get("results", data.get("messages", []))
     if as_json:
         print_json(results)

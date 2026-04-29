@@ -15,6 +15,7 @@ from ..config import (
     get_client,
     resolve_agent_name,
     resolve_base_url,
+    resolve_gateway_config,
     resolve_space_id,
 )
 from ..output import JSON_OPTION, console, err_console, handle_error, print_json, print_kv, print_table
@@ -240,32 +241,65 @@ def list_agents(
     confidence, last_seen. Falls back gracefully to the legacy ``/agents`` shape
     if ``/availability`` returns 404.
     """
-    client = get_client()
-    sid = resolve_space_id(client, explicit=space_id)
+    gateway_cfg = resolve_gateway_config()
+    if gateway_cfg:
+        from .messages import _gateway_local_call
 
-    if availability:
-        try:
-            data = client.list_agents_availability(space_id=sid, filter_=filter_)
-            agents = _normalize_availability_rows(data)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code != 404:
-                handle_error(e)
-            # Fallback: backend hasn't shipped /availability yet.
+        if availability:
             try:
-                fallback = client.list_agents(space_id=sid, limit=limit)
-            except httpx.HTTPStatusError as e2:
-                handle_error(e2)
-            agents = fallback if isinstance(fallback, list) else fallback.get("agents", [])
-            for row in agents:
-                row.setdefault("_legacy", True)
+                data = _gateway_local_call(
+                    gateway_cfg=gateway_cfg,
+                    method="list_agents_availability",
+                    args={"space_id": space_id, "filter_": filter_},
+                    space_id=space_id,
+                )
+                agents = _normalize_availability_rows(data)
+            except typer.BadParameter:
+                fallback = _gateway_local_call(
+                    gateway_cfg=gateway_cfg,
+                    method="list_agents",
+                    args={"space_id": space_id, "limit": limit},
+                    space_id=space_id,
+                )
+                agents = fallback if isinstance(fallback, list) else fallback.get("agents", [])
+                for row in agents:
+                    row.setdefault("_legacy", True)
+        else:
+            if filter_:
+                raise typer.BadParameter("--filter requires --availability")
+            data = _gateway_local_call(
+                gateway_cfg=gateway_cfg,
+                method="list_agents",
+                args={"space_id": space_id, "limit": limit},
+                space_id=space_id,
+            )
+            agents = data if isinstance(data, list) else data.get("agents", [])
     else:
-        if filter_:
-            raise typer.BadParameter("--filter requires --availability")
-        try:
-            data = client.list_agents(space_id=sid, limit=limit)
-        except httpx.HTTPStatusError as e:
-            handle_error(e)
-        agents = data if isinstance(data, list) else data.get("agents", [])
+        client = get_client()
+        sid = resolve_space_id(client, explicit=space_id)
+        if availability:
+            try:
+                data = client.list_agents_availability(space_id=sid, filter_=filter_)
+                agents = _normalize_availability_rows(data)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != 404:
+                    handle_error(e)
+                # Fallback: backend hasn't shipped /availability yet.
+                try:
+                    fallback = client.list_agents(space_id=sid, limit=limit)
+                except httpx.HTTPStatusError as e2:
+                    handle_error(e2)
+                agents = fallback if isinstance(fallback, list) else fallback.get("agents", [])
+                for row in agents:
+                    row.setdefault("_legacy", True)
+        else:
+            if filter_:
+                raise typer.BadParameter("--filter requires --availability")
+            try:
+                data = client.list_agents(space_id=sid, limit=limit)
+            except httpx.HTTPStatusError as e:
+                handle_error(e)
+            agents = data if isinstance(data, list) else data.get("agents", [])
 
     if as_json:
         print_json(agents)
