@@ -299,6 +299,34 @@ Without (2), supervised-subprocess runtimes had drawer feeds that never cleared 
 
 `_publish_processing_status` and `_record_tool_call` lazy-init `_send_client` for runtimes that don't enter `_listener_loop()`. Without lazy init, every event was dropped with `processing-status drop (no send_client)` — the original "stuck on Working" demo blocker.
 
+## Canonical event vocabulary and phase mapping (Phase 1, 2026-04-29)
+
+Supervisor loops, the aX message bubble, and the Gateway drawer are three
+different consumers of the same activity stream. They cannot all keep up with
+runtime-side event-name churn. To break that coupling, Gateway exposes two
+stable contracts:
+
+1. **`GATEWAY_ACTIVITY_PHASES`** — the supervisor-facing phase enum. Frozen
+   set of: `received`, `routed`, `delivered`, `claimed`, `working`, `tool`,
+   `reply`, `result`, `blocked`, `stale`, `reminder`. New phases require a
+   spec change.
+2. **`GATEWAY_ACTIVITY_EVENTS`** — runtime-side event-name → phase map.
+   Runtimes may add or rename event names freely as long as the new name
+   ships with an entry in this map. Unknown event names still record to the
+   activity log but are emitted with no `phase` field, so consumers can spot
+   drift instead of trusting a fake phase.
+
+`record_gateway_activity` attaches `phase` automatically when the event name
+is registered. The CLI inspector `ax gateway activity --message-id <id>
+[--json]` reads `~/.ax/gateway/activity.jsonl` and emits filtered rows in
+chronological order. The command is read-only — it does not authenticate to
+the backend or construct an `AxClient`, so Gateway remains the trust boundary.
+
+Phases without registered events today (`routed`, `blocked`, `stale`,
+`reminder`) are intentional — Phase 2 of this spec adds the missing emit
+sites. They appear in the phase set so supervisor loops can encode them now
+and avoid a follow-up vocabulary bump.
+
 ## Open questions
 
 - Should the gateway also emit a `started` event distinct from `thinking` so the bubble can show "received → thinking" as two micro-states? Or is "thinking" enough?

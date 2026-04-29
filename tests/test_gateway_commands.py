@@ -4782,3 +4782,170 @@ def test_gateway_spaces_current_shows_session_space(monkeypatch, tmp_path):
         "base_url": "https://paxai.app",
         "username": "codex",
     }
+
+
+# --- GATEWAY-ACTIVITY-VISIBILITY-001 Phase 1: canonical event vocabulary -----
+
+
+def test_gateway_activity_phase_set_covers_supervisor_lifecycle():
+    """The phase enum is the supervisor-loop / aX bubble contract; freezing
+    it here means a runtime change cannot silently drop a phase the
+    supervisor depends on."""
+    expected = {
+        "received",
+        "routed",
+        "delivered",
+        "claimed",
+        "working",
+        "tool",
+        "reply",
+        "result",
+        "blocked",
+        "stale",
+        "reminder",
+    }
+    assert set(gateway_core.GATEWAY_ACTIVITY_PHASES) == expected
+
+
+def test_gateway_activity_event_vocabulary_phase_mapping():
+    """Every registered event maps to a registered phase. New event names
+    that don't appear here should pass review with an explicit mapping."""
+    mapping = gateway_core.GATEWAY_ACTIVITY_EVENTS
+    assert mapping["message_received"] == "received"
+    assert mapping["message_queued"] == "received"
+    assert mapping["delivered_to_inbox"] == "delivered"
+    assert mapping["message_claimed"] == "claimed"
+    assert mapping["runtime_activity"] == "working"
+    assert mapping["tool_started"] == "tool"
+    assert mapping["tool_call_recorded"] == "tool"
+    assert mapping["tool_call_record_failed"] == "tool"
+    assert mapping["reply_sent"] == "reply"
+    assert mapping["runtime_error"] == "result"
+    assert mapping["agent_skipped"] == "result"
+    # All registered events use a registered phase.
+    for event_name, phase in mapping.items():
+        assert phase in gateway_core.GATEWAY_ACTIVITY_PHASES, (event_name, phase)
+
+
+def test_gateway_activity_phase_for_event_returns_none_for_unknown():
+    assert gateway_core.phase_for_event("not_a_real_event") is None
+    assert gateway_core.phase_for_event("") is None
+    assert gateway_core.phase_for_event("message_received") == "received"
+
+
+def test_record_gateway_activity_attaches_phase_for_known_event(monkeypatch, tmp_path):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AX_GATEWAY_DIR", str(tmp_path / "gw"))
+    rec = gateway_core.record_gateway_activity(
+        "message_received",
+        message_id="msg-1",
+    )
+    assert rec["phase"] == "received"
+    rec2 = gateway_core.record_gateway_activity(
+        "tool_started",
+        message_id="msg-1",
+        tool_name="bash",
+    )
+    assert rec2["phase"] == "tool"
+
+
+def test_record_gateway_activity_omits_phase_for_unknown_event(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AX_GATEWAY_DIR", str(tmp_path / "gw"))
+    rec = gateway_core.record_gateway_activity(
+        "totally_made_up_event",
+        message_id="msg-1",
+    )
+    # Unknown events still record (legacy callers, future events) but carry
+    # no phase so consumers can spot drift instead of trusting a fake phase.
+    assert "phase" not in rec
+
+
+def test_gateway_activity_command_filters_by_message_id(monkeypatch, tmp_path):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AX_GATEWAY_DIR", str(tmp_path / "gw"))
+    entry = {"name": "agent-a", "agent_id": "a-1", "runtime_type": "ollama"}
+
+    # Two messages interleaved.
+    gateway_core.record_gateway_activity("message_received", entry=entry, message_id="msg-A")
+    gateway_core.record_gateway_activity("message_received", entry=entry, message_id="msg-B")
+    gateway_core.record_gateway_activity("message_claimed", entry=entry, message_id="msg-A")
+    gateway_core.record_gateway_activity("tool_started", entry=entry, message_id="msg-A", tool_name="bash")
+    gateway_core.record_gateway_activity("reply_sent", entry=entry, message_id="msg-B")
+    gateway_core.record_gateway_activity("reply_sent", entry=entry, message_id="msg-A")
+
+    result = runner.invoke(app, ["gateway", "activity", "--message-id", "msg-A", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["message_id"] == "msg-A"
+    events = [item["event"] for item in payload["events"]]
+    assert events == ["message_received", "message_claimed", "tool_started", "reply_sent"]
+    phases = [item.get("phase") for item in payload["events"]]
+    assert phases == ["received", "claimed", "tool", "reply"]
+    # Every event row carries the message id we asked for.
+    assert all(item.get("message_id") == "msg-A" for item in payload["events"])
+
+
+def test_gateway_activity_command_orders_chronologically_under_jitter(monkeypatch, tmp_path):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AX_GATEWAY_DIR", str(tmp_path / "gw"))
+    # Append unsorted to the JSONL — reader must order by ts, not file order.
+    log = gateway_core.activity_log_path()
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"ts": "2026-04-29T10:00:02Z", "event": "message_claimed", "message_id": "msg-X", "phase": "claimed"},
+        {"ts": "2026-04-29T10:00:01Z", "event": "message_received", "message_id": "msg-X", "phase": "received"},
+        {"ts": "2026-04-29T10:00:03Z", "event": "reply_sent", "message_id": "msg-X", "phase": "reply"},
+    ]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    result = runner.invoke(app, ["gateway", "activity", "--message-id", "msg-X", "--json"])
+    assert result.exit_code == 0, result.output
+    events = [item["event"] for item in json.loads(result.output)["events"]]
+    assert events == ["message_received", "message_claimed", "reply_sent"]
+
+
+def test_gateway_activity_command_filters_by_agent(monkeypatch, tmp_path):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AX_GATEWAY_DIR", str(tmp_path / "gw"))
+    entry_a = {"name": "agent-a", "agent_id": "a-1"}
+    entry_b = {"name": "agent-b", "agent_id": "b-1"}
+    gateway_core.record_gateway_activity("message_received", entry=entry_a, message_id="msg-1")
+    gateway_core.record_gateway_activity("message_received", entry=entry_b, message_id="msg-2")
+
+    result = runner.invoke(app, ["gateway", "activity", "--agent", "agent-a", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert all(item.get("agent_name") == "agent-a" for item in payload["events"])
+    assert {item.get("message_id") for item in payload["events"]} == {"msg-1"}
+
+
+def test_gateway_activity_command_returns_empty_when_no_match(monkeypatch, tmp_path):
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AX_GATEWAY_DIR", str(tmp_path / "gw"))
+    result = runner.invoke(app, ["gateway", "activity", "--message-id", "nope", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {"message_id": "nope", "events": []}
+
+
+def test_gateway_activity_command_does_not_emit_credentials(monkeypatch, tmp_path):
+    """Defense-in-depth: if a runtime ever writes a token-shaped string into
+    the activity log, the inspector must surface it as the consumer would
+    see it without redaction (this is a read of disk content the daemon
+    already owns), AND the command must not introduce any new credential
+    surface — it must not require auth or call the backend."""
+    monkeypatch.setenv("AX_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("AX_GATEWAY_DIR", str(tmp_path / "gw"))
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("activity command must not construct an AxClient")
+
+    monkeypatch.setattr(gateway_cmd, "AxClient", _explode)
+    gateway_core.record_gateway_activity(
+        "message_received",
+        entry={"name": "agent-a", "agent_id": "a-1"},
+        message_id="msg-1",
+    )
+    result = runner.invoke(app, ["gateway", "activity", "--message-id", "msg-1", "--json"])
+    assert result.exit_code == 0, result.output

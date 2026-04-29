@@ -202,6 +202,66 @@ _BLOCKED_STATUSES = {"rate_limited"}
 _NO_REPLY_STATUSES = {"no_reply", "declined", "skipped", "not_responding"}
 
 
+# --- Canonical Gateway activity vocabulary ----------------------------------
+#
+# Spec: GATEWAY-ACTIVITY-VISIBILITY-001 (Phase 1 of the agent-feedback contract).
+# The phase set is the supervisor-loop and aX message-bubble contract; the
+# event-name → phase map lets runtimes evolve their event vocabulary without
+# changing what consumers depend on. Unknown event names still record (legacy
+# callers, future events) but receive no phase, so drift is visible instead of
+# silently mis-classified.
+
+GATEWAY_ACTIVITY_PHASES: frozenset[str] = frozenset(
+    {
+        "received",
+        "routed",
+        "delivered",
+        "claimed",
+        "working",
+        "tool",
+        "reply",
+        "result",
+        "blocked",
+        "stale",
+        "reminder",
+    }
+)
+
+GATEWAY_ACTIVITY_EVENTS: dict[str, str] = {
+    # received: Gateway has the message in hand
+    "message_received": "received",
+    "message_queued": "received",
+    # delivered: Gateway placed the message into the agent's surface
+    "delivered_to_inbox": "delivered",
+    "local_message_sent": "delivered",
+    "gateway_test_sent": "delivered",
+    # claimed: agent has picked up the work
+    "message_claimed": "claimed",
+    # working: agent is doing model/runtime work for the message
+    "runtime_activity": "working",
+    # tool: agent is invoking a tool as part of the work
+    "tool_started": "tool",
+    "tool_call_recorded": "tool",
+    "tool_call_record_failed": "tool",
+    # reply: agent posted a reply
+    "reply_sent": "reply",
+    # result: terminal outcome that is not a reply
+    "runtime_error": "result",
+    "agent_skipped": "result",
+}
+
+
+def phase_for_event(event_name: str | None) -> str | None:
+    """Return the supervisor-facing phase for a Gateway activity event name.
+
+    Returns ``None`` for unknown or empty event names so callers can spot
+    drift instead of papering over it.
+    """
+    if not event_name:
+        return None
+    return GATEWAY_ACTIVITY_EVENTS.get(str(event_name))
+
+
 def _normalized_controlled(value: object, allowed: set[str], *, fallback: str) -> str:
     normalized = str(value or "").strip()
     if normalized in allowed:
@@ -3084,6 +3144,9 @@ def record_gateway_activity(
         "ts": _now_iso(),
         "event": event,
     }
+    phase = phase_for_event(event)
+    if phase is not None:
+        record["phase"] = phase
     registry = load_gateway_registry()
     gateway = registry.get("gateway", {})
     if gateway.get("gateway_id"):

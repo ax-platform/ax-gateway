@@ -49,6 +49,7 @@ from ..gateway import (
     active_gateway_pids,
     active_gateway_ui_pid,
     active_gateway_ui_pids,
+    activity_log_path,
     agent_dir,
     agent_token_path,
     annotate_runtime_health,
@@ -5058,6 +5059,89 @@ def current_gateway_space(as_json: bool = JSON_OPTION):
         return
     err_console.print(f"Gateway current space: {result.get('space_name') or result.get('space_id') or '-'}")
     err_console.print(f"  space_id = {result.get('space_id') or '-'}")
+
+
+@app.command("activity")
+def activity(
+    message_id: str = typer.Option(None, "--message-id", help="Filter to a single source message_id"),
+    agent: str = typer.Option(None, "--agent", help="Filter to a single managed agent name"),
+    limit: int = typer.Option(0, "--limit", help="Cap rows returned (0 = no cap)"),
+    as_json: bool = JSON_OPTION,
+):
+    """Inspect Gateway-recorded activity for one message or agent.
+
+    Reads the local activity log Gateway already owns
+    (``~/.ax/gateway/activity.jsonl``) and emits the rows in chronological
+    order. Each row carries the canonical ``phase`` field for any registered
+    event so supervisor loops and the aX UI can consume a stable shape across
+    runtime types.
+
+    This command is read-only. It does not authenticate to the backend, does
+    not construct an ``AxClient``, and does not surface any new credential
+    path — Gateway remains the trust boundary.
+    """
+    log_path = activity_log_path()
+    rows: list[dict] = []
+    if log_path.exists():
+        try:
+            for raw in log_path.read_text(encoding="utf-8").splitlines():
+                stripped = raw.strip()
+                if not stripped:
+                    continue
+                try:
+                    item = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                rows.append(item)
+        except OSError:
+            rows = []
+
+    msg_filter = (message_id or "").strip()
+    agent_filter = (agent or "").strip().lower()
+    filtered = []
+    for item in rows:
+        if msg_filter and str(item.get("message_id") or "") != msg_filter:
+            continue
+        if agent_filter and str(item.get("agent_name") or "").lower() != agent_filter:
+            continue
+        filtered.append(item)
+
+    filtered.sort(key=lambda r: str(r.get("ts") or ""))
+    if limit and limit > 0:
+        filtered = filtered[-limit:]
+
+    if as_json:
+        if msg_filter:
+            print_json({"message_id": msg_filter, "events": filtered})
+        else:
+            print_json({"events": filtered})
+        return
+
+    if not filtered:
+        target = msg_filter or agent_filter or "(any)"
+        err_console.print(f"No Gateway activity for {target}.")
+        return
+    print_table(
+        ["Time", "Phase", "Event", "Agent", "Message", "Tool", "Detail"],
+        [
+            {
+                "ts": item.get("ts"),
+                "phase": item.get("phase") or "-",
+                "event": item.get("event"),
+                "agent_name": item.get("agent_name") or "-",
+                "message_id": item.get("message_id") or "-",
+                "tool_name": item.get("tool_name") or "-",
+                "detail": item.get("activity_message")
+                or item.get("reply_preview")
+                or item.get("error")
+                or "",
+            }
+            for item in filtered
+        ],
+        keys=["ts", "phase", "event", "agent_name", "message_id", "tool_name", "detail"],
+    )
 
 
 @app.command("status")
