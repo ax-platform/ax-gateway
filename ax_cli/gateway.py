@@ -2676,6 +2676,18 @@ def daemon_log_path() -> Path:
     return gateway_dir() / "gateway.log"
 
 
+def _format_daemon_log_line(message: str) -> str:
+    """Prepend an ISO-8601 UTC timestamp matching activity.jsonl's `ts` shape.
+
+    activity.jsonl entries carry `ts` like `2026-05-02T01:12:57.246824+00:00`.
+    Match that shape so `gateway.log` and `activity.jsonl` are eyeball-correlatable
+    by their leading column.
+    """
+    from datetime import datetime, timezone
+
+    return f"{datetime.now(timezone.utc).isoformat()} {message}"
+
+
 def ui_log_path() -> Path:
     return gateway_dir() / "gateway-ui.log"
 
