@@ -51,7 +51,7 @@ axctl apps signal context \
   --title 'Architecture diagram' \
   --summary 'Open this in the Context Explorer panel.' \
   --message 'context-backed app signal ready' \
-  --to madtank \
+  --to alex \
   --alert-kind context_artifact \
   --json
 ```
@@ -65,7 +65,7 @@ Create a task with a task card and task-detail widget metadata:
 ```bash
 axctl tasks create 'Review the launch checklist' \
   --description 'Check API, CLI, MCP, and UI smoke paths before promotion.' \
-  --assign orion \
+  --assign demo-agent \
   --json
 ```
 

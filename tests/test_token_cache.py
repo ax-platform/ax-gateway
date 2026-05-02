@@ -154,6 +154,32 @@ class TestTokenExchanger:
         assert body["agent_id"] == "my-agent-uuid"
         assert body["requested_token_class"] == "agent_access"
 
+
+    def test_agent_name_ttl_and_resource_included_in_exchange(self, tmp_path, monkeypatch, sample_agent_pat, mock_exchange):
+        mock_post = mock_exchange()
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".ax").mkdir()
+        (tmp_path / ".ax" / "config.toml").write_text("")
+
+        exchanger = TokenExchanger("https://example.com", sample_agent_pat)
+        exchanger.get_token(
+            "agent_access",
+            agent_name="cli-sentinel-local",
+            scope="tasks:read tasks:write",
+            requested_ttl=3600,
+            resource="https://paxai.app/api",
+        )
+
+        body = mock_post.call_args[1]["json"]
+        assert body == {
+            "requested_token_class": "agent_access",
+            "audience": "ax-api",
+            "scope": "tasks:read tasks:write",
+            "requested_ttl": 3600,
+            "resource": "https://paxai.app/api",
+            "agent_name": "cli-sentinel-local",
+        }
+
     def test_clear_cache(self, tmp_path, monkeypatch, sample_pat, mock_exchange):
         mock_post = mock_exchange()
         monkeypatch.chdir(tmp_path)

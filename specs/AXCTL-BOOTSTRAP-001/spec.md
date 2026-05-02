@@ -1,7 +1,7 @@
 # AXCTL-BOOTSTRAP-001: Bootstrap and Secure Storage
 
 **Status:** Draft  
-**Owner:** @madtank / @ChatGPT  
+**Owner:** @alex / @ChatGPT  
 **Date:** 2026-04-13  
 **Related:** DEVICE-TRUST-001, AGENT-PAT-001, docs/agent-authentication.md, docs/credential-security.md
 
@@ -109,7 +109,7 @@ sequenceDiagram
     User->>CLI: axctl login
     CLI->>API: Verify user setup credential
     API-->>CLI: User/device authorization
-    User->>Agent: Set up @orion, @cipher, @sentinel
+    User->>Agent: Set up @demo-agent, @cipher, @sentinel
     Agent->>CLI: axctl token mint --create --profile --save-to
     CLI->>API: Device/user authorized PAT request
     API-->>CLI: Scoped agent PAT shown once
@@ -165,7 +165,7 @@ future device-enrollment command
 
 aX URL: https://next.paxai.app
 Bootstrap token: ********
-Device name: Jacob MacBook Pro
+Device name: Alex's Laptop
 
 Device fingerprint:
 SHA256: 4F2A 91C7 9B10 55E0
@@ -173,7 +173,7 @@ SHA256: 4F2A 91C7 9B10 55E0
 Authorize this device in aX? [Y/n]
 ✓ Device enrolled
 ✓ Credential stored in macOS Keychain
-✓ Verified as madtank in madtank's Workspace
+✓ Verified as alex in Alex's Workspace
 ```
 
 ## Storage Contract
@@ -224,7 +224,7 @@ Request:
 {
   "bootstrap_token": "axp_u_bootstrap_...",
   "device_public_key": "base64url...",
-  "device_name": "Jacob MacBook Pro",
+  "device_name": "Alex's Laptop",
   "device_fingerprint": "sha256:...",
   "space_id": "optional-default-space",
   "client": {

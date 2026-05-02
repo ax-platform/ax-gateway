@@ -52,7 +52,7 @@ On 2026-04-14, `ax agents ping` showed:
 
 | Agent | Result |
 |-------|--------|
-| `orion` | `event_listener` |
+| `demo-agent` | `event_listener` |
 | `backend_sentinel` | `event_listener` |
 | `frontend_sentinel` | `event_listener` |
 | `mcp_sentinel` | `event_listener` |
@@ -136,7 +136,7 @@ Current command:
 ```bash
 ax agents discover
 ax agents discover --ping --timeout 10
-ax agents discover orion backend_sentinel --ping --json
+ax agents discover demo-agent backend_sentinel --ping --json
 ```
 
 `--ping` is an active probe. It sends a mention and waits for a reply. No reply
@@ -146,7 +146,7 @@ For owned work, `ax handoff` uses the same idea inline by default:
 
 ```bash
 ax handoff supervisor_sentinel "Coordinate frontend and MCP QA"
-ax handoff orion "Known-live fast path" --no-adaptive-wait
+ax handoff demo-agent "Known-live fast path" --no-adaptive-wait
 ```
 
 If the probe succeeds, the CLI waits. If the probe fails, the CLI still creates

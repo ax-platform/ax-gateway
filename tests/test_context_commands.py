@@ -347,12 +347,12 @@ def test_context_upload_file_mention_sends_context_signal(monkeypatch, tmp_path)
 
     result = runner.invoke(
         app,
-        ["context", "upload-file", str(sample), "--mention", "@orion", "--json"],
+        ["context", "upload-file", str(sample), "--mention", "@demo-agent", "--json"],
     )
 
     assert result.exit_code == 0, result.output
     assert calls["message"]["space_id"] == "space-1"
-    assert calls["message"]["content"].startswith("@orion Context uploaded:")
+    assert calls["message"]["content"].startswith("@demo-agent Context uploaded:")
     assert calls["context"]["key"] in calls["message"]["content"]
     assert '"message_id": "msg-1"' in result.output
 

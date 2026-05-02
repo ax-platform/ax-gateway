@@ -527,9 +527,11 @@ def exchange(
     scope: str = typer.Option(
         "messages tasks context agents spaces search", "--scope", "-s", help="Space-separated scopes"
     ),
-    agent_id: str = typer.Option(None, "--agent", "-a", help="Agent ID (required for agent_access)"),
+    agent_id: str = typer.Option(None, "--agent", "-a", help="Existing agent ID for agent_access"),
+    agent_name: str = typer.Option(None, "--agent-name", help="Agent name for first local enrollment/bind"),
     audience: str = typer.Option("ax-api", "--audience", help="Target audience: ax-api or ax-mcp"),
     resource: str = typer.Option(None, "--resource", help="RFC 8707 resource URI (e.g. https://paxai.app/mcp)"),
+    requested_ttl: int = typer.Option(None, "--ttl", help="Requested token TTL in seconds"),
     as_json: bool = JSON_OPTION,
 ):
     """Exchange PAT for a short-lived JWT (AUTH-SPEC-001 §9).
@@ -557,8 +559,11 @@ def exchange(
         jwt = exchanger.get_token(
             token_class,
             agent_id=agent_id,
+            agent_name=agent_name,
             audience=audience,
             scope=scope,
+            requested_ttl=requested_ttl,
+            resource=resource,
         )
     except httpx.HTTPStatusError as e:
         handle_error(e)

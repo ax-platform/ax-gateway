@@ -243,7 +243,7 @@ def _local_process_fingerprint(
 ) -> dict:
     resolved_pid = int(pid or os.getpid())
     resolved_cwd = str(Path(cwd or os.getcwd()).expanduser().resolve())
-    resolved_exe = str(Path(exe_path or sys.executable).expanduser())
+    resolved_exe = str(Path(exe_path or sys.executable).expanduser().resolve())
     fingerprint = {
         "agent_name": agent_name,
         "pid": resolved_pid,
@@ -1434,6 +1434,15 @@ def _space_cache_with(space_rows: object, space_id: str, *, name: str | None = N
 
 
 def _ensure_gateway_test_sender(target_entry: dict) -> dict:
+    """Auto-register or fetch the per-space switchboard service account.
+
+    Service-account-only utility. Used by service-event flows (reminders, log
+    fan-outs, system notifications) that legitimately need a Gateway-managed
+    service identity. Must NOT be called from the default `agents test` path —
+    principal-invoked surfaces author as the invoking principal, not as a
+    service account. See `feedback_invoking_principal_default` (Madtank/
+    supervisor, 2026-05-02) for the conceptual model.
+    """
     target_space = str(target_entry.get("space_id") or "").strip()
     if not target_space:
         raise ValueError("Managed agent is missing a space id for Gateway test delivery.")
@@ -1446,8 +1455,38 @@ def _ensure_gateway_test_sender(target_entry: dict) -> dict:
         name=sender_name,
         template_id="inbox",
         space_id=target_space,
-        description="Gateway-managed passive sender for agent-authored tests.",
+        description="Gateway-managed passive sender for service-event sends.",
         start=True,
+    )
+
+
+def _resolve_invoking_principal() -> str | None:
+    """Return the workspace's bound Gateway-managed agent name, if any.
+
+    Resolves through `resolve_gateway_config()`, which reads the local
+    `.ax/config.toml` for `[gateway]` + `[agent]` blocks. Returns None when
+    the workspace has no Gateway-managed identity (no Gateway local config,
+    or `[agent].agent_name` missing). This is the source of truth for the
+    default sender on any principal-invoked send-message command.
+    """
+    from ..config import resolve_gateway_config
+
+    cfg = resolve_gateway_config()
+    if not cfg:
+        return None
+    name = str(cfg.get("agent_name") or "").strip()
+    return name or None
+
+
+def _no_invoking_principal_error() -> ValueError:
+    # Avoid literal square brackets so Rich console.print() does not strip
+    # them as markup tags when this message is echoed.
+    return ValueError(
+        "No invoking principal resolvable for this workspace. "
+        "Run from a Gateway-managed workdir/local session (a directory whose "
+        "`.ax/config.toml` declares the 'gateway' and 'agent' sections), or pass "
+        "`--sender-agent <name>` to author the message as a specific service "
+        "account for diagnostic service-event sends."
     )
 
 
@@ -1976,8 +2015,17 @@ def _send_gateway_test_to_managed_agent(
     content: str | None = None,
     author: str = "agent",
     sender_agent: str | None = None,
-    allow_self_fallback: bool = True,
 ) -> dict:
+    """Send a Gateway-brokered test message to a managed agent.
+
+    Default sender = invoking principal resolved from the workspace's local
+    Gateway config (per Madtank/supervisor 2026-05-02: principal-invoked
+    surfaces author as user/agent, never as a service account). Pass an
+    explicit `sender_agent` to author as a named service account or other
+    Gateway-managed identity. Fails hard when no invoking principal resolves
+    AND no `sender_agent` override is provided — the alternative is silent
+    misattribution, which is the bug this signature replaces.
+    """
     entry = _load_managed_agent_or_exit(name)
     if str(entry.get("desired_state") or "").strip().lower() == "stopped":
         raise ValueError(f"@{name} is stopped. Start it before sending a test.")
@@ -2003,20 +2051,12 @@ def _send_gateway_test_to_managed_agent(
 
     sender_name = None
     if normalized_author == "agent":
-        target_for_sender = {**stored, "space_id": space_id}
-        sender_error: str | None = None
         if sender_agent:
             sender_name = str(sender_agent).strip()
         else:
-            try:
-                sender_name = str(_ensure_gateway_test_sender(target_for_sender).get("name") or "")
-            except Exception as exc:  # noqa: BLE001
-                sender_error = str(exc)
-                if not allow_self_fallback:
-                    raise ValueError(f"Gateway service sender is not ready for @{target}: {sender_error}") from exc
-                sender_name = target
-        if not sender_name:
-            raise ValueError("Gateway could not resolve a managed sender for the test message.")
+            sender_name = _resolve_invoking_principal()
+            if not sender_name:
+                raise _no_invoking_principal_error()
         result = _send_from_managed_agent(
             name=sender_name,
             content=prompt,
@@ -2030,8 +2070,7 @@ def _send_gateway_test_to_managed_agent(
                 "target_template": stored.get("template_id"),
                 "target_runtime_type": stored.get("runtime_type"),
                 "test_author": "agent",
-                "test_sender_fallback": "self" if sender_error else None,
-                "test_sender_error": sender_error,
+                "test_sender_explicit": bool(sender_agent),
             },
         )
         payload = result.get("message", result) if isinstance(result, dict) else result
@@ -4602,12 +4641,15 @@ def _build_gateway_ui_handler(*, activity_limit: int, refresh_ms: int):
                     return
                 if parsed.path.endswith("/test") and parsed.path.startswith("/api/agents/"):
                     name = unquote(parsed.path.removeprefix("/api/agents/").removesuffix("/test")).strip()
+                    # UI test button defaults to user-authored: per Madtank/supervisor
+                    # 2026-05-02, principal-invoked surfaces author as the invoking
+                    # principal, never as a service account. UI's principal is the
+                    # logged-in user (resolved via the Gateway user client).
                     payload = _send_gateway_test_to_managed_agent(
                         name,
                         content=str(body.get("content") or "").strip() or None,
-                        author=str(body.get("author") or "agent").strip() or "agent",
+                        author=str(body.get("author") or "user").strip() or "user",
                         sender_agent=str(body.get("sender_agent") or "").strip() or None,
-                        allow_self_fallback=bool(body.get("allow_self_fallback", True)),
                     )
                     _write_json_response(self, payload, status=HTTPStatus.CREATED)
                     return
@@ -5871,15 +5913,16 @@ def _request_local_connect(
     workdir: str | None = None,
     space_id: str | None = None,
 ) -> dict:
+    resolved_workdir = str(Path(workdir or Path.cwd()).expanduser().resolve())
     agent_name, registry_ref = _resolve_local_gateway_identity(
         agent_name=agent_name,
         registry_ref=registry_ref,
-        workdir=workdir,
+        workdir=resolved_workdir,
     )
     display_name = str(agent_name or registry_ref or "").strip()
     if not display_name:
         raise ValueError("Provide a local agent name or --registry/--ref.")
-    fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=workdir)
+    fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=resolved_workdir)
     body = {"fingerprint": fingerprint}
     if agent_name:
         body["agent_name"] = agent_name

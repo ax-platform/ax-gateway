@@ -73,7 +73,7 @@ def test_apps_signal_writes_context_widget_metadata(monkeypatch):
             "--message",
             "context artifact ready",
             "--to",
-            "orion",
+            "demo-agent",
             "--channel",
             "automation-alerts",
             "--alert-kind",
@@ -86,7 +86,7 @@ def test_apps_signal_writes_context_widget_metadata(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert calls["get_context"] == {"key": "design:architecture", "space_id": "space-1"}
-    assert calls["message"]["content"] == "@orion context artifact ready"
+    assert calls["message"]["content"] == "@demo-agent context artifact ready"
     assert calls["message"]["channel"] == "automation-alerts"
     assert calls["message"]["message_type"] == "system"
 
@@ -99,7 +99,7 @@ def test_apps_signal_writes_context_widget_metadata(monkeypatch):
     assert widget["initial_data"]["selected_key"] == "design:architecture"
     assert widget["initial_data"]["items"][0]["file_content"] == "# Architecture\n"
     assert metadata["alert"]["kind"] == "design_review"
-    assert metadata["alert"]["target_agent"] == "orion"
+    assert metadata["alert"]["target_agent"] == "demo-agent"
     assert metadata["alert"]["response_required"] is True
     assert metadata["alert"]["summary"] == "Review this diagram"
     assert "top_level_ingress" not in metadata
@@ -126,7 +126,7 @@ def test_apps_signal_flattens_wrapped_context_payload(monkeypatch):
                             "url": "https://dev.paxai.app/api/v1/uploads/files/channel-flow.svg",
                         }
                     ),
-                    "agent_name": "user:madtank",
+                    "agent_name": "user:alex",
                     "summary": "SVG upload",
                     "ttl": 86400,
                 },
@@ -182,21 +182,21 @@ def test_apps_signal_whoami_builds_identity_widget_payload(monkeypatch):
             calls["whoami"] = True
             return {
                 "id": "user-1",
-                "email": "madtank@example.com",
-                "full_name": "Jacob Taunton",
-                "username": "madtank",
+                "email": "alex@example.com",
+                "full_name": "Alex Example",
+                "username": "alex",
                 "role": "admin",
                 "bound_agent": {
                     "agent_id": "agent-1",
-                    "agent_name": "chatgpt_dev",
+                    "agent_name": "demo_agent",
                     "default_space_id": "space-1",
-                    "default_space_name": "madtank's Workspace",
+                    "default_space_name": "Alex's Workspace",
                     "allowed_spaces": [
-                        {"space_id": "space-1", "name": "madtank's Workspace", "is_default": True},
+                        {"space_id": "space-1", "name": "alex's Workspace", "is_default": True},
                     ],
                 },
                 "resolved_space_id": "space-1",
-                "resolved_agent": "chatgpt_dev",
+                "resolved_agent": "demo_agent",
             }
 
         def send_message(
@@ -248,12 +248,12 @@ def test_apps_signal_whoami_builds_identity_widget_payload(monkeypatch):
         "principal_kind": "agent",
         "role_label": "Agent",
         "status": "active",
-        "handle": "chatgpt_dev",
-        "display_name": "chatgpt_dev",
+        "handle": "demo_agent",
+        "display_name": "demo_agent",
         "id": "agent-1",
     }
-    assert initial_data["data"]["context"]["workspace_name"] == "madtank's Workspace"
-    assert initial_data["data"]["context"]["owner"]["handle"] == "madtank"
+    assert initial_data["data"]["context"]["workspace_name"] == "alex's Workspace"
+    assert initial_data["data"]["context"]["owner"]["handle"] == "alex"
     assert calls["message"]["metadata"]["top_level_ingress"] is False
     assert calls["message"]["metadata"]["signal_only"] is True
     assert calls["message"]["metadata"]["app_signal"]["signal_only"] is True
@@ -269,7 +269,7 @@ def test_apps_signal_agents_hydrates_dashboard_payload(monkeypatch):
                 "agents": [
                     {
                         "id": "agent-1",
-                        "name": "orion",
+                        "name": "demo-agent",
                         "status": "active",
                         "description": "QA reviewer",
                     },
@@ -314,7 +314,7 @@ def test_apps_signal_agents_hydrates_dashboard_payload(monkeypatch):
     assert initial_data["items"] == [
         {
             "id": "agent-1",
-            "name": "orion",
+            "name": "demo-agent",
             "status": "active",
             "description": "QA reviewer",
         },

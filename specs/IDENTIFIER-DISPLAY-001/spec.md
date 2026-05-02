@@ -1,7 +1,7 @@
 # IDENTIFIER-DISPLAY-001: Human-Readable Identifier Display
 
 **Status:** Draft  
-**Owner:** @madtank / @ChatGPT  
+**Owner:** @alex / @ChatGPT  
 **Date:** 2026-04-13  
 **Related:** AXCTL-BOOTSTRAP-001, AGENT-PAT-001, LISTENER-001
 
@@ -43,9 +43,9 @@ Default text output should prefer readable fields.
 Examples:
 
 ```text
-Account: madtank
+Account: alex
 Space: team-hub
-Agent: orion
+Agent: demo-agent
 ```
 
 If the UUID is useful, show it as supporting detail:
@@ -58,7 +58,7 @@ Space: team-hub (12d6eafd...)
 
 ```json
 {
-  "space_id": "12d6eafd-0316-4f3e-be33-fd8a3fd90f67",
+  "space_id": "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
   "space_slug": "team-hub",
   "space_name": "Team Hub"
 }
