@@ -247,7 +247,7 @@ def upload_file(
     Examples:
         ax context upload-file ./report.md
         ax context upload-file ./arch.png --key infra-diagram --vault
-        ax context upload-file ./data.csv --ttl 3600 --mention @orion
+        ax context upload-file ./data.csv --ttl 3600 --mention @demo-agent
     """
     client = get_client()
     sid = resolve_space_id(client, explicit=space_id)

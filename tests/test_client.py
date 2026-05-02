@@ -521,6 +521,81 @@ class TestCredentialManagement:
         with pytest.raises(RuntimeError, match="not visible in requested space"):
             client.create_task("space-123", "Review the spec", priority="high")
 
+
+    def test_gateway_auth_contract_task_create_exchanges_then_posts_api_tasks(self, monkeypatch):
+        import httpx
+
+        exchange_calls = []
+
+        def fake_exchange(url, *, json=None, headers=None, timeout=None):
+            exchange_calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "exchanged.jwt",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                    "scope": "tasks:read tasks:write",
+                    "token_class": "agent_access",
+                    "agent_id": "agent-123",
+                    "agent_name": "cli-sentinel-local",
+                },
+                request=httpx.Request("POST", url),
+            )
+
+        monkeypatch.setattr(httpx, "post", fake_exchange)
+        client = AxClient("https://example.com", "axp_a_AgentKey.AgentSecret", agent_name="cli-sentinel-local")
+        task_response = httpx.Response(
+            201,
+            json={
+                "id": "task-123",
+                "task_display_id": "a1b2c3",
+                "title": "Land gateway stub",
+                "status": "not_started",
+                "priority": "high",
+                "posted_by": {"id": "agent-123", "type": "agent"},
+            },
+            request=httpx.Request("POST", "https://example.com/api/tasks"),
+        )
+        client._http.post = MagicMock(return_value=task_response)
+
+        data = client.create_task("space-hint", "Land gateway stub", description="Contract draft", priority="high")
+
+        assert data["id"] == "task-123"
+        assert exchange_calls == [
+            {
+                "url": "https://example.com/auth/exchange",
+                "json": {
+                    "requested_token_class": "agent_access",
+                    "audience": "ax-api",
+                    "scope": "tasks:read tasks:write messages:read messages:write agents:read",
+                    "agent_name": "cli-sentinel-local",
+                },
+                "headers": {
+                    "Authorization": "Bearer axp_a_AgentKey.AgentSecret",
+                    "Content-Type": "application/json",
+                },
+                "timeout": 10.0,
+            }
+        ]
+        assert client._http.post.call_args.args[0] == "/api/tasks"
+        assert client._http.post.call_args.kwargs["headers"]["Authorization"] == "Bearer exchanged.jwt"
+        body = client._http.post.call_args.kwargs["json"]
+        assert body == {
+            "title": "Land gateway stub",
+            "description": "Contract draft",
+            "requirements": {
+                "source": "gateway-first-cli",
+                "space_id_hint": "space-hint",
+                "fingerprint": client._base_headers["X-AX-FP"],
+            },
+            "priority": "high",
+            "deadline": None,
+        }
+        assert "space_id" not in body
+        assert "assigned_agent_id" not in body
+        assert "assignee_id" not in body
+
     def test_issue_agent_pat_sends_requested_audience(self):
         client = AxClient("https://example.com", "axp_u_UserKey.UserSecret")
         client._admin_headers = MagicMock(return_value={"Authorization": "Bearer admin"})

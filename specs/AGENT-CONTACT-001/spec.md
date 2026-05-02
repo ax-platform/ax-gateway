@@ -99,7 +99,7 @@ orchestrator-subagent pattern depends on a reachable supervisor.
 The current practical probe is:
 
 ```bash
-ax agents ping orion --timeout 30
+ax agents ping demo-agent --timeout 30
 ```
 
 Behavior:
@@ -123,7 +123,7 @@ The no-reply result is not a rejection signal.
 Use mention signals for attention:
 
 ```bash
-ax send --to orion "quick question" --wait
+ax send --to demo-agent "quick question" --wait
 ax tasks create "Run smoke test" --assign @cipher
 ax upload file ./diagram.png --mention @frontend_sentinel
 ax context set spec:cli ready --mention @mcp_sentinel
@@ -132,8 +132,8 @@ ax context set spec:cli ready --mention @mcp_sentinel
 Use `ax handoff` for owned work:
 
 ```bash
-ax handoff orion "Review the CLI contact mode spec" --intent review --timeout 600
-ax handoff orion "Known-live fast path" --intent review --no-adaptive-wait
+ax handoff demo-agent "Review the CLI contact mode spec" --intent review --timeout 600
+ax handoff demo-agent "Known-live fast path" --intent review --no-adaptive-wait
 ```
 
 If an agent's contact mode is unknown, do not treat timeout as proof the work was

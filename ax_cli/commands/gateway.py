@@ -43,6 +43,7 @@ from ..commands.bootstrap import (
 from ..config import resolve_space_id, resolve_user_base_url, resolve_user_token
 from ..gateway import (
     GatewayDaemon,
+    _format_daemon_log_line,
     _is_passive_runtime,
     active_gateway_pid,
     active_gateway_pids,
@@ -243,7 +244,7 @@ def _local_process_fingerprint(
 ) -> dict:
     resolved_pid = int(pid or os.getpid())
     resolved_cwd = str(Path(cwd or os.getcwd()).expanduser().resolve())
-    resolved_exe = str(Path(exe_path or sys.executable).expanduser())
+    resolved_exe = str(Path(exe_path or sys.executable).expanduser().resolve())
     fingerprint = {
         "agent_name": agent_name,
         "pid": resolved_pid,
@@ -5500,6 +5501,17 @@ def watch(
         err_console.print("[yellow]Gateway watch stopped.[/yellow]")
 
 
+def _emit_daemon_log(message: str) -> None:
+    """GatewayDaemon log callback — writes one timestamped line to err_console.
+
+    When `ax gateway run` is launched in the background, err_console's stream
+    is redirected to `daemon_log_path()` (gateway.log). Each line carries an
+    ISO-8601 UTC timestamp matching activity.jsonl's `ts` shape so the two
+    streams correlate by their leading column.
+    """
+    err_console.print(f"[dim]{_format_daemon_log_line(message)}[/dim]")
+
+
 @app.command("run")
 def run(
     poll_interval: float = typer.Option(1.0, "--poll-interval", help="Registry reconcile interval in seconds"),
@@ -5511,7 +5523,7 @@ def run(
     err_console.print(f"  state_dir = {gateway_dir()}")
     err_console.print(f"  interval  = {poll_interval}s")
     err_console.print(f"  mode      = {'single-pass' if once else 'foreground'}")
-    daemon = GatewayDaemon(logger=lambda msg: err_console.print(f"[dim]{msg}[/dim]"), poll_interval=poll_interval)
+    daemon = GatewayDaemon(logger=_emit_daemon_log, poll_interval=poll_interval)
     try:
         daemon.run(once=once)
     except RuntimeError as exc:
@@ -5871,15 +5883,16 @@ def _request_local_connect(
     workdir: str | None = None,
     space_id: str | None = None,
 ) -> dict:
+    resolved_workdir = str(Path(workdir or Path.cwd()).expanduser().resolve())
     agent_name, registry_ref = _resolve_local_gateway_identity(
         agent_name=agent_name,
         registry_ref=registry_ref,
-        workdir=workdir,
+        workdir=resolved_workdir,
     )
     display_name = str(agent_name or registry_ref or "").strip()
     if not display_name:
         raise ValueError("Provide a local agent name or --registry/--ref.")
-    fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=workdir)
+    fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=resolved_workdir)
     body = {"fingerprint": fingerprint}
     if agent_name:
         body["agent_name"] = agent_name

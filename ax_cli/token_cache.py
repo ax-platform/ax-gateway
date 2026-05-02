@@ -54,9 +54,14 @@ def _cache_key(
     agent_id: str | None,
     audience: str,
     scope: str,
+    agent_name: str | None = None,
 ) -> str:
-    """Deterministic cache key per AUTH-SPEC-001 §13."""
-    raw = f"{pat_key_id}:{token_class}:{agent_id or ''}:{audience}:{scope}"
+    """Deterministic cache key per AUTH-SPEC-001 §13.
+
+    ``agent_name`` is included for the Gateway-first enrollment/bind stub where
+    the backend accepts ``agent_name`` instead of an existing ``agent_id``.
+    """
+    raw = f"{pat_key_id}:{token_class}:{agent_id or ''}:{agent_name or ''}:{audience}:{scope}"
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
@@ -130,15 +135,18 @@ class TokenExchanger:
         token_class: str = "user_access",
         *,
         agent_id: str | None = None,
+        agent_name: str | None = None,
         audience: str = "ax-api",
         scope: str = "messages tasks context agents spaces search",
+        requested_ttl: int | None = None,
+        resource: str | None = None,
         force_refresh: bool = False,
     ) -> str:
         """Get a valid JWT, using cache or exchanging if needed."""
         if not self.pat_key_id:
             raise ValueError("Cannot extract key_id from PAT — invalid format")
 
-        key = _cache_key(self.pat_key_id, token_class, agent_id, audience, scope)
+        key = _cache_key(self.pat_key_id, token_class, agent_id, audience, scope, agent_name)
 
         # Check cache (skip if force_refresh)
         if not force_refresh:
@@ -147,12 +155,23 @@ class TokenExchanger:
                 return cached["access_token"]
 
         # Exchange
-        jwt_data = self._exchange(token_class, agent_id=agent_id, audience=audience, scope=scope)
+        jwt_data = self._exchange(
+            token_class,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            audience=audience,
+            scope=scope,
+            requested_ttl=requested_ttl,
+            resource=resource,
+        )
         entry = {
             "access_token": jwt_data["access_token"],
             "exp": time.time() + jwt_data["expires_in"],
             "token_class": token_class,
             "pat_key_id": self.pat_key_id,
+            "agent_id": jwt_data.get("agent_id") or agent_id,
+            "agent_name": jwt_data.get("agent_name") or agent_name,
+            "scope": jwt_data.get("scope") or scope,
         }
         self._cache[key] = entry
         self._save_disk_cache()
@@ -163,8 +182,11 @@ class TokenExchanger:
         token_class: str,
         *,
         agent_id: str | None,
+        agent_name: str | None,
         audience: str,
         scope: str,
+        requested_ttl: int | None,
+        resource: str | None,
     ) -> dict:
         """POST /auth/exchange — PAT in, JWT out."""
         body: dict = {
@@ -172,8 +194,14 @@ class TokenExchanger:
             "audience": audience,
             "scope": scope,
         }
+        if requested_ttl is not None:
+            body["requested_ttl"] = requested_ttl
+        if resource:
+            body["resource"] = resource
         if agent_id:
             body["agent_id"] = agent_id
+        elif agent_name:
+            body["agent_name"] = agent_name
 
         r = httpx.post(
             f"{self.base_url}/auth/exchange",

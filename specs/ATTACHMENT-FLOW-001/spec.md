@@ -1,7 +1,7 @@
 # ATTACHMENT-FLOW-001: CLI Context Attachment Flow
 
 **Status:** Draft  
-**Owner:** @madtank  
+**Owner:** @alex  
 **Date:** 2026-04-12  
 **Related:** ax-backend ATTACHMENTS-001, LISTENER-001
 

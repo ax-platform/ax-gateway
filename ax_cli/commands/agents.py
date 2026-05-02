@@ -114,6 +114,33 @@ def _agent_mention_name(agent: dict[str, Any], fallback: str) -> str:
     return fallback.strip().removeprefix("@")
 
 
+def _agent_control_state(agent: dict[str, Any]) -> dict[str, Any]:
+    control = agent.get("control")
+    return control if isinstance(control, dict) else {}
+
+
+def _agent_control_status(agent: dict[str, Any]) -> str:
+    control = _agent_control_state(agent)
+    if control.get("is_disabled"):
+        return "disabled"
+    if control.get("no_reply"):
+        return "no_reply"
+    return "active"
+
+
+def _agent_control_reason(agent: dict[str, Any]) -> str:
+    control = _agent_control_state(agent)
+    if control.get("is_disabled"):
+        return str(control.get("disabled_reason") or "Kill switch enabled")
+    if control.get("no_reply"):
+        return str(control.get("no_reply_reason") or "Agent will not reply")
+    return ""
+
+
+def _agent_is_blocked(agent: dict[str, Any]) -> bool:
+    return _agent_control_status(agent) != "active"
+
+
 def _agent_mesh_role(agent: dict[str, Any]) -> str:
     name = str(agent.get("name") or "").lower()
     origin = str(agent.get("origin") or "").lower()
@@ -198,21 +225,33 @@ def _probe_agent_contact(
 
 def _discover_agent_row(agent: dict[str, Any], probe: dict[str, Any] | None = None) -> dict[str, Any]:
     mesh_role = _agent_mesh_role(agent)
-    contact_mode = probe["contact_mode"] if probe else _inferred_contact_mode(agent)
-    listener_status = probe["listener_status"] if probe else "not_probed"
+    control_status = _agent_control_status(agent)
+    control_reason = _agent_control_reason(agent)
+    if control_status != "active":
+        contact_mode = "blocked_by_control"
+        listener_status = control_status
+    else:
+        contact_mode = probe["contact_mode"] if probe else _inferred_contact_mode(agent)
+        listener_status = probe["listener_status"] if probe else "not_probed"
     warning = ""
     if mesh_role == "supervisor_candidate" and contact_mode != "event_listener":
         warning = "supervisor_candidate_not_live"
+    if control_status != "active":
+        warning = "agent_control_blocks_delivery"
     return {
-        "name": agent.get("name"),
+        "name": _agent_mention_name(agent, str(agent.get("name") or "agent")),
         "agent_id": agent.get("id"),
         "origin": agent.get("origin"),
         "agent_type": agent.get("agent_type"),
         "roster_status": agent.get("status"),
+        "control_status": control_status,
+        "control_reason": control_reason,
         "mesh_role": mesh_role,
         "listener_status": listener_status,
         "contact_mode": contact_mode,
-        "recommended_contact": _recommended_contact(contact_mode, mesh_role),
+        "recommended_contact": "reenable_before_contact"
+        if control_status != "active"
+        else _recommended_contact(contact_mode, mesh_role),
         "sent_message_id": probe.get("sent_message_id") if probe else None,
         "ping_token": probe.get("ping_token") if probe else None,
         "warning": warning,
@@ -324,10 +363,16 @@ def list_agents(
             keys=["name", "badge", "path", "expected", "confidence", "last_seen"],
         )
     else:
+        rows = []
+        for agent in agents:
+            row = dict(agent)
+            row["control_status"] = _agent_control_status(agent)
+            row["control_reason"] = _agent_control_reason(agent)
+            rows.append(row)
         print_table(
-            ["ID", "Name", "Status"],
-            agents,
-            keys=["id", "name", "status"],
+            ["ID", "Name", "Status", "Control", "Reason"],
+            rows,
+            keys=["id", "name", "status", "control_status", "control_reason"],
         )
 
 
@@ -405,24 +450,37 @@ def ping_agent(
         typer.echo(f"Error: No visible agent found for '{agent}'.", err=True)
         raise typer.Exit(1)
 
-    try:
-        probe = _probe_agent_contact(
-            client,
-            space_id=sid,
-            target=target,
-            timeout=timeout,
-            current_agent_name=resolve_agent_name(client=client) or "",
-        )
-    except httpx.HTTPStatusError as exc:
-        handle_error(exc)
-
     agent_name = _agent_mention_name(target, agent)
+    control_status = _agent_control_status(target)
+    control_reason = _agent_control_reason(target)
+    if _agent_is_blocked(target):
+        probe = {
+            "sent_message_id": None,
+            "ping_token": None,
+            "listener_status": control_status,
+            "contact_mode": "blocked_by_control",
+            "reply": None,
+        }
+    else:
+        try:
+            probe = _probe_agent_contact(
+                client,
+                space_id=sid,
+                target=target,
+                timeout=timeout,
+                current_agent_name=resolve_agent_name(client=client) or "",
+            )
+        except httpx.HTTPStatusError as exc:
+            handle_error(exc)
+
     result = {
         "agent": agent_name,
         "agent_id": target.get("id"),
         "origin": target.get("origin"),
         "agent_type": target.get("agent_type"),
         "roster_status": target.get("status"),
+        "control_status": control_status,
+        "control_reason": control_reason,
         **probe,
     }
 
@@ -481,7 +539,7 @@ def discover_agents(
     rows: list[dict[str, Any]] = []
     for target in selected:
         probe = None
-        if ping:
+        if ping and not _agent_is_blocked(target):
             try:
                 probe = _probe_agent_contact(
                     client,
@@ -500,6 +558,7 @@ def discover_agents(
         "unknown_or_not_listening": sum(1 for row in rows if row["contact_mode"] == "unknown_or_not_listening"),
         "supervisor_candidates": sum(1 for row in rows if row["mesh_role"] == "supervisor_candidate"),
         "supervisor_candidates_not_live": sum(1 for row in rows if row["warning"] == "supervisor_candidate_not_live"),
+        "blocked_by_control": sum(1 for row in rows if row["contact_mode"] == "blocked_by_control"),
         "pinged": ping,
     }
     result = {"space_id": sid, "summary": summary, "agents": rows}

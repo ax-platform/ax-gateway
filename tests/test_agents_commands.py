@@ -7,6 +7,73 @@ from ax_cli.main import app
 runner = CliRunner()
 
 
+def test_agents_list_surfaces_control_state(monkeypatch):
+    class FakeClient:
+        def list_agents(self, *, space_id=None, limit=None):
+            return {
+                "agents": [
+                    {
+                        "id": "agent-1",
+                        "name": "aX",
+                        "status": "active",
+                        "control": {
+                            "is_disabled": True,
+                            "disabled_reason": "manual safety pause",
+                        },
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("ax_cli.commands.agents.get_client", lambda: FakeClient())
+    monkeypatch.setattr("ax_cli.commands.agents.resolve_space_id", lambda client, explicit=None: "space-1")
+
+    result = runner.invoke(app, ["agents", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert "aX" in result.output
+    assert "active" in result.output
+    assert "disabled" in result.output
+    assert "manual safety pause" in result.output
+
+
+def test_agents_ping_does_not_send_when_control_blocks_delivery(monkeypatch):
+    calls = {"sent": False}
+
+    class FakeClient:
+        def list_agents(self, *, space_id=None, limit=None):
+            return {
+                "agents": [
+                    {
+                        "id": "agent-1",
+                        "name": "aX",
+                        "origin": "space_agent",
+                        "agent_type": "space_agent",
+                        "status": "active",
+                        "control": {
+                            "is_disabled": True,
+                            "disabled_reason": "manual safety pause",
+                        },
+                    }
+                ]
+            }
+
+        def send_message(self, space_id, content):
+            calls["sent"] = True
+            return {"message": {"id": "msg-1"}}
+
+    monkeypatch.setattr("ax_cli.commands.agents.get_client", lambda: FakeClient())
+    monkeypatch.setattr("ax_cli.commands.agents.resolve_space_id", lambda client, explicit=None: "space-1")
+
+    result = runner.invoke(app, ["agents", "ping", "aX", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert calls["sent"] is False
+    assert data["contact_mode"] == "blocked_by_control"
+    assert data["control_status"] == "disabled"
+    assert data["control_reason"] == "manual safety pause"
+
+
 def test_agents_ping_classifies_reply_as_event_listener(monkeypatch):
     calls = {}
 
@@ -17,7 +84,7 @@ def test_agents_ping_classifies_reply_as_event_listener(monkeypatch):
                 "agents": [
                     {
                         "id": "agent-1",
-                        "name": "orion",
+                        "name": "demo-agent",
                         "origin": "mcp",
                         "agent_type": "mcp",
                         "status": "active",
@@ -31,22 +98,22 @@ def test_agents_ping_classifies_reply_as_event_listener(monkeypatch):
 
     def fake_wait(client, **kwargs):
         calls["wait"] = kwargs
-        return {"id": "reply-1", "content": f"received {kwargs['token']}", "display_name": "orion"}
+        return {"id": "reply-1", "content": f"received {kwargs['token']}", "display_name": "demo-agent"}
 
     monkeypatch.setattr("ax_cli.commands.agents.get_client", lambda: FakeClient())
     monkeypatch.setattr("ax_cli.commands.agents.resolve_space_id", lambda client, explicit=None: "space-1")
     monkeypatch.setattr("ax_cli.commands.agents.resolve_agent_name", lambda client=None: "ChatGPT")
     monkeypatch.setattr("ax_cli.commands.agents._wait_for_handoff_reply", fake_wait)
 
-    result = runner.invoke(app, ["agents", "ping", "orion", "--timeout", "5", "--json"])
+    result = runner.invoke(app, ["agents", "ping", "demo-agent", "--timeout", "5", "--json"])
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["contact_mode"] == "event_listener"
     assert data["listener_status"] == "replied"
     assert data["agent_id"] == "agent-1"
-    assert calls["message"]["content"].startswith("@orion Contact-mode ping")
-    assert calls["wait"]["agent_name"] == "orion"
+    assert calls["message"]["content"].startswith("@demo-agent Contact-mode ping")
+    assert calls["wait"]["agent_name"] == "demo-agent"
     assert calls["wait"]["sent_message_id"] == "msg-1"
 
 
@@ -84,7 +151,7 @@ def test_agents_ping_classifies_timeout_as_unknown(monkeypatch):
 def test_agents_ping_unknown_agent_fails(monkeypatch):
     class FakeClient:
         def list_agents(self, *, space_id=None, limit=None):
-            return {"agents": [{"id": "agent-1", "name": "orion"}]}
+            return {"agents": [{"id": "agent-1", "name": "demo-agent"}]}
 
     monkeypatch.setattr("ax_cli.commands.agents.get_client", lambda: FakeClient())
     monkeypatch.setattr("ax_cli.commands.agents.resolve_space_id", lambda client, explicit=None: "space-1")
@@ -142,6 +209,44 @@ def test_agents_discover_infers_roles_without_ping(monkeypatch):
     assert rows["supervisor_sentinel"]["warning"] == "supervisor_candidate_not_live"
     assert rows["aX"]["contact_mode"] == "space_agent"
     assert rows["night_owl"]["contact_mode"] == "on_demand"
+
+
+def test_agents_discover_marks_control_blocked_agents_without_ping(monkeypatch):
+    class FakeClient:
+        def list_agents(self, *, space_id=None, limit=None):
+            return {
+                "agents": [
+                    {
+                        "id": "agent-1",
+                        "name": "aX",
+                        "origin": "space_agent",
+                        "agent_type": "space_agent",
+                        "status": "active",
+                        "control": {
+                            "is_disabled": True,
+                            "disabled_reason": "manual safety pause",
+                        },
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("ax_cli.commands.agents.get_client", lambda: FakeClient())
+    monkeypatch.setattr("ax_cli.commands.agents.resolve_space_id", lambda client, explicit=None: "space-1")
+    monkeypatch.setattr("ax_cli.commands.agents.resolve_agent_name", lambda client=None: "ChatGPT")
+
+    result = runner.invoke(app, ["agents", "discover", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    row = data["agents"][0]
+    assert data["summary"]["blocked_by_control"] == 1
+    assert row["roster_status"] == "active"
+    assert row["control_status"] == "disabled"
+    assert row["control_reason"] == "manual safety pause"
+    assert row["listener_status"] == "disabled"
+    assert row["contact_mode"] == "blocked_by_control"
+    assert row["recommended_contact"] == "reenable_before_contact"
+    assert row["warning"] == "agent_control_blocks_delivery"
 
 
 def test_agents_discover_with_ping_classifies_listener(monkeypatch):

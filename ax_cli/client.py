@@ -65,6 +65,7 @@ _FILENAME_MIME: dict[str, str] = {
     "dockerfile": "text/plain",
     "makefile": "text/plain",
 }
+_AGENT_RUNTIME_SCOPE = "tasks:read tasks:write messages:read messages:write agents:read"
 
 
 def _mime_from_ext(ext: str) -> str | None:
@@ -282,7 +283,14 @@ class AxClient:
             return self._exchanger.get_token(
                 "agent_access",
                 agent_id=self.agent_id,
-                scope="messages tasks context agents spaces search",
+                scope=_AGENT_RUNTIME_SCOPE,
+                force_refresh=force_refresh,
+            )
+        if self.agent_name and is_agent_pat:
+            return self._exchanger.get_token(
+                "agent_access",
+                agent_name=self.agent_name,
+                scope=_AGENT_RUNTIME_SCOPE,
                 force_refresh=force_refresh,
             )
         if self.token.startswith("axp_u_") and (self.agent_id or self.agent_name):
@@ -671,7 +679,26 @@ class AxClient:
         assignee_id: str | None = None,
         agent_id: str | None = None,
     ) -> dict:
-        """POST /api/v1/tasks — explicit space_id required."""
+        """Create a task.
+
+        Legacy/API-v1 task creation still sends explicit ``space_id`` and
+        optional ``assignee_id`` to ``/api/v1/tasks``. Gateway-first agent PAT
+        flows follow the backend auth-contract draft: exchange to
+        ``agent_access`` and create through ``POST /api/tasks`` without
+        provisional fields the backend does not yet accept on ``TaskCreate``.
+        """
+        if self._uses_gateway_task_contract(agent_id=agent_id, assignee_id=assignee_id):
+            return self.create_task_auth_contract(
+                title,
+                description=description,
+                priority=priority,
+                requirements={
+                    "source": "gateway-first-cli",
+                    "space_id_hint": space_id,
+                    "fingerprint": self._base_headers.get("X-AX-FP"),
+                },
+            )
+
         body = {"title": title, "space_id": space_id, "priority": priority}
         if description:
             body["description"] = description
@@ -703,6 +730,46 @@ class AxClient:
         r.raise_for_status()
         data = self._parse_json(r)
         self._verify_created_task_space(data, space_id)
+        return data
+
+    def _uses_gateway_task_contract(self, *, agent_id: str | None, assignee_id: str | None) -> bool:
+        """Return true for the draft Gateway-first POST /api/tasks flow.
+
+        The draft TaskCreate body does not accept single-call assignment yet, so
+        commands using ``--assign`` stay on the legacy explicit-space path until
+        backend resolves that contract question.
+        """
+        return bool(
+            self._use_exchange
+            and self.token.startswith("axp_a_")
+            and (agent_id or self.agent_id or self.agent_name)
+            and not assignee_id
+        )
+
+    def create_task_auth_contract(
+        self,
+        title: str,
+        *,
+        description: str | None = None,
+        priority: str = "medium",
+        requirements: dict | None = None,
+        deadline: str | None = None,
+    ) -> dict:
+        """POST /api/tasks using AX-GATEWAY-001 auth-contract draft shape."""
+        body: dict = {
+            "title": title,
+            "requirements": requirements or {},
+            "priority": priority,
+            "deadline": deadline,
+        }
+        if description:
+            body["description"] = description
+        r = self._http.post("/api/tasks", json=body, headers=self._auth_headers(for_agent=True))
+        r.raise_for_status()
+        data = self._parse_json(r)
+        task = self._task_from_create_response(data)
+        if not task.get("id"):
+            raise RuntimeError("Task create response did not include an id.")
         return data
 
     def _task_from_create_response(self, data: object) -> dict:
