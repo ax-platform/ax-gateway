@@ -3283,8 +3283,11 @@ def test_gateway_ui_handler_supports_agent_mutations(monkeypatch, tmp_path):
             assert tested.status_code == 201
             tested_payload = tested.json()
             assert tested_payload["target_agent"] == "ui-bot"
-            assert tested_payload["author"] == "agent"
-            assert tested_payload["sender_agent"].startswith("switchboard-")
+            # UI test endpoint defaults to user-authored per the invoking-principal
+            # model (Madtank/supervisor 2026-05-02). The user identity comes from
+            # the Gateway session; switchboard auto-creation is no longer reached.
+            assert tested_payload["author"] == "user"
+            assert tested_payload.get("sender_agent") in (None, "")
             assert (
                 tested_payload["content"]
                 == "@ui-bot Reply naturally that the Gateway round trip worked, then mention which local model answered."
@@ -3423,7 +3426,13 @@ def test_gateway_move_updates_routing_for_test_messages(monkeypatch, tmp_path):
     assert stored["space_id"] == "space-2"
     assert stored["active_space_name"] == "New Space"
 
-    tested = gateway_cmd._send_gateway_test_to_managed_agent("mover")
+    # Migration (Madtank/supervisor 2026-05-02): default sender is now the
+    # invoking principal, never the auto-created switchboard. This test runs
+    # outside a Gateway-managed workspace, so name the sender explicitly to
+    # exercise the routing-after-move semantics this test is about.
+    tested = gateway_cmd._send_gateway_test_to_managed_agent(
+        "mover", sender_agent="switchboard-space2"
+    )
 
     assert tested["target_agent"] == "mover"
     assert tested["message"]["space_id"] == "space-2"
@@ -3518,134 +3527,13 @@ def test_gateway_move_waits_for_listener_ready_after_runtime_start(monkeypatch, 
     assert calls["recent"] == 2
 
 
-def test_gateway_test_falls_back_when_space_sender_cannot_be_created(monkeypatch, tmp_path):
-    config_dir = tmp_path / "config"
-    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
-    gateway_core.save_gateway_session(
-        {
-            "token": "axp_u_test.token",
-            "base_url": "https://paxai.app",
-            "space_id": "space-1",
-            "username": "codex",
-        }
-    )
-
-    token_file = tmp_path / "mover.token"
-    token_file.write_text("axp_a_mover.secret")
-    registry = gateway_core.load_gateway_registry()
-    registry["agents"] = [
-        {
-            "name": "mover",
-            "agent_id": "agent-mover",
-            "space_id": "space-2",
-            "active_space_id": "space-2",
-            "default_space_id": "space-2",
-            "base_url": "https://paxai.app",
-            "runtime_type": "echo",
-            "template_id": "echo_test",
-            "desired_state": "running",
-            "effective_state": "running",
-            "transport": "gateway",
-            "credential_source": "gateway",
-            "allowed_spaces": [{"space_id": "space-2", "name": "New Space", "is_default": True}],
-            "token_file": str(token_file),
-        }
-    ]
-    gateway_core.ensure_gateway_identity_binding(
-        registry,
-        registry["agents"][0],
-        session=gateway_core.load_gateway_session(),
-    )
-    gateway_core.save_gateway_registry(registry)
-    sent_messages = []
-
-    class RecordingManagedClient:
-        def send_message(self, space_id, content, *, agent_id=None, parent_id=None, metadata=None):
-            sent_messages.append({"space_id": space_id, "content": content, "agent_id": agent_id, "metadata": metadata})
-            return {
-                "message": {
-                    "id": "gateway-test-1",
-                    "space_id": space_id,
-                    "content": content,
-                    "agent_id": agent_id,
-                    "metadata": metadata,
-                }
-            }
-
-    monkeypatch.setattr(gateway_cmd, "_load_managed_agent_client", lambda entry: RecordingManagedClient())
-    monkeypatch.setattr(
-        gateway_cmd,
-        "_register_managed_agent",
-        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("Backend rejected test sender PAT mint: 400")),
-    )
-
-    result = gateway_cmd._send_gateway_test_to_managed_agent("mover")
-
-    assert result["sender_agent"] == "mover"
-    assert result["message"]["space_id"] == "space-2"
-    assert sent_messages[-1]["agent_id"] == "agent-mover"
-    gateway_meta = sent_messages[-1]["metadata"]["gateway"]
-    assert gateway_meta["test_sender_fallback"] == "self"
-    assert "400" in gateway_meta["test_sender_error"]
-
-
-def test_gateway_test_can_disallow_self_fallback_for_custom_composer(monkeypatch, tmp_path):
-    config_dir = tmp_path / "config"
-    monkeypatch.setenv("AX_CONFIG_DIR", str(config_dir))
-    gateway_core.save_gateway_session(
-        {
-            "token": "axp_u_test.token",
-            "base_url": "https://paxai.app",
-            "space_id": "space-1",
-            "username": "codex",
-        }
-    )
-
-    registry = gateway_core.load_gateway_registry()
-    registry["agents"] = [
-        {
-            "name": "mover",
-            "agent_id": "agent-mover",
-            "space_id": "space-2",
-            "active_space_id": "space-2",
-            "default_space_id": "space-2",
-            "base_url": "https://paxai.app",
-            "runtime_type": "echo",
-            "template_id": "echo_test",
-            "desired_state": "running",
-            "effective_state": "running",
-            "transport": "gateway",
-            "credential_source": "gateway",
-        }
-    ]
-    gateway_core.ensure_gateway_identity_binding(
-        registry,
-        registry["agents"][0],
-        session=gateway_core.load_gateway_session(),
-    )
-    gateway_core.save_gateway_registry(registry)
-    sent_messages = []
-
-    class RecordingManagedClient:
-        def send_message(self, *args, **kwargs):
-            sent_messages.append({"args": args, "kwargs": kwargs})
-            return {"message": {"id": "unexpected"}}
-
-    monkeypatch.setattr(gateway_cmd, "_load_managed_agent_client", lambda entry: RecordingManagedClient())
-    monkeypatch.setattr(
-        gateway_cmd,
-        "_register_managed_agent",
-        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("Backend rejected test sender PAT mint: 400")),
-    )
-
-    with pytest.raises(ValueError, match="Gateway service sender is not ready"):
-        gateway_cmd._send_gateway_test_to_managed_agent(
-            "mover",
-            content="custom operator message",
-            allow_self_fallback=False,
-        )
-
-    assert sent_messages == []
+# REMOVED 2026-05-02 (Madtank/supervisor): two tests deleted here that exercised
+# the auto-switchboard fallback path and the `allow_self_fallback=False` flag.
+# Both tested behavior that has been removed: the default agents-test sender is
+# now the invoking principal (resolved from workspace local config), and
+# `allow_self_fallback` no longer exists. Replacement coverage lives in
+# tests/test_agents_test_invoking_principal.py — search for `fails_hard` and
+# `explicit_sender_agent_overrides_invoking_principal` for the new contract.
 
 
 def test_gateway_agents_update_changes_template_and_workdir(monkeypatch, tmp_path):
@@ -4077,6 +3965,23 @@ def test_gateway_agents_test_sends_gateway_authored_probe(monkeypatch, tmp_path)
             "username": "codex",
         }
     )
+    # Migration (Madtank/supervisor 2026-05-02): default sender = invoking
+    # principal. Set up a Gateway-managed workspace so the resolver returns
+    # codex_supervisor as the principal for this CLI invocation.
+    workspace_ax = tmp_path / ".ax"
+    workspace_ax.mkdir(exist_ok=True)
+    (workspace_ax / "config.toml").write_text(
+        "[gateway]\n"
+        'mode = "local"\n'
+        'url = "http://127.0.0.1:8765"\n'
+        "\n"
+        "[agent]\n"
+        'agent_name = "codex_supervisor"\n'
+        f'workdir = "{tmp_path}"\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    invoker_token = tmp_path / "codex_supervisor.token"
+    invoker_token.write_text("axp_a_codex.secret")
     registry = gateway_core.load_gateway_registry()
     registry["agents"] = [
         {
@@ -4090,7 +3995,22 @@ def test_gateway_agents_test_sends_gateway_authored_probe(monkeypatch, tmp_path)
             "effective_state": "running",
             "transport": "gateway",
             "credential_source": "gateway",
-        }
+        },
+        {
+            "name": "codex_supervisor",
+            "agent_id": "agent-codex",
+            "space_id": "space-1",
+            "active_space_id": "space-1",
+            "default_space_id": "space-1",
+            "base_url": "https://paxai.app",
+            "runtime_type": "echo",
+            "template_id": "echo_test",
+            "desired_state": "running",
+            "effective_state": "running",
+            "transport": "gateway",
+            "credential_source": "gateway",
+            "token_file": str(invoker_token),
+        },
     ]
     gateway_core.save_gateway_registry(registry)
     monkeypatch.setattr(gateway_cmd, "_load_gateway_user_client", lambda: _FakeUserClient())
@@ -4106,11 +4026,13 @@ def test_gateway_agents_test_sends_gateway_authored_probe(monkeypatch, tmp_path)
     payload = json.loads(result.stdout)
     assert payload["target_agent"] == "echo-bot"
     assert payload["author"] == "agent"
-    assert payload["sender_agent"] == "switchboard-space1"
+    assert payload["sender_agent"] == "codex_supervisor", "default sender must be invoking principal"
+    assert "switchboard" not in str(payload).lower()
     assert payload["recommended_prompt"] == "gateway test ping"
     assert payload["content"] == "@echo-bot gateway test ping"
     assert payload["message"]["metadata"]["gateway"]["sent_via"] == "gateway_test"
     assert payload["message"]["metadata"]["gateway"]["test_author"] == "agent"
+    assert payload["message"]["metadata"]["gateway"].get("test_sender_explicit") is False
     recent = gateway_core.load_recent_gateway_activity()
     assert recent[-1]["event"] == "gateway_test_sent"
 
