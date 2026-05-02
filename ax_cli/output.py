@@ -1,11 +1,22 @@
 """Shared output helpers: --json flag, tables, error handling."""
 
 import json
+import re
 
 import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
+
+# axp_<class>_<keyid>.<secret> — PATs and similar secrets must never reach
+# user-facing output, even if a server echoes them in an error body or they
+# leak into a request URL/query string.
+_AXP_SECRET_RE = re.compile(r"axp_[a-zA-Z0-9_]+\.[A-Za-z0-9_\-]+")
+
+
+def _redact_secrets(text: str) -> str:
+    """Redact axp_* PAT shapes from any user-facing string."""
+    return _AXP_SECRET_RE.sub("axp_<redacted>", text)
 
 console = Console()
 # Dedicated stderr console for status/log lines that mustn't pollute stdout
@@ -61,14 +72,32 @@ def print_kv(data: dict):
 
 def handle_error(e: httpx.HTTPStatusError):
     url = str(e.request.url) if e.request else "unknown"
+    invalid_credential = False
     try:
-        detail = e.response.json().get("detail", e.response.text[:200])
+        body = e.response.json()
+        detail = body.get("detail", e.response.text[:200])
+        if isinstance(detail, dict) and detail.get("error") == "invalid_credential":
+            invalid_credential = True
     except Exception:
         body = e.response.text[:200]
         if "<html" in body.lower():
             detail = "Got HTML instead of JSON (frontend may be catching this route)"
         else:
             detail = body
-    typer.echo(f"Error {e.response.status_code}: {detail}", err=True)
-    typer.echo(f"  URL: {url}", err=True)
+            if "invalid_credential" in body.lower():
+                invalid_credential = True
+    typer.echo(_redact_secrets(f"Error {e.response.status_code}: {detail}"), err=True)
+    typer.echo(_redact_secrets(f"  URL: {url}"), err=True)
+    if invalid_credential:
+        host = ""
+        try:
+            host = e.request.url.host or ""
+        except Exception:
+            host = ""
+        url_hint = f"https://{host}" if host else "<your-host>"
+        typer.echo(
+            "  Recovery: token rejected — likely from a different environment. "
+            f"Run `axctl auth doctor --probe` to confirm, then `axctl login --url {url_hint}`.",
+            err=True,
+        )
     raise typer.Exit(1)
