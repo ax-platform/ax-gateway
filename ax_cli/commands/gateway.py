@@ -243,7 +243,7 @@ def _local_process_fingerprint(
 ) -> dict:
     resolved_pid = int(pid or os.getpid())
     resolved_cwd = str(Path(cwd or os.getcwd()).expanduser().resolve())
-    resolved_exe = str(Path(exe_path or sys.executable).expanduser())
+    resolved_exe = str(Path(exe_path or sys.executable).expanduser().resolve())
     fingerprint = {
         "agent_name": agent_name,
         "pid": resolved_pid,
@@ -5871,15 +5871,16 @@ def _request_local_connect(
     workdir: str | None = None,
     space_id: str | None = None,
 ) -> dict:
+    resolved_workdir = str(Path(workdir or Path.cwd()).expanduser().resolve())
     agent_name, registry_ref = _resolve_local_gateway_identity(
         agent_name=agent_name,
         registry_ref=registry_ref,
-        workdir=workdir,
+        workdir=resolved_workdir,
     )
     display_name = str(agent_name or registry_ref or "").strip()
     if not display_name:
         raise ValueError("Provide a local agent name or --registry/--ref.")
-    fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=workdir)
+    fingerprint = _local_process_fingerprint(agent_name=display_name, cwd=resolved_workdir)
     body = {"fingerprint": fingerprint}
     if agent_name:
         body["agent_name"] = agent_name

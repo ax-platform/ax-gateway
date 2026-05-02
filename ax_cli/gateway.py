@@ -2622,6 +2622,25 @@ def annotate_runtime_health(
     return enriched
 
 
+def _chmod_quiet(path: Path, mode: int) -> None:
+    """Best-effort chmod that tolerates EPERM when the mode is already correct.
+
+    macOS sandboxes (e.g. Codex sandbox-exec) raise PermissionError on chmod
+    against an already-existing directory even when the mode would not change.
+    Swallow that case so Gateway-touching commands don't crash; re-raise if the
+    mode is actually wrong so we don't leak a too-permissive dir silently.
+    """
+    try:
+        path.chmod(mode)
+    except PermissionError:
+        try:
+            current = path.stat().st_mode & 0o777
+        except OSError:
+            raise
+        if current != mode:
+            raise
+
+
 def gateway_dir() -> Path:
     explicit = str(os.environ.get("AX_GATEWAY_DIR") or "").strip()
     if explicit:
@@ -2631,7 +2650,7 @@ def gateway_dir() -> Path:
         env_name = gateway_environment()
         path = root if env_name is None else root / "envs" / env_name
     path.mkdir(parents=True, exist_ok=True)
-    path.chmod(0o700)
+    _chmod_quiet(path, 0o700)
     return path
 
 
@@ -2652,7 +2671,7 @@ def gateway_environment() -> str | None:
 def gateway_agents_dir() -> Path:
     path = gateway_dir() / "agents"
     path.mkdir(parents=True, exist_ok=True)
-    path.chmod(0o700)
+    _chmod_quiet(path, 0o700)
     return path
 
 
@@ -2687,7 +2706,7 @@ def activity_log_path() -> Path:
 def agent_dir(name: str) -> Path:
     path = gateway_agents_dir() / name
     path.mkdir(parents=True, exist_ok=True)
-    path.chmod(0o700)
+    _chmod_quiet(path, 0o700)
     return path
 
 

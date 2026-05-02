@@ -86,7 +86,7 @@ When a task can be advanced by another agent without human judgment, `--loop`
 keeps the feedback loop active:
 
 ```bash
-ax handoff orion \
+ax handoff demo-agent \
   "Fix the failing contract tests. Run pytest. Reply with <promise>TESTS GREEN</promise> only when true." \
   --intent implement \
   --loop \
@@ -119,7 +119,7 @@ operator remembering a flag. The CLI probes before deciding whether to wait:
 
 ```bash
 ax handoff cli_sentinel "Review CLI docs"
-ax handoff orion "Known-live fast path" --no-adaptive-wait
+ax handoff demo-agent "Known-live fast path" --no-adaptive-wait
 ```
 
 Behavior:
@@ -382,12 +382,12 @@ Expected flow:
 ### Task delegation + wait
 
 ```bash
-ax task create "Run smoke tests" --assign @orion --notify --wait
+ax task create "Run smoke tests" --assign @demo-agent --notify --wait
 ```
 
 Expected flow:
-1. Create task with owner resolved to `@orion`
-2. Notify `@orion` with task id + owner metadata
+1. Create task with owner resolved to `@demo-agent`
+2. Notify `@demo-agent` with task id + owner metadata
 3. Wait for response using the watch pipeline
 
 ## Documentation Plan

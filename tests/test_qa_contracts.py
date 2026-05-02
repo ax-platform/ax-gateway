@@ -16,7 +16,7 @@ class FakeClient:
     def whoami(self):
         self.calls.append(("whoami",))
         return {
-            "username": "madtank",
+            "username": "alex",
             "principal_type": "user",
             "bound_agent": None,
         }
@@ -31,7 +31,7 @@ class FakeClient:
 
     def list_space_members(self, space_id):
         self.calls.append(("list_space_members", space_id))
-        return {"members": [{"username": "madtank"}]}
+        return {"members": [{"username": "alex"}]}
 
     def list_agents(self, *, space_id=None, limit=None):
         self.calls.append(("list_agents", space_id, limit))

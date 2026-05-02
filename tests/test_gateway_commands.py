@@ -1166,6 +1166,60 @@ def test_gateway_local_connect_infers_agent_from_workdir_config(monkeypatch, tmp
     assert captured["json"]["fingerprint"] == {"agent_name": "frontend_sentinel", "cwd": str(tmp_path)}
 
 
+def test_gateway_local_connect_infers_agent_from_cwd_config(monkeypatch, tmp_path):
+    ax_dir = tmp_path / ".ax"
+    ax_dir.mkdir()
+    (ax_dir / "config.toml").write_text(
+        "[gateway]\n"
+        'mode = "local"\n'
+        'url = "http://127.0.0.1:8765"\n'
+        "[agent]\n"
+        'agent_name = "frontend_sentinel"\n'
+    )
+
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"status": "pending", "approval_id": "approval-frontend"}
+
+    def fake_post(url, *, json=None, timeout=None):
+        captured["json"] = json
+        return FakeResponse()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gateway_cmd.httpx, "post", fake_post)
+    monkeypatch.setattr(
+        gateway_cmd,
+        "_local_process_fingerprint",
+        lambda **kwargs: {"agent_name": kwargs["agent_name"], "cwd": kwargs["cwd"]},
+    )
+
+    payload = gateway_cmd._request_local_connect()
+
+    assert payload["approval_id"] == "approval-frontend"
+    assert captured["json"]["agent_name"] == "frontend_sentinel"
+    assert captured["json"]["fingerprint"] == {"agent_name": "frontend_sentinel", "cwd": str(tmp_path)}
+
+
+def test_local_process_fingerprint_resolves_executable_symlink(tmp_path):
+    exe_target = tmp_path / "python3.12"
+    exe_target.write_text("fake python")
+    exe_link = tmp_path / "python3"
+    exe_link.symlink_to(exe_target)
+
+    fingerprint = gateway_cmd._local_process_fingerprint(
+        agent_name="codex-local",
+        cwd=str(tmp_path),
+        exe_path=str(exe_link),
+    )
+
+    assert fingerprint["exe_path"] == str(exe_target.resolve())
+
+
 def test_gateway_local_connect_rejects_agent_workdir_mismatch(tmp_path):
     ax_dir = tmp_path / ".ax"
     ax_dir.mkdir()

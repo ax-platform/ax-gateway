@@ -101,7 +101,7 @@ Useful validation signals:
 
 ## Config System
 
-Runtime config lives in `.ax/config.toml` (project-local, preferred), named profiles under `~/.ax/profiles/<name>/profile.toml`, or `~/.ax/config.toml` (global fallback for defaults only). Project root is found by walking up to the nearest `.git` directory. Runtime key fields: `token`, `token_file`, `base_url`, `agent_name`, `agent_id`, `space_id`, `principal_type`. Env vars include `AX_TOKEN`, `AX_BASE_URL`, `AX_AGENT_NAME`, `AX_AGENT_ID`, and `AX_SPACE_ID`.
+Runtime config lives in `.ax/config.toml` (project-local, preferred), named profiles under `~/.ax/profiles/<name>/profile.toml`, or `~/.ax/config.toml` (global fallback for defaults only). Project root is found by walking up from the current working directory looking for the nearest `.ax/` directory (no `.git` boundary — identity is workspace-scoped, not repo-scoped, per `_find_project_root` in `ax_cli/config.py`). Runtime key fields: `token`, `token_file`, `base_url`, `agent_name`, `agent_id`, `space_id`, `principal_type`. Env vars include `AX_TOKEN`, `AX_BASE_URL`, `AX_AGENT_NAME`, `AX_AGENT_ID`, and `AX_SPACE_ID`.
 
 User login credentials are deliberately separate from runtime agent config:
 
